@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy/microvm/e13-mem-telemetry.sh
+# microvm/e13-mem-telemetry.sh
 #
 # Wraps an arbitrary command with host memory + OOM-killer telemetry, for the
 # command's exact wall-clock duration. Exists to test E13's leading
@@ -12,7 +12,7 @@
 # - wraps either (or anything else) as an opaque command.
 #
 # Usage:
-#   deploy/microvm/e13-mem-telemetry.sh <out-dir> -- <command> [args...]
+#   microvm/e13-mem-telemetry.sh <out-dir> -- <command> [args...]
 set -uo pipefail
 
 die() { echo "e13-mem-telemetry: $*" >&2; exit 1; }

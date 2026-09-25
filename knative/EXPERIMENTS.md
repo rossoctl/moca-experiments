@@ -40,8 +40,8 @@ E1/E3/E4). See the design: `docs/specs/2026-07-03-p3-sandbox-sharing-ratio-exper
 
 ```bash
 # Kind sh-knative (3-pod pool up, gitd deployed via kustomize):
-E6_LIVE=1 bash deploy/knative/e6-saturation.sh
-E7_LIVE=1 bash deploy/knative/e7-converge-contention.sh
+E6_LIVE=1 bash knative/e6-saturation.sh
+E7_LIVE=1 bash knative/e7-converge-contention.sh
 
 # OCP 4.20 (authoritative): export KSVC_URL=<route>, KUBECONFIG=<ocp>, then the same.
 ```

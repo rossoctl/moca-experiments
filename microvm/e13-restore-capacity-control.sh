@@ -26,7 +26,7 @@
 #   SH_SUBSTRATE=nested-m8i \
 #   SH_GUEST_CLIENT=/path/to/guest_client \
 #   SH_E13_N=128 \
-#   sudo -E deploy/microvm/e13-restore-capacity-control.sh
+#   sudo -E microvm/e13-restore-capacity-control.sh
 set -uo pipefail
 
 E12_PROBE_SOURCE_ONLY=1

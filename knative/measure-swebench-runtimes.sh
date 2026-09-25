@@ -34,7 +34,7 @@
 #   MEASURE_LIVE=1 [NS=default] \
 #     [KAGENTI_SANDBOX_POOL_SELECTOR=sh.kagenti.io/sandbox-pool=swebench] [MEASURE_SAMPLES=1] \
 #     [MEASURE_TIMEOUT_SEC=1200] [MEASURE_LIMIT=0] [DECK=experiments/swebench/deck.json] \
-#     [LOG_DIR=/tmp/kagenti/planB] bash deploy/knative/measure-swebench-runtimes.sh
+#     [LOG_DIR=/tmp/kagenti/planB] bash knative/measure-swebench-runtimes.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

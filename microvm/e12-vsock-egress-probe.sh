@@ -42,7 +42,7 @@
 # Usage:
 #   SH_SUBSTRATE=nested-m8i \
 #   SH_GUEST_CLIENT=/path/to/guest_client \
-#   sudo -E deploy/microvm/e12-vsock-egress-probe.sh
+#   sudo -E microvm/e12-vsock-egress-probe.sh
 #
 set -uo pipefail
 

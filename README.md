@@ -27,7 +27,8 @@ exec-driver path; and the main repo's own pnpm workspace (`pnpm --filter @sh/san
 start`) to launch the sandbox-relay both the container and microvm arms need — that part cannot
 be satisfied by an env var at all, since `pnpm --filter` resolves workspace packages from the
 current repo's own `pnpm-workspace.yaml`. In practice: run the drivers from a checkout of the
-main repo (or a sibling of it with `REMOTE_WORKER_DIR`/`PROTO_FILE`/`PROTO_IMPORT_PATH` set),
+main repo (or a sibling of it with `REMOTE_WORKER_DIR`/`PROTO_FILE`/`PROTO_IMPORT_PATH` set --
+`VMPOOLCTL` derives from `REMOTE_WORKER_DIR` automatically unless set separately),
 same caveat as `knative/`'s cluster experiments and `experiments/`'s E2/E5. `e11-density.test.sh`'s
 Go seam-closure check specifically skips gracefully (like its "no go on PATH" check) when no
 `remote-worker/` checkout is found, rather than failing.

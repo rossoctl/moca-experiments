@@ -137,8 +137,8 @@ WORKSPACE_ROOT="${SH_WORKSPACE_ROOT:?set SH_WORKSPACE_ROOT - the same env var na
 # hardware where it works can opt back in.
 read -r -a ARMS <<<"${SH_E10_ARMS:-firecracker}"
 
-VMPOOLCTL="${VMPOOLCTL:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../remote-worker" 2>/dev/null && pwd)/vmpoolctl}"
 REMOTE_WORKER_DIR="${REMOTE_WORKER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../remote-worker" 2>/dev/null && pwd)}"
+VMPOOLCTL="${VMPOOLCTL:-$REMOTE_WORKER_DIR/vmpoolctl}"
 PROTO_FILE="${PROTO_FILE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/proto/sandbox/v1/sandbox.proto}"
 # grpcurl refuses an absolute -proto path unless also given at least one -import-path, and
 # fails at proto-parse time before dialling. PROTO_FILE stays for the existence check --
