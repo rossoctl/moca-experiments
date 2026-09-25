@@ -6,7 +6,7 @@
 # memory dip and an OOM event, 2 "ok" nowhere near either) and asserts the
 # correlation counts land exactly where they should.
 #
-# Run: bash deploy/microvm/tests/e13-correlate.test.sh
+# Run: bash microvm/tests/e13-correlate.test.sh
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

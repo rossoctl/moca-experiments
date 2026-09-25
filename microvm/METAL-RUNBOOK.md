@@ -109,6 +109,7 @@ line. `sudo -E` is not sufficient and `PATH` must include `/sbin` and `/usr/sbin
 ## 2. Build the golden snapshot on THIS machine
 
 ```bash
+# [main repo] -- build-snapshot.sh did not move (production golden-snapshot tooling)
 sudo PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin \
   bash deploy/microvm/build-snapshot.sh \
     --kernel  /path/to/vmlinux \
@@ -257,13 +258,13 @@ sudo PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin \
   SH_SUBSTRATE="$SH_SUBSTRATE" SH_SNAPSHOT_DIR="$SH_SNAPSHOT_DIR" \
   SH_WORKSPACE_ROOT="$SH_WORKSPACE_ROOT" \
   ITERS=5 WARMUP=1 \
-  bash deploy/microvm/e10-lifecycle.sh 2>&1 | tee /tmp/e10-smoke.log
+  bash microvm/e10-lifecycle.sh 2>&1 | tee /tmp/e10-smoke.log
 ```
 
 **A smoke pass is successful only if a rung record was written.** Check:
 
 ```bash
-ls -la deploy/microvm/.results/
+ls -la microvm/.results/
 ```
 
 An empty `.results/` with exit 0 means the run measured nothing — that class of failure is
@@ -276,7 +277,7 @@ Then the same for E11 with a tiny ladder:
 sudo PATH=… SH_SUBSTRATE="$SH_SUBSTRATE" SH_SNAPSHOT_DIR="$SH_SNAPSHOT_DIR" \
   SH_WORKSPACE_ROOT="$SH_WORKSPACE_ROOT" SH_MAX_COMMITTED_MB="$SH_MAX_COMMITTED_MB" \
   SH_E11_ACTIVE_RUNS="1 2" SH_E11_ITERS_PER_SLOT=5 \
-  bash deploy/microvm/e11-density.sh 2>&1 | tee /tmp/e11-smoke.log
+  bash microvm/e11-density.sh 2>&1 | tee /tmp/e11-smoke.log
 ```
 
 `SH_E11_ACTIVE_RUNS` **must include `1`**: the knee detector throws without a single-run
@@ -289,8 +290,8 @@ Drop the overrides from §4 and run both. Expect E11 to take a while; it drops c
 between arms and samples until idle standbys converge.
 
 ```bash
-sudo PATH=… <the same SH_* exports> bash deploy/microvm/e10-lifecycle.sh 2>&1 | tee /tmp/e10-metal.log
-sudo PATH=… <the same SH_* exports> bash deploy/microvm/e11-density.sh  2>&1 | tee /tmp/e11-metal.log
+sudo PATH=… <the same SH_* exports> bash microvm/e10-lifecycle.sh 2>&1 | tee /tmp/e10-metal.log
+sudo PATH=… <the same SH_* exports> bash microvm/e11-density.sh  2>&1 | tee /tmp/e11-metal.log
 ```
 
 ### Run E10 FIRST, then set E11's cold-latency threshold from its numbers
@@ -329,9 +330,9 @@ E11 has to assume — so run E10 first and read two numbers out of it.
 
 ```bash
 # warm Exec latency on this host — rung 2, parked variant
-python3 -c "import json;d=json.load(open('deploy/microvm/.results/e10-rung2-firecracker-$SH_SUBSTRATE-parked.json'));print(d['p50_total_us']/1000.0)"
+python3 -c "import json;d=json.load(open('microvm/.results/e10-rung2-firecracker-$SH_SUBSTRATE-parked.json'));print(d['p50_total_us']/1000.0)"
 # the restore a cold acquire additionally pays — rung 3, pinned variant
-python3 -c "import json;d=json.load(open('deploy/microvm/.results/e10-rung3-firecracker-$SH_SUBSTRATE-pinned.json'));print(d['p50_acquire_us']/1000.0)"
+python3 -c "import json;d=json.load(open('microvm/.results/e10-rung3-firecracker-$SH_SUBSTRATE-pinned.json'));print(d['p50_acquire_us']/1000.0)"
 ```
 
 A cold acquire costs about `warm + restore`, so put the threshold at the midpoint:
@@ -345,7 +346,7 @@ Worked example from the nested rig: warm ≈ 236ms, restore ≈ 100ms → cold �
 
 ```bash
 sudo PATH=… <the same SH_* exports> SH_E11_COLD_LATENCY_MS=<computed> \
-  bash deploy/microvm/e11-density.sh 2>&1 | tee /tmp/e11-metal.log
+  bash microvm/e11-density.sh 2>&1 | tee /tmp/e11-metal.log
 ```
 
 **If you skip this**, the analyzer detects that the classifier has no headroom — the lowest-c
@@ -377,7 +378,7 @@ rung 4 being the long pole of E10 outside rung 1.
 
 ## 6. What to capture and hand back
 
-- `deploy/microvm/.results/` — every rung record, plus `e10-summary.json` and
+- `microvm/.results/` — every rung record, plus `e10-summary.json` and
   `e11-ladder.json`. This is the actual deliverable.
 - `/tmp/e10-metal.log`, `/tmp/e11-metal.log` — including the printed decision-rule verdict.
 - The host's identity: instance type or hardware, kernel, CPU model, total RAM, and whether
@@ -386,7 +387,7 @@ rung 4 being the long pole of E10 outside rung 1.
   predictions were hash-pinned before any run so they cannot be adjusted to fit the
   results; that pin must survive.
 
-**Do not edit `deploy/microvm/predictions.json`.** Falsified predictions get reported as
+**Do not edit `microvm/predictions.json`.** Falsified predictions get reported as
 plainly as confirmed ones — that is the point of having pinned them.
 
 ## 6a. Four traps that have each cost real time
@@ -398,7 +399,7 @@ or a clean-looking number is indistinguishable from a working probe.
 ### Per-rung results go in `RESULTS=`, and only `RESULTS=`
 
 ```bash
-sudo env ... RESULTS="$REPO/deploy/microvm/.results-myrung-c64" bash e11-density.sh
+sudo env ... RESULTS="$REPO/microvm/.results-myrung-c64" bash e11-density.sh
 ```
 
 There is **no `SH_E11_RESULTS_DIR`**. An unrecognised name is silently ignored, every rung then
@@ -471,7 +472,7 @@ write-up says what happens next, and the spec's §9 fallbacks are the path, not 
 If an assistant is driving this, paste something like:
 
 > I need to run the authoritative E10 and E11 measurements for the P4 microVM sandbox tier
-> on a bare-metal host. Read `deploy/microvm/METAL-RUNBOOK.md` and follow it. Key things I
+> on a bare-metal host. Read `microvm/METAL-RUNBOOK.md` and follow it. Key things I
 > want you to respect: the golden snapshot must be built on this machine because a snapshot
 > only restores on identical hardware; do the smoke pass before the real run because these
 > drivers have never been executed; size `SH_MAX_COMMITTED_MB` to this host's actual RAM;

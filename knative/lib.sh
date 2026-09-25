@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # --- moca-experiments note (2026-09-25) ---
 # This is a point-in-time copy of deploy/knative/lib.sh from the main moca (serverless-harness)
 # repo, taken when E1/E3/E4/E6/E7 and run-experiments.sh moved here. It is NOT independently
@@ -14,7 +15,6 @@
 # scripts standalone from this repo, not a bug in this copy.
 # --- end note ---
 
-#!/usr/bin/env bash
 # deploy/knative/lib.sh
 # Shared helpers for the Knative smoke + experiment drivers.
 # Source this; do not execute. Targets ksvc serverless-harness in namespace default.

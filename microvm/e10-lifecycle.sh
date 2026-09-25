@@ -73,7 +73,7 @@
 # Usage:
 #   SH_SUBSTRATE=nested-m8i \
 #   SH_SNAPSHOT_DIR=/srv/snapshots SH_WORKSPACE_ROOT=/srv/workspaces \
-#     bash deploy/microvm/e10-lifecycle.sh
+#     bash microvm/e10-lifecycle.sh
 #
 # For a short local validation pass, ITERS/WARMUP are deliberately small-run-safe:
 # nothing below hardcodes the full 200x20 shape, so `ITERS=5 WARMUP=1` produces a
@@ -138,14 +138,14 @@ WORKSPACE_ROOT="${SH_WORKSPACE_ROOT:?set SH_WORKSPACE_ROOT - the same env var na
 read -r -a ARMS <<<"${SH_E10_ARMS:-firecracker}"
 
 VMPOOLCTL="${VMPOOLCTL:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../remote-worker" 2>/dev/null && pwd)/vmpoolctl}"
-REMOTE_WORKER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../remote-worker" 2>/dev/null && pwd)"
-PROTO_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/proto/sandbox/v1/sandbox.proto"
+REMOTE_WORKER_DIR="${REMOTE_WORKER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../remote-worker" 2>/dev/null && pwd)}"
+PROTO_FILE="${PROTO_FILE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/proto/sandbox/v1/sandbox.proto}"
 # grpcurl refuses an absolute -proto path unless also given at least one -import-path, and
 # fails at proto-parse time before dialling. PROTO_FILE stays for the existence check --
 # "is the file there" is a different question from "how is grpcurl invoked" -- and these two
 # are what the invocation actually uses. Verified on the rig: import path at the proto ROOT
 # with the file named relative to it parses and proceeds to dial.
-PROTO_IMPORT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/proto"
+PROTO_IMPORT_PATH="${PROTO_IMPORT_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/proto}"
 PROTO_REL_PATH="sandbox/v1/sandbox.proto"
 
 # Client-side deadline for grpcurl, a margin above the request's own timeout_s:30. Rung 1 is

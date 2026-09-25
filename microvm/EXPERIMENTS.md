@@ -691,8 +691,8 @@ destroy are 49.9 of 55.3 ms**. The design already moved machine _building_ off t
 path; what remains on it is resume and destroy, and they are the entire cost. Rung 1
 having its own 41 ms floor is why the ratio row passes while the absolute row does not.
 
-Driver: `deploy/microvm/e10-lifecycle.sh`; cluster-free proof of its structure:
-`deploy/microvm/tests/e10-lifecycle.test.sh`.
+Driver: `microvm/e10-lifecycle.sh`; cluster-free proof of its structure:
+`microvm/tests/e10-lifecycle.test.sh`.
 
 ### E11 — density, the replenishment ceiling, and the write-up
 
@@ -844,10 +844,10 @@ never the fragile part — the machinery deciding what they _meant_ was.
    only holds if the ladder _stops_ at the knee — and locating a knee requires sweeping
    past it. It now splits on the detected knee.
 
-Driver: `deploy/microvm/e11-density.sh`. Cluster-free proof of its structure:
-`deploy/microvm/tests/e11-density.test.sh`. Analysis: `analyzeLadder` in
+Driver: `microvm/e11-density.sh`. Cluster-free proof of its structure:
+`microvm/tests/e11-density.test.sh`. Analysis: `analyzeLadder` in
 `experiments/src/microvm-density.ts`, which reuses `detectKnee` (spec §7.3) and scores
-predictions pinned in `deploy/microvm/predictions.json`.
+predictions pinned in `microvm/predictions.json`.
 
 #### The original pre-run status, kept for the record
 
@@ -860,13 +860,13 @@ any hardware, nested or metal. Every number and verdict below is a **named
 blank**, not a placeholder value. No `ssh`, no density sweep, and no
 `SH_SUBSTRATE=metal` invocation happened in producing this section.
 
-Driver: `deploy/microvm/e11-density.sh` (requires `SH_SUBSTRATE`,
+Driver: `microvm/e11-density.sh` (requires `SH_SUBSTRATE`,
 `SH_SNAPSHOT_DIR`, `SH_WORKSPACE_ROOT`, `SH_MAX_COMMITTED_MB` — no defaults,
 so a misconfigured invocation refuses rather than mislabels its own
 substrate). Cluster-free proof of its structure:
-`deploy/microvm/tests/e11-density.test.sh`. Analysis: `analyzeLadder` in
+`microvm/tests/e11-density.test.sh`. Analysis: `analyzeLadder` in
 `experiments/src/microvm-density.ts`, which reuses `detectKnee` (spec §7.3)
-and scores predictions pinned in `deploy/microvm/predictions.json`.
+and scores predictions pinned in `microvm/predictions.json`.
 
 #### What a validation run on the nested box can and cannot establish
 
@@ -1128,7 +1128,7 @@ discarded for this reason and the run repeated after the fix. Fixed with
 `kill_relay_by_port()` (kills by `ss`-observed port, same as the runbook's own manual
 cleanup recipe, never by a captured PID or a process name), wired into both
 `stop_container_stack` and `stop_microvm_stack`, with five new regression checks in
-`deploy/microvm/tests/e11-density.test.sh` pinning the fix.
+`microvm/tests/e11-density.test.sh` pinning the fix.
 
 ### Issue #291 — the re-run: the knee holds at `c=8`, and it is the 4-slot cap
 
@@ -1359,7 +1359,7 @@ very metric the sweep reads; admission refused nothing (0 refusals at every rung
   case correctly, and on `driver-control` the two clients are identical by construction. It was a
   blocker for any grpcurl-vs-go comparison on the container or microVM arms; it no longer is.
 
-`deploy/microvm/predictions.json` was not edited, and its hash pin still passes.
+`microvm/predictions.json` was not edited, and its hash pin still passes.
 
 #### Two corrections to this section as published
 
@@ -1455,7 +1455,7 @@ evidence.
 | D (regression fence: host-initiated 1024 with 1025 present) | ok=true                                                             | ok=true                                                                                                                                                                |
 
 The per-rung and per-VM JSON records and the run log are rig artifacts, not
-committed to this repo (`deploy/microvm/e12-results/` is gitignored) — the
+committed to this repo (`microvm/e12-results/` is gitignored) — the
 numbers above are the complete record of what they showed.
 
 All observed C@128 failures are `guest_client`-relay-level connection errors
@@ -1480,7 +1480,7 @@ failures: `grep -l '"ok":false' rung-C-128-*.json` finds 48 files, but
 in the aggregate.
 
 This is explained precisely by `run_rung_c_n`'s own control flow
-(`deploy/microvm/e12-vsock-egress-probe.sh`). Each per-VM subshell runs:
+(`microvm/e12-vsock-egress-probe.sh`). Each per-VM subshell runs:
 
 ```
 restore_vm "$jail" 2>"$jail.boot.log" || {
@@ -1620,7 +1620,7 @@ sampler (`e13-mem-telemetry.sh`), within the same 40-second window.
 | E12 rung C@128, rerun standalone (`SH_E12_RUNGS=C SH_E12_C_LADDER=128 e12-vsock-egress-probe.sh`) | one host-side `python3` listener process per VM on `<jail>/vsock.sock_1025`, plus an Exec on 1024 that base64-decodes and runs a `python3` script **inside** the guest to do a real AF_VSOCK connect/send/recv round trip | `ok=false`, 90/128, **`fail_count=38`**, `nonce_collisions=0` | 17.204s   | 13,231,726,592 B (12.32 GiB), ~2.13 GB dip | 0          |
 
 Per-VM and per-rung JSON, the telemetry timelines and the correlation output
-are rig artifacts, not committed (`deploy/microvm/e13-results/`,
+are rig artifacts, not committed (`microvm/e13-results/`,
 `e13-control-results/` and `e13-telemetry/` are gitignored, per PR #272's own
 precedent) — the numbers here are the complete record of what they showed.
 `e12-answer.json` from the rerun is `{"substrate":"nested-m8i","rungs_run":"C","ok":false}`.

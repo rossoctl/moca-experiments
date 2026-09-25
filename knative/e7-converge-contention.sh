@@ -6,7 +6,7 @@
 # is the live mixed-ref validation deferred from P2 Task 7. Reports converge-wait contention
 # (total exec ms under the shared /workspace/.sh-fetch.lock as concurrency rises).
 #
-# Usage: E7_LIVE=1 [E7_REFS=8] bash deploy/knative/e7-converge-contention.sh
+# Usage: E7_LIVE=1 [E7_REFS=8] bash knative/e7-converge-contention.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091  # lib.sh is co-located; not available to shellcheck at lint time

@@ -6,7 +6,7 @@ instance row), NOT a hand-rolled (repo, version) string — see docs/notes/swebe
 (Task 1 spike) for why the raw MAP_REPO_VERSION_TO_SPECS constant is insufficient on its own.
 
 Sampling is seeded and deterministic. test_runtime_ms/weight_bucket are populated later by
-deploy/knative/measure-swebench-runtimes.sh (Task 5).
+knative/measure-swebench-runtimes.sh (Task 5).
 
 This script is intentionally non-hermetic: it needs network access (HuggingFace dataset download,
 and swebench's own per-repo environment.yml/requirements.txt fetch inside make_test_spec) and the

@@ -124,7 +124,7 @@
 #   SH_SUBSTRATE=nested-m8i \
 #   SH_SNAPSHOT_DIR=/srv/snapshots SH_WORKSPACE_ROOT=/srv/workspaces \
 #   SH_MAX_COMMITTED_MB=8192 \
-#     bash deploy/microvm/e11-density.sh
+#     bash microvm/e11-density.sh
 set -uo pipefail
 
 # LC_ALL is pinned for the WHOLE driver, and exported so awk, python3 and grpcurl inherit
@@ -142,7 +142,7 @@ export LC_ALL
 # ABSOLUTE, always, because two callers `cd` elsewhere before using it: both
 # `go build -o "$RESULTS/..."` calls run inside `(cd "$REMOTE_WORKER_DIR" && ...)`. With a
 # relative RESULTS they wrote the worker binaries to
-# remote-worker/microvm/.results/, a directory that does not exist, the build
+# remote-worker/deploy/microvm/.results/, a directory that does not exist, the build
 # failed, its exit status was unchecked, and the first symptom was a converge failure
 # naming neither the build nor the path. Found on E11's first-ever execution. The test
 # suite could not see it: it overrides RESULTS with an absolute /tmp path.
@@ -265,9 +265,9 @@ SAMPLE_PREV_TOTAL=0
 SAMPLE_TICK=0
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REMOTE_WORKER_DIR="$REPO_ROOT/remote-worker"
+REMOTE_WORKER_DIR="${REMOTE_WORKER_DIR:-$REPO_ROOT/remote-worker}"
 EXPERIMENTS_DIR="$REPO_ROOT/experiments"
-PROTO_FILE="$REPO_ROOT/proto/sandbox/v1/sandbox.proto"
+PROTO_FILE="${PROTO_FILE:-$REPO_ROOT/proto/sandbox/v1/sandbox.proto}"
 # grpcurl REFUSES an absolute -proto path unless it is also given at least one
 # -import-path ("must specify at least one import path if any absolute file paths are
 # given"), and it fails at proto-parsing time — before it dials anything. So every RPC
@@ -306,7 +306,7 @@ CONVERGE_MAX_TIME_S="${SH_E11_CONVERGE_MAX_TIME_S:-360}" # guards timeout_s:300
 EXEC_CLIENT="${SH_E11_EXEC_CLIENT:-grpcurl}"
 # Built once per run by build_exec_driver, beside the null-responder's binary.
 E11_EXEC_DRIVER_BIN="$RESULTS/.e11-exec-driver-bin"
-PROTO_IMPORT_PATH="$REPO_ROOT/proto"
+PROTO_IMPORT_PATH="${PROTO_IMPORT_PATH:-$REPO_ROOT/proto}"
 PROTO_REL_PATH="sandbox/v1/sandbox.proto"
 
 # Shared relay/redis stack knobs -- only ONE arm's stack is ever up at a time (each

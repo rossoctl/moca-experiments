@@ -25,7 +25,7 @@
 # the same technique e10-lifecycle.test.sh and build-snapshot.test.sh use -- so
 # these tests drive the REAL artifact, never a rewritten substitute.
 #
-# Run: bash deploy/microvm/tests/e11-density.test.sh
+# Run: bash microvm/tests/e11-density.test.sh
 
 set -uo pipefail
 

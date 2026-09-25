@@ -15,9 +15,22 @@ exposed to research/experiment clutter in the main repo.
   file; it is not independently maintained here).
 - `microvm/` — E10 (lifecycle), E11 (density/replenishment), E12 (vsock egress), E13 (restore
   capacity/telemetry): bare-metal microVM experiments, their `EXPERIMENTS.md`/`METAL-RUNBOOK.md`
-  write-ups, `predictions.json`, and their tests. E11's Go seam-closure test needs a sibling
-  checkout of the main repo's `remote-worker/` module (override with `REMOTE_WORKER_DIR`) — it
-  skips gracefully, like its "no go on PATH" check, if one isn't found.
+  write-ups, `predictions.json`, and their tests.
+
+**A note on `microvm/` (E10/E11) too:** their cluster-free structural tests (`e10-lifecycle.test.sh`,
+`e11-density.test.sh`, `e12-vsock-egress-probe.test.sh`, `e13-*.test.sh`) run standalone here —
+those are what CI actually gates on. The drivers themselves (`e10-lifecycle.sh`, `e11-density.sh`)
+are bare-metal/root-only regardless of repo, and additionally need: a sibling checkout of the
+main repo's `remote-worker/` Go module and `proto/` (override with `REMOTE_WORKER_DIR`,
+`PROTO_FILE`, `PROTO_IMPORT_PATH` — real overrides now, not just path arithmetic) for the Go
+exec-driver path; and the main repo's own pnpm workspace (`pnpm --filter @sh/sandbox-relay
+start`) to launch the sandbox-relay both the container and microvm arms need — that part cannot
+be satisfied by an env var at all, since `pnpm --filter` resolves workspace packages from the
+current repo's own `pnpm-workspace.yaml`. In practice: run the drivers from a checkout of the
+main repo (or a sibling of it with `REMOTE_WORKER_DIR`/`PROTO_FILE`/`PROTO_IMPORT_PATH` set),
+same caveat as `knative/`'s cluster experiments and `experiments/`'s E2/E5. `e11-density.test.sh`'s
+Go seam-closure check specifically skips gracefully (like its "no go on PATH" check) when no
+`remote-worker/` checkout is found, rather than failing.
 - `experiments/` — the original `@sh/experiments` workspace package: M6's E2/E5 in-process
   experiment runners, the E11 density-analysis module (`src/microvm-density.ts`, consumed by
   `microvm/e11-density.sh`), and `swebench/` — the SWE-bench sandbox-sharing evaluation harness

@@ -1,0 +1,17 @@
+node_modules/
+__pycache__/
+*.pyc
+*.log
+
+# Raw per-run experiment output -- EXPERIMENTS.md/METAL-RUNBOOK.md carry the numbers that
+# matter; the underlying per-VM JSON/log files are throwaway rig artifacts, not evidence to
+# keep in git. (Carried over from the main repo's .gitignore when these scripts moved here.)
+microvm/e12-results/
+microvm/e13-results/
+microvm/e13-control-results/
+microvm/e13-telemetry/
+microvm/.results/
+microvm/.results-*/
+
+# E2 writes each run's measured table here; experiments/RESULTS.md is the committed baseline.
+experiments/.results/

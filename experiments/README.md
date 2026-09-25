@@ -1,5 +1,12 @@
 # @sh/experiments — M6 experiments (E2 + E5)
 
+> **moca-experiments note (2026-09-25):** this package's `pnpm -C experiments test` commands
+> below only actually run from inside the main `moca` (serverless-harness) repo's pnpm
+> workspace, before this split -- `@sh/harness` and `@sh/session-backend` are `workspace:*`
+> dependencies that don't exist standalone here. Preserved as a historical record of what E2/E5
+> measured, same caveat the `knative/` Kind/OCP experiments carry for needing a live cluster.
+> See the top-level README.
+
 In-process experiment runners for the serverless-harness. See
 `docs/specs/2026-06-24-m6-experiments-design.md`.
 

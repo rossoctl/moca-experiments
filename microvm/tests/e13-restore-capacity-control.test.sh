@@ -4,7 +4,7 @@
 # KVM-free contract test for e13-restore-capacity-control.sh, in
 # e12-vsock-egress-probe.test.sh's own style (extract_fn/check).
 #
-# Run: bash deploy/microvm/tests/e13-restore-capacity-control.test.sh
+# Run: bash microvm/tests/e13-restore-capacity-control.test.sh
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

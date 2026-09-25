@@ -8,7 +8,7 @@
 #    (max-scale raised so the sandbox, not the 5-pod harness cap, limits concurrency), warm,
 #    multi-sampled, fed to the sustained-decline detectKnee. Knee reported as a floor.
 # Gated by E6_LIVE=1. Records to EXPERIMENTS.md.
-# Usage: E6_LIVE=1 [E6_SAMPLES=3] [E6_SWEEP_MAX_SCALE=20] bash deploy/knative/e6-saturation.sh
+# Usage: E6_LIVE=1 [E6_SAMPLES=3] [E6_SWEEP_MAX_SCALE=20] bash knative/e6-saturation.sh
 #
 # WORKLOAD=synthetic|swebench (default synthetic, Plan C): swebench drives real solve leaves
 # per weight bucket (Phase 1) and sweeps the heaviest instance (Phase 2) via the workload-provider

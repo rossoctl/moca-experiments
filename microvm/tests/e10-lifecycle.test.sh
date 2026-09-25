@@ -37,7 +37,7 @@
 # the same pattern deploy/microvm/tests/build-snapshot.test.sh uses for
 # hardlink_or_copy_bin.
 #
-# Run: bash deploy/microvm/tests/e10-lifecycle.test.sh
+# Run: bash microvm/tests/e10-lifecycle.test.sh
 
 set -uo pipefail
 

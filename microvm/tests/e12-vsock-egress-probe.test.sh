@@ -27,7 +27,7 @@
 # that snippet in a subshell -- the same pattern e10-lifecycle.test.sh and
 # build-snapshot.test.sh both use.
 #
-# Run: bash deploy/microvm/tests/e12-vsock-egress-probe.test.sh
+# Run: bash microvm/tests/e12-vsock-egress-probe.test.sh
 
 set -uo pipefail
 
