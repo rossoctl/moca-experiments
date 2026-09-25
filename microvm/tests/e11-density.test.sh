@@ -3266,13 +3266,24 @@ check "  ...and converge is not routed through EXEC_CLIENT at all" \
 # ---------------------------------------------------------------------------
 echo "== the real write_rung_plan drives the real exec-driver against the real null-responder (#294)"
 
+# moca-experiments note (2026-09-25): remote-worker/ (a Go module) stays in the main moca
+# (serverless-harness) repo -- it cannot move here (vmpoolctl, which lives beside exec-driver
+# and null-responder, imports a Go internal/ package that no other module may import). This
+# seam-closure check only runs when a remote-worker checkout is actually reachable at
+# $DIR/../remote-worker (the layout of a sibling checkout of the main repo one level up from
+# this repo's own root) -- override with REMOTE_WORKER_DIR to point at any other checkout.
+_e11_seam_remote_worker_dir="${REMOTE_WORKER_DIR:-$DIR/../remote-worker}"
 if ! command -v go >/dev/null 2>&1; then
   echo "  SKIP: no go on PATH, so the exec-driver and null-responder cannot be built"
+elif [ ! -d "$_e11_seam_remote_worker_dir" ]; then
+  echo "  SKIP: no remote-worker/ checkout at $_e11_seam_remote_worker_dir (this is the" \
+       "moca-experiments repo -- remote-worker/ lives in the main moca repo; set" \
+       "REMOTE_WORKER_DIR to a sibling checkout of it to run this check)"
 else
   seam_dir="$(mktemp -d "${TMPDIR:-/tmp}/e11-seam.XXXXXX")"
   seam_rc=0
   (
-    cd "$DIR/../../remote-worker" &&
+    cd "$_e11_seam_remote_worker_dir" &&
       go build -o "$seam_dir/exec-driver" ./cmd/exec-driver &&
       go build -o "$seam_dir/null-responder" ./cmd/null-responder
   ) >"$seam_dir/build.log" 2>&1 || seam_rc=$?

@@ -142,14 +142,14 @@ export LC_ALL
 # ABSOLUTE, always, because two callers `cd` elsewhere before using it: both
 # `go build -o "$RESULTS/..."` calls run inside `(cd "$REMOTE_WORKER_DIR" && ...)`. With a
 # relative RESULTS they wrote the worker binaries to
-# remote-worker/deploy/microvm/.results/, a directory that does not exist, the build
+# remote-worker/microvm/.results/, a directory that does not exist, the build
 # failed, its exit status was unchecked, and the first symptom was a converge failure
 # naming neither the build nor the path. Found on E11's first-ever execution. The test
 # suite could not see it: it overrides RESULTS with an absolute /tmp path.
 #
 # A relative override is normalised rather than rejected, so `RESULTS=out ./e11-density.sh`
 # keeps working and means what it looks like.
-RESULTS="${RESULTS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/deploy/microvm/.results}"
+RESULTS="${RESULTS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/microvm/.results}"
 case "$RESULTS" in /*) ;; *) RESULTS="$PWD/$RESULTS" ;; esac
 
 # Required, no default -- same reasoning e10-lifecycle.sh gives for SH_SUBSTRATE:
@@ -264,7 +264,7 @@ SAMPLE_PREV_IDLE=0
 SAMPLE_PREV_TOTAL=0
 SAMPLE_TICK=0
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_WORKER_DIR="$REPO_ROOT/remote-worker"
 EXPERIMENTS_DIR="$REPO_ROOT/experiments"
 PROTO_FILE="$REPO_ROOT/proto/sandbox/v1/sandbox.proto"

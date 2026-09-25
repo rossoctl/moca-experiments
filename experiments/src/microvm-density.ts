@@ -152,12 +152,12 @@ export interface DensityReport {
   standbysResident: number;
   /** Idle standby residency at the knee, once converged -- reported separately. */
   idleStandbyResidency: number;
-  /** §7.4's five predictions, scored against deploy/microvm/predictions.json, keyed by id. */
+  /** §7.4's five predictions, scored against microvm/predictions.json, keyed by id. */
   predictions: Record<number, Verdict>;
 }
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const PREDICTIONS_FILE = resolve(REPO_ROOT, 'deploy/microvm/predictions.json');
+const PREDICTIONS_FILE = resolve(REPO_ROOT, 'microvm/predictions.json');
 
 interface PinnedPrediction {
   id: number;
@@ -165,7 +165,7 @@ interface PinnedPrediction {
 }
 
 /**
- * Reads deploy/microvm/predictions.json for the prediction IDENTITIES (ids) only.
+ * Reads microvm/predictions.json for the prediction IDENTITIES (ids) only.
  * Never edited by this module -- the Task 19 pin (`microvm-predictions.test.ts`) covers
  * the file's content; this just makes sure the report's keys cannot drift from what was
  * actually committed to before any rung ran.

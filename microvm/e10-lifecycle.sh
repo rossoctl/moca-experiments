@@ -95,7 +95,7 @@ set -uo pipefail
 # where the same construct appears twice; fixed in both drivers rather than in the one that
 # happened to be under the microscope. The test suite overrides RESULTS with an absolute
 # /tmp path, so it could not have caught this.
-RESULTS="${RESULTS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/deploy/microvm/.results}"
+RESULTS="${RESULTS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/microvm/.results}"
 case "$RESULTS" in /*) ;; *) RESULTS="$PWD/$RESULTS" ;; esac
 ITERS="${ITERS:-200}"
 WARMUP="${WARMUP:-20}"
@@ -137,15 +137,15 @@ WORKSPACE_ROOT="${SH_WORKSPACE_ROOT:?set SH_WORKSPACE_ROOT - the same env var na
 # hardware where it works can opt back in.
 read -r -a ARMS <<<"${SH_E10_ARMS:-firecracker}"
 
-VMPOOLCTL="${VMPOOLCTL:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../remote-worker" 2>/dev/null && pwd)/vmpoolctl}"
-REMOTE_WORKER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../remote-worker" 2>/dev/null && pwd)"
-PROTO_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)/proto/sandbox/v1/sandbox.proto"
+VMPOOLCTL="${VMPOOLCTL:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../remote-worker" 2>/dev/null && pwd)/vmpoolctl}"
+REMOTE_WORKER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../remote-worker" 2>/dev/null && pwd)"
+PROTO_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/proto/sandbox/v1/sandbox.proto"
 # grpcurl refuses an absolute -proto path unless also given at least one -import-path, and
 # fails at proto-parse time before dialling. PROTO_FILE stays for the existence check --
 # "is the file there" is a different question from "how is grpcurl invoked" -- and these two
 # are what the invocation actually uses. Verified on the rig: import path at the proto ROOT
 # with the file named relative to it parses and proceeds to dial.
-PROTO_IMPORT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)/proto"
+PROTO_IMPORT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/proto"
 PROTO_REL_PATH="sandbox/v1/sandbox.proto"
 
 # Client-side deadline for grpcurl, a margin above the request's own timeout_s:30. Rung 1 is
@@ -435,7 +435,7 @@ start_rung1_stack() {
 
   log "rung1: starting the relay on :$RUNG1_RELAY_PORT"
   (
-    cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" &&
+    cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" &&
       SH_RELAY_TOKEN="$RUNG1_RELAY_TOKEN" SH_RELAY_PORT="$RUNG1_RELAY_PORT" \
         REDIS_URL="redis://127.0.0.1:${RUNG1_REDIS_PORT}" \
         pnpm --filter @sh/sandbox-relay start >"$RESULTS/e10-rung1-relay.log" 2>&1 &

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const FILE = resolve(REPO_ROOT, 'deploy/microvm/predictions.json');
+const FILE = resolve(REPO_ROOT, 'microvm/predictions.json');
 
 /**
  * Spec §7.4 records five falsifiable predictions BEFORE the first rung, and says why
@@ -28,7 +28,7 @@ describe('microVM predictions are recorded before the rungs and pinned', () => {
     const actual = createHash('sha256').update(raw).digest('hex');
     expect(
       actual,
-      'deploy/microvm/predictions.json no longer matches its pinned SHA-256. ' +
+      'microvm/predictions.json no longer matches its pinned SHA-256. ' +
         'This pin exists so a prediction cannot be quietly edited to fit results once ' +
         'they land (spec §7.4: "a prediction that can be edited to fit the data is a ' +
         'hypothesis"). If this change is legitimate — a genuine correction made BEFORE ' +

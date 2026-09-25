@@ -64,7 +64,7 @@ done
 # Hard correctness gate via the tested checker.
 # shellcheck disable=SC2016  # single quotes intentional: TypeScript code literal, not bash expansion
 CONSISTENT=$(npx tsx -e '
-  import { worktreeConsistent } from "../../experiments/src/sharing.ts";
+  import { worktreeConsistent } from "../experiments/src/sharing.ts";
   const r = worktreeConsistent(JSON.parse(process.argv[1]));
   process.stdout.write(r.ok ? "ok" : "mismatch:" + JSON.stringify(r.mismatches));
 ' "$OBS")

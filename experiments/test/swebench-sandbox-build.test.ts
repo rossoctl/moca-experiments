@@ -1,6 +1,6 @@
 // experiments/test/swebench-sandbox-build.test.ts
 // Hermetic structural test for the baked-sandbox Dockerfile emitter
-// (deploy/knative/build-swebench-sandbox.sh --emit --limit 3).
+// (knative/build-swebench-sandbox.sh --emit --limit 3).
 //
 // Asserts against the emitter's REAL stdout (not a hand-maintained copy):
 // invokes the bash emitter via execSync and parses the emitted Dockerfile
@@ -31,7 +31,7 @@ describe('swebench-sandbox Dockerfile emitter (build-swebench-sandbox.sh --emit 
   let dockerfile: string;
 
   beforeAll(() => {
-    dockerfile = execSync('bash deploy/knative/build-swebench-sandbox.sh --emit --limit 3', {
+    dockerfile = execSync('bash knative/build-swebench-sandbox.sh --emit --limit 3', {
       cwd: repoRoot,
       encoding: 'utf8',
     });
@@ -44,7 +44,7 @@ describe('swebench-sandbox Dockerfile emitter (build-swebench-sandbox.sh --emit 
 
   it('--print-tag derives <deckHash>-<N>of<total> from the bake-list for each --limit', () => {
     const printTag = (limit: number) =>
-      execSync(`bash deploy/knative/build-swebench-sandbox.sh --print-tag --limit ${limit}`, {
+      execSync(`bash knative/build-swebench-sandbox.sh --print-tag --limit ${limit}`, {
         cwd: repoRoot,
         encoding: 'utf8',
       }).trim();
@@ -140,12 +140,12 @@ describe('swebench-sandbox emitter — iterative accumulation (--offset / --base
   const total = bake.envs.length;
 
   const emit = (args: string) =>
-    execSync(`bash deploy/knative/build-swebench-sandbox.sh --emit ${args}`, {
+    execSync(`bash knative/build-swebench-sandbox.sh --emit ${args}`, {
       cwd: repoRoot,
       encoding: 'utf8',
     });
   const printTag = (args: string) =>
-    execSync(`bash deploy/knative/build-swebench-sandbox.sh --print-tag ${args}`, {
+    execSync(`bash knative/build-swebench-sandbox.sh --print-tag ${args}`, {
       cwd: repoRoot,
       encoding: 'utf8',
     }).trim();

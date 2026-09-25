@@ -45,7 +45,7 @@ VARIANTS=("L0:small.py:password" "L1:medium.py:eval(" "L2:large.py:eval(")
 # Plan C: WORKLOAD=synthetic|swebench switch. synthetic (default) keeps the original behavior
 # exactly; swebench drives real solve leaves through the workload-provider seam (Task 1/3).
 WORKLOAD="${WORKLOAD:-synthetic}"
-PROVIDER_DECK="${DECK:-$(cd ../.. && pwd)/experiments/swebench/deck.json}"  # CWD is the script dir (cd above); mirror e1-benefit.sh
+PROVIDER_DECK="${DECK:-$(cd .. && pwd)/experiments/swebench/deck.json}"  # CWD is the script dir (cd above); mirror e1-benefit.sh
 PREDICTIONS="${PREDICTIONS:-${LOG_DIR:-/tmp/kagenti/planC}/predictions.jsonl}"
 USAGE="${USAGE:-${LOG_DIR:-/tmp/kagenti/planC}/usage.jsonl}"  # per-leaf token usage for cost pricing
 # Health tally (spec §8): count leaves by outcome so broken leaves are excluded from the duty/knee
@@ -130,7 +130,7 @@ else
   # --- Phase 1: N-vs-workload curve (C=1, warm, one representative solve leaf per weight bucket) ---
   # shellcheck disable=SC2016  # single-quoted TypeScript literal, not bash expansion
   CURVE_ITEMS=$(WORKLOAD=swebench DECK="$PROVIDER_DECK" npx tsx -e '
-    import { getWorkloadProvider } from "../../experiments/src/workload.ts";
+    import { getWorkloadProvider } from "../experiments/src/workload.ts";
     const p = getWorkloadProvider(process.env, process.env.DECK);
     process.stdout.write(JSON.stringify(p.curveItems()));
   ')
@@ -181,7 +181,7 @@ fi
 
 # shellcheck disable=SC2016  # single-quoted TypeScript literal, not bash expansion
 CURVE=$(npx tsx -e '
-  import { buildRatioCurve } from "../../experiments/src/sharing.ts";
+  import { buildRatioCurve } from "../experiments/src/sharing.ts";
   process.stdout.write(JSON.stringify(buildRatioCurve(JSON.parse(process.argv[1]))));
 ' "$CURVE_IN")
 echo "  RATIO_CURVE=$CURVE"
@@ -222,7 +222,7 @@ if [ "$WORKLOAD" = "synthetic" ]; then
 else
   # shellcheck disable=SC2016  # single-quoted TypeScript literal, not bash expansion
   SWEEP_POST=$(WORKLOAD=swebench DECK="$PROVIDER_DECK" npx tsx -e '
-    import { getWorkloadProvider } from "../../experiments/src/workload.ts";
+    import { getWorkloadProvider } from "../experiments/src/workload.ts";
     process.stdout.write(JSON.stringify(getWorkloadProvider(process.env, process.env.DECK).sweepItem().post));
   ')
   SWEEP_DESC="heavy (swebench)"
@@ -288,7 +288,7 @@ done
 
 # shellcheck disable=SC2016
 KF=$(npx tsx -e '
-  import { detectKnee, sanityFloorPass } from "../../experiments/src/sharing.ts";
+  import { detectKnee, sanityFloorPass } from "../experiments/src/sharing.ts";
   const pts = JSON.parse(process.argv[1]);
   const knee = detectKnee(pts, Number(process.argv[2]));
   process.stdout.write(`${knee} ${sanityFloorPass(knee, Number(process.argv[3]))}`);

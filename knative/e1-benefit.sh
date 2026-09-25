@@ -26,7 +26,7 @@ DEGRADE_X="${E1B_DEGRADE_X:-2}"
 # Driver-shell selector (mirrors measure-swebench-runtimes.sh): pool_pod_counts (lib.sh) reads this
 # from the driver's own environment, not from the ksvc container env set below via set_ksvc_env.
 KAGENTI_SANDBOX_POOL_SELECTOR="${KAGENTI_SANDBOX_POOL_SELECTOR:-sh.kagenti.io/sandbox-pool=swebench}"
-DECK="${DECK:-$(cd ../.. && pwd)/experiments/swebench/deck.json}"
+DECK="${DECK:-$(cd .. && pwd)/experiments/swebench/deck.json}"
 PRED="${PREDICTIONS:-${LOG_DIR:-/tmp/kagenti/planC}/predictions-e1.jsonl}"
 USAGE="${USAGE:-${LOG_DIR:-/tmp/kagenti/planC}/usage-e1.jsonl}"  # per-leaf token usage for cost pricing
 mkdir -p "$(dirname "$PRED")"; mkdir -p "$(dirname "$USAGE")"; : >"$USAGE"
@@ -37,7 +37,7 @@ H_SOLVED=0; H_FAILED=0; H_SATURATED=0; H_TRANSPORT=0
 # The deck slice (deterministic).
 # shellcheck disable=SC2016
 ITEMS=$(WORKLOAD=swebench DECK="$DECK" npx tsx -e '
-  import { getWorkloadProvider } from "../../experiments/src/workload.ts";
+  import { getWorkloadProvider } from "../experiments/src/workload.ts";
   const p = getWorkloadProvider(process.env, process.env.DECK);
   process.stdout.write(JSON.stringify(p.sliceItems({ perBucket: '"$PER_BUCKET"', seed: '"$SEED"' })));
 ')
@@ -123,7 +123,7 @@ echo "  shared@$N: resvSecPerLeaf=$shr_r p95Ms=$shr_p throughput=$shr_t peakPods
 
 # shellcheck disable=SC2016
 BEN=$(npx tsx -e '
-  import { reservationBenefit } from "../../experiments/src/sharing.ts";
+  import { reservationBenefit } from "../experiments/src/sharing.ts";
   const d = JSON.parse(process.argv[1]), s = JSON.parse(process.argv[2]);
   const r = reservationBenefit(d, s, Number(process.argv[3]));
   process.stdout.write(`${r.ratio} ${r.withinDegrade}`);

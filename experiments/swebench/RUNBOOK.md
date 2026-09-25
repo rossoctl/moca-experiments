@@ -6,6 +6,15 @@ contributors who have never run it before.
 
 ---
 
+> **Repo split note (2026-09-25):** this runbook's driver scripts and docs now live in
+> `moca-experiments` (this repo). The OpenShift/Kubernetes deployment manifests it applies
+> (`setup-ocp.sh`, `swebench-sandbox-buildconfig.yaml`, `swebench-sandbox-pool.yaml`, `lib.sh`)
+> stay in the main `moca` repo (`rossoctl/serverless-harness` at the time of this split) — run
+> those steps from a checkout of that repo instead (marked `# [main repo]` below, as a bash
+> comment so it stays safe to copy-paste). Paths below are adjusted to reflect which repo each
+> file now lives in.
+
+
 ## 0. What this measures
 
 Two experiments over [SWE-bench Verified](https://www.swebench.com/) solve tasks ("leaves"), each
@@ -64,7 +73,7 @@ One-shot bring-up (Serverless Operator + KnativeServing, Redis, agent-sandbox co
 
 ```bash
 oc login <cluster-api> -u <admin>
-./deploy/knative/setup-ocp.sh --namespace default --with-keda
+./deploy/knative/setup-ocp.sh --namespace default --with-keda  # [main repo]
 # add --dry-run first to preview; --image <ref> to pin a specific harness image
 ```
 
@@ -103,22 +112,22 @@ the instance set:
 
 ```bash
 # (optional) regenerate the deck — needs network + `pip install swebench datasets`
-python3 scripts/gen_swebench_deck.py --slice all --out-dir experiments/swebench
+python3 experiments/swebench/gen_swebench_deck.py --slice all --out-dir experiments/swebench
 ```
 
 Create the ImageStream/BuildConfig, then build in **iterative batches** (single-shot 15 evicts a
 node on ephemeral storage). Each batch emits a Dockerfile and layers onto the previous image:
 
 ```bash
-oc apply -f deploy/knative/swebench-sandbox-buildconfig.yaml
+oc apply -f deploy/knative/swebench-sandbox-buildconfig.yaml  # [main repo]
 
 # batch 1 (envs 0-4, includes base tools + repo mirrors)
-deploy/knative/build-swebench-sandbox.sh --emit --limit 5 --offset 0 > /tmp/Dockerfile.b1
-TAG1=$(deploy/knative/build-swebench-sandbox.sh --print-tag --limit 5 --offset 0)   # …-5of15
+knative/build-swebench-sandbox.sh --emit --limit 5 --offset 0 > /tmp/Dockerfile.b1
+TAG1=$(knative/build-swebench-sandbox.sh --print-tag --limit 5 --offset 0)   # …-5of15
 oc start-build swebench-sandbox --from-file=/tmp/Dockerfile.b1 -F
 
 # batch 2 (envs 5-9), FROM the batch-1 image
-deploy/knative/build-swebench-sandbox.sh --emit --limit 5 --offset 5 \
+knative/build-swebench-sandbox.sh --emit --limit 5 --offset 5 \
   --base image-registry.openshift-image-registry.svc:5000/default/swebench-sandbox:$TAG1 --no-base-tools > /tmp/Dockerfile.b2
 # … oc start-build with /tmp/Dockerfile.b2, tag …-10of15
 
@@ -148,7 +157,7 @@ Only needed if you regenerated the deck in §4 (fresh instances have `weight_buc
 each instance's gold-test wall-clock on the live pool and assigns light/medium/heavy terciles:
 
 ```bash
-MEASURE_LIVE=1 bash deploy/knative/measure-swebench-runtimes.sh   # OCP-only, sequential, slow
+MEASURE_LIVE=1 bash knative/measure-swebench-runtimes.sh   # OCP-only, sequential, slow
 ```
 
 ---
@@ -156,7 +165,7 @@ MEASURE_LIVE=1 bash deploy/knative/measure-swebench-runtimes.sh   # OCP-only, se
 ## 6. Deploy the sandbox pool
 
 ```bash
-oc apply -f deploy/knative/swebench-sandbox-pool.yaml
+oc apply -f deploy/knative/swebench-sandbox-pool.yaml  # [main repo]
 oc get sandbox -n default -l app=sandbox                 # wait for swebench-sandbox-0/1/2
 oc wait --for=condition=Ready pod -l sh.kagenti.io/sandbox-pool=swebench -n default --timeout=600s
 ```
@@ -182,7 +191,7 @@ E6_LIVE=1 WORKLOAD=swebench \
   SWEBENCH_LEAF_TIMEOUT=1800 SH_MODEL=claude-haiku-4-5 \
   PREDICTIONS="$LOG_DIR/predictions.jsonl" USAGE="$LOG_DIR/usage.jsonl" \
   KSVC_URL="$KSVC_URL" KUBECONFIG="$KUBECONFIG" LOG_DIR="$LOG_DIR" \
-  bash deploy/knative/e6-saturation.sh 2>&1 | tee "$LOG_DIR/e6.log"
+  bash knative/e6-saturation.sh 2>&1 | tee "$LOG_DIR/e6.log"
 ```
 
 Emits per-bucket duty, `RATIO_CURVE=…`, `sweep c=… p95Ms=…`, a final `E6_RESULT …`, and a
@@ -199,7 +208,7 @@ E1B_LIVE=1 \
   SWEBENCH_LEAF_TIMEOUT=1800 SH_MODEL=claude-haiku-4-5 \
   PREDICTIONS="$LOG_DIR/predictions-e1.jsonl" USAGE="$LOG_DIR/usage-e1.jsonl" \
   KSVC_URL="$KSVC_URL" KUBECONFIG="$KUBECONFIG" LOG_DIR="$LOG_DIR" \
-  bash deploy/knative/e1-benefit.sh 2>&1 | tee "$LOG_DIR/e1.log"
+  bash knative/e1-benefit.sh 2>&1 | tee "$LOG_DIR/e1.log"
 ```
 
 Emits `dedicated:` / `shared@N:` lines, a final `E1B_RESULT benefit=…x …`, and a `COST_REPORT …`.
@@ -229,7 +238,7 @@ cat "$LOG_DIR"/*.cost 2>/dev/null | jq -s 'map(.costUsd)|add' 2>/dev/null
 
 Key artifacts in `$LOG_DIR`: `e6.log`, `e1.log`, `predictions*.jsonl` (patches),
 `usage*.jsonl.cost` (per-leaf tokens/cost). The drivers also append a run block to
-`deploy/knative/EXPERIMENTS.md`.
+`knative/EXPERIMENTS.md`.
 
 > **Health tally** on `E6_RESULT`/`E1B_RESULT` (`health=solved/total … transport=N`): OpenShift
 > ingress may drop long-lived HTTP responses; those leaves are _excluded from metrics but counted_.
@@ -272,9 +281,9 @@ INSTANCE_IDS="django__django-11555" RUN_ID=smoke MAX_WORKERS=1 \
 
 ```bash
 # ksvc env/timeout/scale reset automatically by each driver's EXIT trap; if interrupted, force it:
-( cd deploy/knative && source ./lib.sh && restore_ksvc_env )
+( cd deploy/knative && source ./lib.sh && restore_ksvc_env )  # [main repo] -- path is relative to a checkout of that repo, not this one
 
-oc delete -f deploy/knative/swebench-sandbox-pool.yaml
+oc delete -f deploy/knative/swebench-sandbox-pool.yaml  # [main repo]
 oc delete pvc -n default -l sh.kagenti.io/sandbox-pool=swebench
 
 # revert the Knative timeout ceiling
