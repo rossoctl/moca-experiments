@@ -91,6 +91,12 @@ downstream Exec with it. The drivers now fail at that point, naming the relay's 
 printing its last 20 lines, rather than letting it surface ten seconds later as a converge
 timeout — but you still have to build it.
 
+The relay refuses to boot without `MOCA_RELAY_EXEC_TOKEN`, the workers' Exec credential, and
+refuses every `SandboxExec` that does not present it. Each driver generates a fresh one per run,
+passes it to the relay it starts and sends it as a bearer on every Exec (grpcurl and
+`exec-driver` alike). To reuse an already-running stack (`SH_E10_START_STACK=0`,
+`SH_E11_START_STACK=0`), pass that relay's token as `SH_E10_EXEC_TOKEN` / `SH_E11_EXEC_TOKEN`.
+
 Worth verifying before §4, since it costs nothing:
 
 ```bash

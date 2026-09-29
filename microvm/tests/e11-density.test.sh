@@ -3353,8 +3353,13 @@ else
     check "write_rung_plan produced a plan" "$([ -s "$seam_plan" ] && echo yes || echo no)" "yes"
 
     # THE REAL BINARY, reading THAT plan.
+    # Without the relay's worker credential the driver refuses before it dials (MI1 R5).
+    notok_rc=0
+    (unset MOCA_RELAY_EXEC_TOKEN; "$seam_dir/exec-driver" --plan "$seam_plan") >"$seam_dir/driver-notok.log" 2>&1 || notok_rc=$?
+    check "exec-driver refuses to start without MOCA_RELAY_EXEC_TOKEN" \
+      "$([ "$notok_rc" -ne 0 ] && grep -q MOCA_RELAY_EXEC_TOKEN "$seam_dir/driver-notok.log" && echo yes || echo no)" "yes"
     drv_rc=0
-    "$seam_dir/exec-driver" --plan "$seam_plan" >"$seam_dir/driver.log" 2>&1 || drv_rc=$?
+    MOCA_RELAY_EXEC_TOKEN=seam-exec-token "$seam_dir/exec-driver" --plan "$seam_plan" >"$seam_dir/driver.log" 2>&1 || drv_rc=$?
     check "exec-driver accepted the real plan and exited 0" "$drv_rc" "0"
     if [ "$drv_rc" -ne 0 ]; then
       echo "  exec-driver said: $(cat "$seam_dir/driver.log")"
@@ -3396,6 +3401,57 @@ else
   fi
   rm -rf "$seam_dir"
 fi
+# ---------------------------------------------------------------------------
+# The relay's worker credential (MI1 R5). The relay refuses to boot without
+# MOCA_RELAY_EXEC_TOKEN and refuses every SandboxExec that does not present it as a bearer, so
+# every relay this driver launches must receive the token and every Exec it issues must send
+# it. Comment lines are stripped first so explanations do not count as instances.
+# ---------------------------------------------------------------------------
+echo "== the relay's exec token reaches every relay launch and every Exec (MI1 R5)"
+# relay_launches_without_exec_token prints each relay launch whose command (the launch line and
+# the three lines before it) does not set MOCA_RELAY_EXEC_TOKEN.
+relay_launches_without_exec_token() {
+  grep -v '^[[:space:]]*#' "$1" | awk '
+    { w[NR % 4] = $0 }
+    /pnpm --filter @sh\/sandbox-relay start/ {
+      hit = 0
+      for (k in w) if (w[k] ~ /MOCA_RELAY_EXEC_TOKEN=/) hit = 1
+      if (!hit) print
+    }'
+}
+# grpcurl_calls_without_bearer prints each grpcurl invocation that sends no bearer.
+grpcurl_calls_without_bearer() {
+  grep -v '^[[:space:]]*#' "$1" | grep -E '(^|[[:space:];(])grpcurl -' | grep -v 'authorization: Bearer' || true
+}
+tok_fixture="$(mktemp)"
+printf '%s\n' '  SH_RELAY_TOKEN="$T" SH_RELAY_PORT="$P" \' '    pnpm --filter @sh/sandbox-relay start >log 2>&1 &' \
+  '  grpcurl -plaintext -max-time 5 x:1 sandbox.v1.SandboxExec/Exec' >"$tok_fixture"
+check "non-vacuousness: the launch detector flags a relay started without the exec token" \
+  "$([ -n "$(relay_launches_without_exec_token "$tok_fixture")" ] && echo yes || echo no)" "yes"
+check "non-vacuousness: the grpcurl detector flags an Exec sent without a bearer" \
+  "$([ -n "$(grpcurl_calls_without_bearer "$tok_fixture")" ] && echo yes || echo no)" "yes"
+rm -f "$tok_fixture"
+check "the driver launches the relay at all, once per arm (the checks below are not vacuous)" \
+  "$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -c 'pnpm --filter @sh/sandbox-relay start')" "2"
+check "both arms' relays receive MOCA_RELAY_EXEC_TOKEN" \
+  "$([ -z "$(relay_launches_without_exec_token "$SCRIPT")" ] && echo yes || echo no)" "yes"
+check "the driver issues Execs through grpcurl at all (timed Exec and converge)" \
+  "$([ "$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -cE '(^|[[:space:];(])grpcurl -')" -ge 2 ] && echo yes || echo no)" "yes"
+check "every grpcurl Exec presents the exec token as a bearer" \
+  "$([ -z "$(grpcurl_calls_without_bearer "$SCRIPT")" ] && echo yes || echo no)" "yes"
+check "the Go exec-driver is launched with MOCA_RELAY_EXEC_TOKEN (it refuses to start without it)" \
+  "$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -F '"$E11_EXEC_DRIVER_BIN" --plan' | grep -c 'MOCA_RELAY_EXEC_TOKEN="$E11_EXEC_TOKEN"')" "1"
+tok_line="$(grep -E '^E11_EXEC_TOKEN=' "$SCRIPT" || true)"
+check "the exec token has exactly one definition" "$(printf '%s\n' "$tok_line" | grep -c .)" "1"
+tok_a="$(unset SH_E11_EXEC_TOKEN; eval "$tok_line"; printf '%s' "$E11_EXEC_TOKEN")"
+tok_b="$(unset SH_E11_EXEC_TOKEN; eval "$tok_line"; printf '%s' "$E11_EXEC_TOKEN")"
+check "the default exec token is 32 random bytes of hex" \
+  "$([[ "$tok_a" =~ ^[0-9a-f]{64}$ ]] && echo yes || echo no)" "yes"
+check "the default exec token differs per run (never a fixed value)" \
+  "$([ "$tok_a" != "$tok_b" ] && echo yes || echo no)" "yes"
+check "SH_E11_EXEC_TOKEN overrides it, for a reused stack" \
+  "$(export SH_E11_EXEC_TOKEN=reused-tok; eval "$tok_line"; printf '%s' "$E11_EXEC_TOKEN")" "reused-tok"
+
 echo
 echo "Total failures: $fails"
 exit "$fails"

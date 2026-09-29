@@ -813,6 +813,56 @@ check "the redis image is overridable so an operator can pin a digest" \
 check "redis is started with RDB snapshots disabled (--save '')" \
   "$([ "$(grep -c -- "--save ''" "$SCRIPT")" -ge 1 ] && echo yes || echo no)" "yes"
 
+# ---------------------------------------------------------------------------
+# The relay's worker credential (MI1 R5). The relay refuses to boot without
+# MOCA_RELAY_EXEC_TOKEN and refuses every SandboxExec that does not present it as a bearer, so
+# every relay this driver launches must receive the token and every Exec it issues must send
+# it. Comment lines are stripped first so explanations do not count as instances.
+# ---------------------------------------------------------------------------
+echo "== the relay's exec token reaches every relay launch and every Exec (MI1 R5)"
+# relay_launches_without_exec_token prints each relay launch whose command (the launch line and
+# the three lines before it) does not set MOCA_RELAY_EXEC_TOKEN.
+relay_launches_without_exec_token() {
+  grep -v '^[[:space:]]*#' "$1" | awk '
+    { w[NR % 4] = $0 }
+    /pnpm --filter @sh\/sandbox-relay start/ {
+      hit = 0
+      for (k in w) if (w[k] ~ /MOCA_RELAY_EXEC_TOKEN=/) hit = 1
+      if (!hit) print
+    }'
+}
+# grpcurl_calls_without_bearer prints each grpcurl invocation that sends no bearer.
+grpcurl_calls_without_bearer() {
+  grep -v '^[[:space:]]*#' "$1" | grep -E '(^|[[:space:];(])grpcurl -' | grep -v 'authorization: Bearer' || true
+}
+tok_fixture="$(mktemp)"
+printf '%s\n' '  SH_RELAY_TOKEN="$T" SH_RELAY_PORT="$P" \' '    pnpm --filter @sh/sandbox-relay start >log 2>&1 &' \
+  '  grpcurl -plaintext -max-time 5 x:1 sandbox.v1.SandboxExec/Exec' >"$tok_fixture"
+check "non-vacuousness: the launch detector flags a relay started without the exec token" \
+  "$([ -n "$(relay_launches_without_exec_token "$tok_fixture")" ] && echo yes || echo no)" "yes"
+check "non-vacuousness: the grpcurl detector flags an Exec sent without a bearer" \
+  "$([ -n "$(grpcurl_calls_without_bearer "$tok_fixture")" ] && echo yes || echo no)" "yes"
+rm -f "$tok_fixture"
+check "the driver launches the relay at all (the checks below are not vacuous)" \
+  "$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -c 'pnpm --filter @sh/sandbox-relay start')" "1"
+check "rung 1's relay receives MOCA_RELAY_EXEC_TOKEN" \
+  "$([ -z "$(relay_launches_without_exec_token "$SCRIPT")" ] && echo yes || echo no)" "yes"
+check "the driver issues Execs through grpcurl at all" \
+  "$([ "$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -cE '(^|[[:space:];(])grpcurl -')" -ge 1 ] && echo yes || echo no)" "yes"
+check "every grpcurl Exec presents the exec token as a bearer" \
+  "$([ -z "$(grpcurl_calls_without_bearer "$SCRIPT")" ] && echo yes || echo no)" "yes"
+# The generator line itself, evaluated: a fresh 32-byte hex token per run unless overridden.
+tok_line="$(grep -E '^RUNG1_EXEC_TOKEN=' "$SCRIPT" || true)"
+check "the exec token has exactly one definition" "$(printf '%s\n' "$tok_line" | grep -c .)" "1"
+tok_a="$(unset SH_E10_EXEC_TOKEN; eval "$tok_line"; printf '%s' "$RUNG1_EXEC_TOKEN")"
+tok_b="$(unset SH_E10_EXEC_TOKEN; eval "$tok_line"; printf '%s' "$RUNG1_EXEC_TOKEN")"
+check "the default exec token is 32 random bytes of hex" \
+  "$([[ "$tok_a" =~ ^[0-9a-f]{64}$ ]] && echo yes || echo no)" "yes"
+check "the default exec token differs per run (never a fixed value)" \
+  "$([ "$tok_a" != "$tok_b" ] && echo yes || echo no)" "yes"
+check "SH_E10_EXEC_TOKEN overrides it, for a reused stack" \
+  "$(export SH_E10_EXEC_TOKEN=reused-tok; eval "$tok_line"; printf '%s' "$RUNG1_EXEC_TOKEN")" "reused-tok"
+
 echo
 echo "Total failures: $fails"
 exit "$fails"
