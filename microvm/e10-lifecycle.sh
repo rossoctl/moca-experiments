@@ -160,6 +160,10 @@ RUNG1_EXEC_MAX_TIME_S="${SH_E10_EXEC_MAX_TIME_S:-45}"
 RUNG1_REDIS_PORT="${SH_E10_REDIS_PORT:-6380}"
 RUNG1_RELAY_PORT="${SH_E10_RELAY_PORT:-8443}"
 RUNG1_RELAY_TOKEN="${SH_E10_RELAY_TOKEN:-e10-dev-token}"
+# The relay's worker credential (MI1 R5): the relay refuses to boot without it and refuses every
+# SandboxExec that does not present it. A fresh 32-byte hex value per run, never a fixed one;
+# SH_E10_EXEC_TOKEN supplies a running relay's token when SH_E10_START_STACK=0 reuses it.
+RUNG1_EXEC_TOKEN="${SH_E10_EXEC_TOKEN:-$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')}"
 RUNG1_SANDBOX_ID="${SH_E10_SANDBOX_ID:-e10-rung1}"
 RUNG1_START_STACK="${SH_E10_START_STACK:-1}" # set 0 to reuse an already-running stack
 
@@ -437,7 +441,7 @@ start_rung1_stack() {
   (
     cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" &&
       SH_RELAY_TOKEN="$RUNG1_RELAY_TOKEN" SH_RELAY_PORT="$RUNG1_RELAY_PORT" \
-        REDIS_URL="redis://127.0.0.1:${RUNG1_REDIS_PORT}" \
+        MOCA_RELAY_EXEC_TOKEN="$RUNG1_EXEC_TOKEN" REDIS_URL="redis://127.0.0.1:${RUNG1_REDIS_PORT}" \
         pnpm --filter @sh/sandbox-relay start >"$RESULTS/e10-rung1-relay.log" 2>&1 &
     echo $! >"$RESULTS/.rung1-relay.pid"
   )
@@ -489,7 +493,7 @@ json_escape() {
 grpc_exec_ms() {
   local cmd="$1" req_id="$2" t0 t1 rc=0
   t0="$(date +%s%N)"
-  grpcurl -plaintext -max-time "$RUNG1_EXEC_MAX_TIME_S" -import-path "$PROTO_IMPORT_PATH" -proto "$PROTO_REL_PATH" \
+  grpcurl -plaintext -H "authorization: Bearer $RUNG1_EXEC_TOKEN" -max-time "$RUNG1_EXEC_MAX_TIME_S" -import-path "$PROTO_IMPORT_PATH" -proto "$PROTO_REL_PATH" \
     -d "{\"sandbox_id\":\"$RUNG1_SANDBOX_ID\",\"exec\":{\"req_id\":$req_id,\"command\":$(json_escape "$cmd"),\"timeout_s\":30}}" \
     "localhost:${RUNG1_RELAY_PORT}" sandbox.v1.SandboxExec/Exec >/dev/null 2>>"$RESULTS/e10-rung1-grpcurl.log" || rc=$?
   t1="$(date +%s%N)"

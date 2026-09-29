@@ -314,6 +314,11 @@ PROTO_REL_PATH="sandbox/v1/sandbox.proto"
 E11_REDIS_PORT="${SH_E11_REDIS_PORT:-6381}"
 E11_RELAY_PORT="${SH_E11_RELAY_PORT:-8444}"
 E11_RELAY_TOKEN="${SH_E11_RELAY_TOKEN:-e11-dev-token}"
+# The relay's worker credential (MI1 R5): the relay refuses to boot without it and refuses every
+# SandboxExec that does not present it, so every Exec below -- grpcurl and exec-driver alike --
+# sends it as a bearer. A fresh 32-byte hex value per run, never a fixed one; SH_E11_EXEC_TOKEN
+# supplies a running relay's token when SH_E11_START_STACK=0 reuses it.
+E11_EXEC_TOKEN="${SH_E11_EXEC_TOKEN:-$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')}"
 E11_START_STACK="${SH_E11_START_STACK:-1}"
 
 # The redis image, overridable so an operator can PIN A DIGEST
@@ -1349,7 +1354,7 @@ grpc_exec_record() {
   # every call, so the old mktemp+rm pair bought nothing. req_id is a number and needs no
   # escaping.
   t0="$EPOCHREALTIME"
-  if grpcurl -plaintext -max-time "$EXEC_MAX_TIME_S" -import-path "$PROTO_IMPORT_PATH" -proto "$PROTO_REL_PATH" \
+  if grpcurl -plaintext -H "authorization: Bearer $E11_EXEC_TOKEN" -max-time "$EXEC_MAX_TIME_S" -import-path "$PROTO_IMPORT_PATH" -proto "$PROTO_REL_PATH" \
     -d "{\"sandbox_id\":\"$sandbox_id\",\"exec\":{\"req_id\":$req_id,\"command\":$cmd_json,\"timeout_s\":30,\"workspace_key\":$ws_json}}" \
     "localhost:${relay_port}" sandbox.v1.SandboxExec/Exec >/dev/null 2>"$err_log"; then
     t1="$EPOCHREALTIME"
@@ -1456,7 +1461,7 @@ converge_slot() {
   local script t0 t1 rc=0
   script="$(build_converge_script "$CONVERGE_REPO_URL" "$CONVERGE_REF" "$run_id")"
   t0="$(date +%s%N)"
-  grpcurl -plaintext -max-time "$CONVERGE_MAX_TIME_S" -import-path "$PROTO_IMPORT_PATH" -proto "$PROTO_REL_PATH" \
+  grpcurl -plaintext -H "authorization: Bearer $E11_EXEC_TOKEN" -max-time "$CONVERGE_MAX_TIME_S" -import-path "$PROTO_IMPORT_PATH" -proto "$PROTO_REL_PATH" \
     -d "{\"sandbox_id\":\"$sandbox_id\",\"exec\":{\"req_id\":$req_id,\"command\":$(json_escape "$script"),\"timeout_s\":300,\"workspace_key\":$(json_escape "$workspace_key")}}" \
     "localhost:${relay_port}" sandbox.v1.SandboxExec/Exec >/dev/null 2>>"$RESULTS/e11-converge.log" || rc=$?
   t1="$(date +%s%N)"
@@ -1619,7 +1624,7 @@ start_container_stack() {
   log "container: starting the relay on :$E11_RELAY_PORT"
   (
     cd "$REPO_ROOT" &&
-      SH_RELAY_TOKEN="$E11_RELAY_TOKEN" SH_RELAY_PORT="$E11_RELAY_PORT" \
+      SH_RELAY_TOKEN="$E11_RELAY_TOKEN" MOCA_RELAY_EXEC_TOKEN="$E11_EXEC_TOKEN" SH_RELAY_PORT="$E11_RELAY_PORT" \
         REDIS_URL="redis://127.0.0.1:${E11_REDIS_PORT}" \
         pnpm --filter @sh/sandbox-relay start >"$RESULTS/e11-container-relay.log" 2>&1 &
     echo $! >"$RESULTS/.e11-relay.pid"
@@ -1768,7 +1773,7 @@ start_microvm_stack() {
   log "microvm: starting the relay on :$E11_RELAY_PORT"
   (
     cd "$REPO_ROOT" &&
-      SH_RELAY_TOKEN="$E11_RELAY_TOKEN" SH_RELAY_PORT="$E11_RELAY_PORT" \
+      SH_RELAY_TOKEN="$E11_RELAY_TOKEN" MOCA_RELAY_EXEC_TOKEN="$E11_EXEC_TOKEN" SH_RELAY_PORT="$E11_RELAY_PORT" \
         REDIS_URL="redis://127.0.0.1:${E11_REDIS_PORT}" \
         pnpm --filter @sh/sandbox-relay start >"$RESULTS/e11-microvm-relay-d${d}-ram${ram_mb}.log" 2>&1 &
     echo $! >"$RESULTS/.e11-relay.pid"
@@ -2006,7 +2011,7 @@ run_density_rung() {
   # The grpcurl branch is UNCHANGED. It is the reference the Go client is compared against, so
   # it must not be tidied, rewrapped or "improved" while the comparison is outstanding.
   if [ "$EXEC_CLIENT" = "go" ]; then
-    "$E11_EXEC_DRIVER_BIN" --plan "$plan_file" >>"$RESULTS/e11-exec-driver.log" 2>&1 &
+    MOCA_RELAY_EXEC_TOKEN="$E11_EXEC_TOKEN" "$E11_EXEC_DRIVER_BIN" --plan "$plan_file" >>"$RESULTS/e11-exec-driver.log" 2>&1 &
     pids+=("$!")
   else
     for ((i = 1; i <= c; i++)); do
