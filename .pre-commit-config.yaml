@@ -4,8 +4,9 @@
 # Assisted-By; it never rejects the commit. Mirrors rossoctl/moca and
 # rossoctl/rossoctl.
 #
-# Install with:
-#   pre-commit install --hook-type commit-msg
+# Plain `pre-commit install` sets up the commit-msg hook type via
+# default_install_hook_types below -- no extra --hook-type flags needed.
+default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: local
     hooks:
