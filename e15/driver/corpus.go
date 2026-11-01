@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -110,43 +111,48 @@ func LoadLibrary(path string) (*Library, error) {
 
 const minCalls = 3
 
+// ErrCapUnsatisfiable is returned by Sampler.Next when no session in the corpus fits under the
+// per-user cap given the current live population.
+var ErrCapUnsatisfiable = errors.New("sampler: no session satisfies the per-user cap")
+
 // Sampler draws sessions without replacement (reshuffling on exhaustion), seeded, enforcing
 // userCap (fraction of the live population one user may hold).
 type Sampler struct {
 	sessions []Session
 	rng      *rand.Rand
 	userCap  float64
-	pool     []int // remaining indices, in draw order
+	pool     []int // not yet drawn this cycle, in draw order
+	drawn    []int // drawn this cycle
 }
 
-// NewSampler ignores sessions with fewer than 3 calls.
-func NewSampler(sessions []Session, seed int64, userCap float64) *Sampler {
+// NewSampler ignores sessions with fewer than 3 calls and fails if none remain.
+func NewSampler(sessions []Session, seed int64, userCap float64) (*Sampler, error) {
 	s := &Sampler{rng: rand.New(rand.NewSource(seed)), userCap: userCap}
 	for _, x := range sessions {
 		if len(x.Calls) >= minCalls {
 			s.sessions = append(s.sessions, x)
 		}
 	}
-	return s
-}
-
-func (s *Sampler) refill() {
-	s.pool = s.pool[:0]
+	if len(s.sessions) == 0 {
+		return nil, fmt.Errorf("sampler: no sessions with at least %d calls", minCalls)
+	}
 	for i := range s.sessions {
 		s.pool = append(s.pool, i)
 	}
+	s.shuffle()
+	return s, nil
+}
+
+func (s *Sampler) shuffle() {
 	s.rng.Shuffle(len(s.pool), func(a, b int) { s.pool[a], s.pool[b] = s.pool[b], s.pool[a] })
 }
 
 // Next returns the next session and a start index uniform in [0, len(Calls)-3]. live maps user to
 // live session count; a user at floor(userCap*n) (minimum 1) is skipped and the session stays in
-// the pool for a later draw. If the pool holds no eligible session it is reshuffled from the whole
-// corpus; if still none is eligible (cap unsatisfiable) the first is returned. The caller
-// increments live. Next panics if the sampler has no usable sessions.
-func (s *Sampler) Next(live map[string]int, n int) (Session, int) {
-	if len(s.sessions) == 0 {
-		panic("sampler: no sessions with at least 3 calls")
-	}
+// the pool for a later draw. If the pool holds no eligible session, the already-drawn sessions are
+// appended to what remains and the pool is reshuffled (nothing undrawn is discarded); if still no
+// session is eligible, Next returns ErrCapUnsatisfiable. The caller increments live.
+func (s *Sampler) Next(live map[string]int, n int) (Session, int, error) {
 	limit := int(math.Floor(s.userCap*float64(n) + 1e-9))
 	if limit < 1 {
 		limit = 1
@@ -161,15 +167,18 @@ func (s *Sampler) Next(live map[string]int, n int) (Session, int) {
 	}
 	p := pick()
 	if p < 0 {
-		s.refill()
+		s.pool = append(s.pool, s.drawn...)
+		s.drawn = s.drawn[:0]
+		s.shuffle()
 		if p = pick(); p < 0 {
-			p = 0
+			return Session{}, 0, ErrCapUnsatisfiable
 		}
 	}
 	idx := s.pool[p]
 	s.pool = append(s.pool[:p], s.pool[p+1:]...)
+	s.drawn = append(s.drawn, idx)
 	sess := s.sessions[idx]
-	return sess, s.rng.Intn(len(sess.Calls) - minCalls + 1)
+	return sess, s.rng.Intn(len(sess.Calls) - minCalls + 1), nil
 }
 
 // callSeed is FNV-64a over: seed (8 bytes big-endian), sessionID bytes, 0x00, I (8 bytes big-endian).
@@ -236,7 +245,7 @@ func fill(invs []Invocation, work int64, rng *rand.Rand) []step {
 // Plan expands one call into the commands to send, deterministically for (seed, sessionID, c.I).
 // Classes without a library entry use the interpreter stand-in; host_infra is sleep plus
 // interpreter invocations.
-func (l *Library) Plan(c Call, seed int64, sessionID string) []Planned {
+func (l *Library) Plan(c Call, seed int64, sessionID string) ([]Planned, error) {
 	rng := rand.New(rand.NewSource(callSeed(seed, sessionID, c.I)))
 	interp := l.Classes[l.Standin.InterpreterClass]
 	var steps []step
@@ -246,11 +255,15 @@ func (l *Library) Plan(c Call, seed int64, sessionID string) []Planned {
 		if sleepMs > 0 {
 			steps = append(steps, step{Planned{Cmd: fmt.Sprintf("sleep %.1f", float64(sleepMs)/1000)}, sleepMs})
 		}
-		steps = append(steps, fill(interp, c.WorkMs-sleepMs, rng)...)
+		if rem := c.WorkMs - sleepMs; rem >= 50 || len(steps) == 0 {
+			steps = append(steps, fill(interp, rem, rng)...)
+		}
 	case len(l.Classes[c.Class]) > 0:
 		steps = fill(l.Classes[c.Class], c.WorkMs, rng)
-	default:
+	case c.Class == "opaque" || c.Class == "build":
 		steps = fill(interp, c.WorkMs, rng)
+	default:
+		return nil, fmt.Errorf("plan: class %q is neither in the library nor a stand-in class", c.Class)
 	}
 	out := make([]Planned, len(steps))
 	var sum int64
@@ -263,5 +276,5 @@ func (l *Library) Plan(c Call, seed int64, sessionID string) []Planned {
 			out[len(out)-1].SleepAfterMs = tail
 		}
 	}
-	return out
+	return out, nil
 }
