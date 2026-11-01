@@ -427,6 +427,9 @@ func TestDriverCPUSampled(t *testing.T) {
 	if h["header"] != true || h["num_cpu"].(float64) < 1 || h["goos"] == "" {
 		t.Fatalf("first driver-cpu line %v, want the header with num_cpu and goos", h)
 	}
+	if e, ok := h["t0_epoch"].(float64); !ok || e < 1e9 {
+		t.Fatalf("header %v lacks t0_epoch", h)
+	}
 	for _, r := range res.cpuRaw[1:] {
 		if _, ok := r["header"]; ok {
 			t.Fatalf("header repeated: %v", r)

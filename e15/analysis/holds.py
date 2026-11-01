@@ -74,13 +74,14 @@ def evaluate(calls, sessions, baseline_p95_ms, arm="sbx", refusals=0):
         paces.append(s["observed_ms"] / float(s["planned_ms"]) - 1)
     med = median(paces)
 
-    p95_limit = None if baseline_p95_ms is None else P95_FACTOR * baseline_p95_ms
+    p95_limit = None if baseline_p95_ms is None else P95_FACTOR * max(baseline_p95_ms, 1.0)
     c1 = len(failed) == 0
     c2 = refusals == 0
     c3 = med is None or med <= PACE_MAX + 1e-9  # float slack at the inclusive boundary
     c4 = p95_limit is None or p95 is None or p95 <= p95_limit
-    return {
-        "holds": bool(c1 and c2 and c3 and c4),
+    empty = len(win) == 0 or len(paces) == 0
+    out = {
+        "holds": bool(c1 and c2 and c3 and c4) and not empty,
         "conditions": {"no_failures": c1, "no_refusals": c2,
                        "pace": c3, "added_latency": c4},
         "window_calls": len(win),
@@ -96,3 +97,6 @@ def evaluate(calls, sessions, baseline_p95_ms, arm="sbx", refusals=0):
         "by_provider": _split(win, "provider", arm),
         "by_class": _split(win, "class", arm),
     }
+    if empty:
+        out["reason"] = "empty_window"
+    return out

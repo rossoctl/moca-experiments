@@ -373,7 +373,7 @@ func (r *Replayer) sampleCPU(stop <-chan struct{}) {
 			r.rec.CPU(cpuRecord{T: time.Since(r.t0).Seconds(), UtimeMs: u, StimeMs: s})
 		}
 	}
-	r.rec.CPUHeader(cpuHeader{Header: true, NumCPU: runtime.NumCPU(), GOMAXPROCS: runtime.GOMAXPROCS(0), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
+	r.rec.CPUHeader(cpuHeader{Header: true, NumCPU: runtime.NumCPU(), GOMAXPROCS: runtime.GOMAXPROCS(0), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, T0Epoch: float64(r.t0.UnixNano()) / 1e9})
 	sample()
 	tk := time.NewTicker(time.Second)
 	defer tk.Stop()

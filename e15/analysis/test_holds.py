@@ -49,8 +49,9 @@ def test_tail_subtracted():
 
 
 def test_fails_on_refusal_line(tmp_path):
-    (tmp_path / "worker.log").write_text("ok\nhost-floor reached\n")
+    (tmp_path / "worker.log").write_text("ok\nmemory-budget: 900 MiB requested\n")
     (tmp_path / "calls.jsonl").write_text(json.dumps(call()) + "\n")
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
     rec = R.build(str(tmp_path), dict(arm="sbx", n=1, warmup_s=0, window_s=10, baseline_p95_ms=None))
     assert rec["refusals"] == 1 and not rec["holds"]
     assert rec["binding"] == "gate" and rec["refusal_scope"] == "all_lines"
@@ -62,12 +63,12 @@ def test_pace_boundary():
 
 
 def test_p95_boundary():
-    assert H.evaluate([call(added=200)], [], 100)["holds"]
-    assert not H.evaluate([call(added=201)], [], 100)["holds"]
+    assert H.evaluate([call(added=200)], [sess(0)], 100)["holds"]
+    assert not H.evaluate([call(added=201)], [sess(0)], 100)["holds"]
 
 
 def test_baseline_none_skips_cond4():
-    r = H.evaluate([call(added=9999)], [], None)
+    r = H.evaluate([call(added=9999)], [sess(0)], None)
     assert r["holds"] and r["p95_added_ms"] == 9999
 
 
@@ -117,6 +118,112 @@ def test_footprint_drift(tmp_path):
     assert "footprint_drift_pct" not in r
 
 
+import pytest
+
+
+def test_empty_window():
+    r = H.evaluate([], [sess(0)], 100)
+    assert not r["holds"] and r["reason"] == "empty_window"
+    r = H.evaluate([call()], [sess(0, n=2)], 100)
+    assert not r["holds"] and r["reason"] == "empty_window"
+
+
+def test_out_of_window_excluded():
+    out = dict(call(status="err", cause="rpc_error"), in_window=False)
+    r = H.evaluate([call(), out], [sess(0)], 100)
+    assert r["holds"] and r["window_calls"] == 1
+
+
+def test_baseline_nonpositive_floor():
+    assert H.evaluate([call(added=2)], [sess(0)], 0)["holds"]
+    assert not H.evaluate([call(added=3)], [sess(0)], 0)["holds"]
+    assert H.evaluate([call(added=2)], [sess(0)], -5)["p95_limit_ms"] == 2.0
+
+
+def test_multi_session_median_and_splits():
+    ss = [sess(0.01), sess(0.5), sess(0.02)]
+    assert abs(H.evaluate([call()], ss, None)["median_pace"] - 0.02) < 1e-9
+    c = [call(provider="a", cls="x", added=10), call(provider="b", cls="y", added=300),
+         call(provider="b", cls="y", status="err", cause="unavailable")]
+    r = H.evaluate(c, [sess(0)], None)
+    assert r["by_provider"]["b"]["failed"] == 1 and r["by_provider"]["b"]["p95_added_ms"] == 300
+    assert r["by_class"]["x"]["p95_added_ms"] == 10 and r["causes"] == {"unavailable": 1}
+
+
+@pytest.mark.parametrize("line,hit", [
+    ("memory-budget: 1 GiB over", True), ("host-memory: low", True),
+    ("max-runs: 5", True), ("spawn-failure: boom", True), ("busy: queue full", True),
+    ("rpc RESOURCE_EXHAUSTED", True), ("Out of memory: Killed process 4", True),
+    ("oom-kill:constraint=", True), ("pod OOMKilled", True),
+    ("the room is ready", False), ("busybox started", False),
+    ("microvm-worker: relay=x memory-budget: 1", False)])
+def test_refusal_forms(tmp_path, line, hit):
+    p = tmp_path / "worker.log"
+    p.write_text(line + "\n")
+    assert (R.count_refusals(str(p))[0] == 1) is hit
+
+
+def test_refusals_by_reason(tmp_path):
+    p = tmp_path / "worker.log"
+    p.write_text("max-runs: a\nmax-runs: b\nbusy: queue full\n")
+    assert R.count_refusals(str(p))[2] == {"max-runs": 2, "busy": 1}
+
+
+def test_window_scoped_refusals(tmp_path):
+    p = tmp_path / "worker.log"
+    p.write_text("2026-01-01T00:00:05Z max-runs: early\n2026-01-01T00:01:30Z max-runs: in\n"
+                 "2026-01-01T00:05:00Z max-runs: late\n")
+    base = R._parse_ts("2026-01-01T00:00:00Z")
+    n, scope, _ = R.count_refusals(str(p), base + 60, base + 120)
+    assert (n, scope) == (1, "window")
+
+
+def test_binding_precedence_and_cpu_boundary(tmp_path):
+    s = [S(t, cpu=95, disk=95, mem=1) for t in range(0, 121)]
+    assert _rung(tmp_path, s)["binding"] == "memory_floor"
+    s = [S(t, cpu=95, disk=95) for t in range(0, 121)]
+    assert _rung(tmp_path, s)["binding"] == "cpu"
+    s = [S(t, cpu=90) for t in range(0, 121)]
+    assert _rung(tmp_path, s)["binding"] == "cpu"
+    s = [S(t, disk=95) for t in range(0, 121)]
+    assert _rung(tmp_path, s)["binding"] == "disk"
+
+
+def test_a2_rows_filtering():
+    hdr = dict(header=True, num_cpu=2, t=0)
+    ftr = dict(footer=True, t=999)
+    one = [hdr, ftr, dict(t=5, utime_ms=1, stime_ms=1)]
+    assert R.driver_cpu(one, 0, 10)["a2_ok"] is False
+    same = [hdr, dict(t=5, utime_ms=1, stime_ms=1), dict(t=5, utime_ms=9, stime_ms=1)]
+    d = R.driver_cpu(same, 5, 5)
+    assert d["a2_pct_of_host"] is None and d["a2_ok"] is False
+    two = [hdr, dict(t=0, utime_ms=0, stime_ms=0), dict(t=10, utime_ms=100, stime_ms=0)]
+    assert R.driver_cpu(two, 0, 10)["a2_pct_of_host"] == 100 / (10 * 1000.0 * 2) * 100
+
+
+def test_windows_use_warmup_offset(tmp_path):
+    rows = [dict(header=True, num_cpu=1)] + [
+        dict(t=t, utime_ms=t * 10 if t <= 60 else 600 + (t - 60) * 100, stime_ms=0)
+        for t in range(0, 181)]
+    (tmp_path / "driver-cpu.jsonl").write_text("\n".join(json.dumps(x) for x in rows))
+    (tmp_path / "calls.jsonl").write_text(json.dumps(call()) + "\n")
+    (tmp_path / "samples.jsonl").write_text("\n".join(json.dumps(S(t, mem=1 if t < 60 else 10**7))
+                                                     for t in range(0, 181)))
+    r = R.build(str(tmp_path), dict(arm="sbx", n=1, warmup_s=60, window_s=120))
+    assert r["binding"] == "none" and r["window_samples"] == 121
+    assert r["driver"]["window_cpu_ms"] == 12000
+
+
+def test_time_origin_mismatch(tmp_path):
+    rows = [dict(header=True, num_cpu=1, t0_epoch=1000.0)]
+    (tmp_path / "driver-cpu.jsonl").write_text(json.dumps(rows[0]))
+    (tmp_path / "calls.jsonl").write_text(json.dumps(call()) + "\n")
+    base = dict(arm="sbx", n=1, warmup_s=0, window_s=10)
+    assert R.build(str(tmp_path), dict(base, rung_start_ts=1001.0))["time_origin_mismatch"] is False
+    r = R.build(str(tmp_path), dict(base, rung_start_ts=1003.0))
+    assert r["time_origin_mismatch"] and not r["holds"]
+
+
 def test_aborted_and_a2(tmp_path):
     rows = [dict(header=True, num_cpu=4, gomaxprocs=4, goos="l", goarch="a"),
             dict(t=0, utime_ms=500, stime_ms=0), dict(t=120, utime_ms=1000, stime_ms=800),
@@ -132,6 +239,7 @@ def test_aborted_and_a2(tmp_path):
 
 def test_cli(tmp_path):
     (tmp_path / "calls.jsonl").write_text(json.dumps(call()) + "\n")
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
     pj = tmp_path / "params.json"
     pj.write_text(json.dumps(dict(arm="sbx", n=1, warmup_s=0, window_s=10)))
     R.main([str(tmp_path), "--params", str(pj)])

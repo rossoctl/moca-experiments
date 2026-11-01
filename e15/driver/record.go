@@ -52,6 +52,8 @@ type cpuHeader struct {
 	GOMAXPROCS int    `json:"gomaxprocs"`
 	GOOS       string `json:"goos"`
 	GOARCH     string `json:"goarch"`
+	// T0Epoch is the wall clock (Unix seconds) at the driver's t0, the origin of every t.
+	T0Epoch float64 `json:"t0_epoch"`
 }
 
 // cpuFooter is driver-cpu.jsonl's last line when --end-session-exec is on.

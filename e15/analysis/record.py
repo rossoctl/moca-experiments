@@ -1,4 +1,11 @@
-"""Rung record (SPEC 9.3): parse driver/sampler/worker files, write record.json."""
+"""Rung record (SPEC 9.3): parse driver/sampler/worker files, write record.json.
+
+Time-origin contract: samples.jsonl `t` and driver-cpu.jsonl `t` are seconds since the
+driver's t0. The driver-cpu header carries `t0_epoch` (wall clock at t0); params may carry
+`rung_start_ts` (same instant, from the caller). If both exist and differ by more than 2 s
+the record gets time_origin_mismatch=true and holds=false. The measured window is
+[warmup_s, warmup_s + window_s] in that origin, for samples, A2 and refusal scoping.
+"""
 import argparse
 import json
 import os
@@ -9,7 +16,11 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import holds as H  # noqa: E402
 
-REFUSAL_RE = re.compile(r"memory-budget|host-floor|busy|queue full|RESOURCE_EXHAUSTED|oom", re.I)
+REFUSAL_RE = re.compile(
+    r"\b(?P<reason>memory-budget|host-memory|max-runs|spawn-failure): "
+    r"|(?P<busy>\bbusy: queue full)|(?P<re>RESOURCE_EXHAUSTED)"
+    r"|(?P<oom>Out of memory|oom-kill|OOMKilled)")
+BANNER = "microvm-worker: relay="
 TS_RE = re.compile(r"^\[?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?")
 RESIDENT = ("resident-inf", "resident-300")
 
@@ -39,12 +50,18 @@ def _parse_ts(s):
         return None
 
 
+def _reason(m):
+    return m.group("reason") or ("busy" if m.group("busy") else
+                                 "RESOURCE_EXHAUSTED" if m.group("re") else "oom")
+
+
 def count_refusals(path, win_start_ts=None, win_end_ts=None):
-    """Return (count, scope). Timestamp-scoped only if lines carry parseable
+    """Return (count, scope, by_reason). Timestamp-scoped only if lines carry parseable
     timestamps and the window's absolute bounds are known."""
     if not os.path.exists(path):
-        return 0, "none"
-    lines = open(path, errors="replace").read().splitlines()
+        return 0, "none", {}
+    with open(path, errors="replace") as f:
+        lines = f.read().splitlines()
     stamped = 0
     hits = []
     for ln in lines:
@@ -52,13 +69,18 @@ def count_refusals(path, win_start_ts=None, win_end_ts=None):
         ts = _parse_ts(m.group(1)) if m else None
         if ts is not None:
             stamped += 1
-        if REFUSAL_RE.search(ln):
-            hits.append(ts)
-    if win_start_ts is not None and win_end_ts is not None and stamped:
-        n = sum(1 for ts in hits if ts is None or win_start_ts <= ts <= win_end_ts)
-        # untimestamped hit lines are counted conservatively
-        return n, "window"
-    return len(hits), "all_lines"
+        if BANNER in ln:
+            continue
+        r = REFUSAL_RE.search(ln)
+        if r:
+            hits.append((ts, _reason(r)))
+    scoped = win_start_ts is not None and win_end_ts is not None and stamped
+    by = {}
+    for ts, why in hits:
+        if scoped and ts is not None and not (win_start_ts <= ts <= win_end_ts):
+            continue
+        by[why] = by.get(why, 0) + 1
+    return sum(by.values()), ("window" if scoped else "all_lines"), by
 
 
 def window_samples(samples, start, end):
@@ -94,20 +116,20 @@ def footprint_drift(ws):
 def driver_cpu(rows, start, end):
     header = next((r for r in rows if r.get("header")), {})
     footer = next((r for r in rows if r.get("footer")), None)
-    smp = sorted([r for r in rows if "t" in r], key=lambda r: r["t"])
+    smp = sorted([r for r in rows if "t" in r and "utime_ms" in r], key=lambda r: r["t"])
     out = {"header": header}
     if footer:
         out["end_sessions"] = {k: footer.get(k) for k in
                                ("end_sessions_sent", "end_sessions_ok", "end_sessions_failed")}
-    if len(smp) >= 2:
-        a = max([r for r in smp if r["t"] <= start] or [smp[0]], key=lambda r: r["t"])
-        b = max([r for r in smp if r["t"] <= end] or [smp[-1]], key=lambda r: r["t"])
-        delta = (b["utime_ms"] + b["stime_ms"]) - (a["utime_ms"] + a["stime_ms"])
-        ncpu = header.get("num_cpu") or 1
-        pct = delta / ((end - start) * 1000.0 * ncpu) * 100
-        out.update(window_cpu_ms=delta, a2_pct_of_host=pct, a2_ok=pct < 1.0)
-    else:
-        out.update(window_cpu_ms=None, a2_pct_of_host=None, a2_ok=None)
+    a = max([r for r in smp if r["t"] <= start] or smp[:1] or [None], key=lambda r: r["t"] if r else 0)
+    b = max([r for r in smp if r["t"] <= end] or smp[-1:] or [None], key=lambda r: r["t"] if r else 0)
+    if a is None or b is None or a is b or a["t"] == b["t"]:
+        out.update(window_cpu_ms=None, a2_pct_of_host=None, a2_ok=False)
+        return out
+    delta = (b["utime_ms"] + b["stime_ms"]) - (a["utime_ms"] + a["stime_ms"])
+    ncpu = header.get("num_cpu") or 1
+    pct = delta / ((end - start) * 1000.0 * ncpu) * 100
+    out.update(window_cpu_ms=delta, a2_pct_of_host=pct, a2_ok=pct < 1.0)
     return out
 
 
@@ -121,7 +143,7 @@ def build(rung_dir, params):
     samples = read_jsonl(os.path.join(rung_dir, "samples.jsonl"))
     cpu_rows = read_jsonl(os.path.join(rung_dir, "driver-cpu.jsonl"))
     rs = p.get("rung_start_ts")
-    refusals, scope = count_refusals(
+    refusals, scope, by_reason = count_refusals(
         os.path.join(rung_dir, "worker.log"),
         None if rs is None else rs + start, None if rs is None else rs + end)
 
@@ -130,6 +152,7 @@ def build(rung_dir, params):
     rec = dict(p)
     rec.update(ev)
     rec["refusal_scope"] = scope
+    rec["refusals_by_reason"] = by_reason
     rec["binding"] = binding_resource(ws, p.get("floor_mb", 1536), end, refusals)
     rec["window_samples"] = len(ws)
     if arm in RESIDENT:
@@ -137,6 +160,11 @@ def build(rung_dir, params):
         if d:
             rec.update(d)
     rec["driver"] = driver_cpu(cpu_rows, start, end)
+    h_epoch = rec["driver"]["header"].get("t0_epoch")
+    mismatch = rs is not None and h_epoch is not None and abs(h_epoch - rs) > 2
+    rec["time_origin_mismatch"] = bool(mismatch)
+    if mismatch:
+        rec["holds"] = False
     aborted = p.get("driver_exit", 0) != 0
     rec["aborted"] = aborted
     if aborted:
