@@ -1,0 +1,11 @@
+{
+  "url": "https://github.com/more-itertools/more-itertools.git",
+  "commit": "8c1a6ef241b51ff055e89219f050ccf4f15f37f6",
+  "tag": "v10.8.0",
+  "licence": "MIT",
+  "test_cmd": "python3 -m pytest -q -p no:cacheprovider tests",
+  "test_count": 696,
+  "size_mib": 4,
+  "verified": "2026-11-01, macOS laptop: full clone 4 MiB (.git 3.1 MiB pack, 2152 commits at the tag, 36 tracked files); test_cmd under Python 3.9.6 + pytest 8.4.2 -> 693 passed, 3 skipped (696 collected) in 7.3-7.8 s; under Python 3.15.1 + pytest 9.2.0 -> 695 passed, 1 skipped",
+  "why": "Pure Python, no runtime dependencies, and its tests import only the stdlib, the package and unittest/pytest, so `python3 -m pytest` from the repo root runs them with nothing installed but pytest. 696 tests, MIT, 4 MiB with full history. Pinned at v10.8.0, not main, because the guest's python3 is UBI 9's 3.9 and v10.8.0 is the last release with requires-python >=3.9 (v11.x need 3.10/3.11). Its suite grades well for the test class: a single test ~0.2 s, one file 2-5.5 s, the suite ~7.5 s on the laptop. pallets/click was the runner-up and was rejected: its tests need click installed (conftest imports click from src/ only after an install)."
+}
