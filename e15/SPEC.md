@@ -177,7 +177,7 @@ a process alive between commands, so each **chain** (a command and its polls) is
 command**:
 
 - **Lifetime:** from the `exec_command` emit to the last poll's result, capped at **2 hours**. The VM
-  is occupied for the whole lifetime. 36,994 chains; 16 exceed the cap and are cut to it.
+  is occupied for the whole lifetime. 36,680 chains; 16 exceed the cap and are cut to it.
 - **Work:** the command's own recorded run time plus the polls' run times, at most the lifetime.
   Across all chains, work is **63%** of lifetime; the rest is the model thinking between polls.
 - The replayed command runs its real class's program for the work time, then idles until the end of
@@ -281,7 +281,7 @@ ext4 filesystem, so no worker change is needed.
 
 ### 5.7 Steady state, not session starts
 
-Sessions are long (mean 142 min at the default) and a rung is not (§10.2). If every session started
+Sessions are long (mean 123 min at the default) and a rung is not (§10.2). If every session started
 at its first call, a rung would only ever measure session openings. So each session the driver
 starts begins at a **random call index** in its trace (seeded), and the population is spread over the
 trace's whole length.
@@ -521,7 +521,7 @@ The direction of each prediction is fixed now:
    plus lifecycle (0.0174 calls/s × ~0.31 core-seconds nested ≈ 0.005 cores), at most about 0.088
    cores; about 3.5 usable vCPUs gives at least 39. The sealed version replaces these with measured
    values.
-3. **Resident 300 s comes within one ladder step of SBX, in either direction.** It holds only 61% of
+3. **Resident 300 s comes within one ladder step of SBX, in either direction.** It holds only 56% of
    its VMs at a time, and its CPU per session is the commands' own work alone. Both then meet the
    same CPU wall.
 4. **Longer gaps help SBX and resident 300 s, not resident ∞.** At `H` = 7200 s, SBX's and
