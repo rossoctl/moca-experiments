@@ -49,6 +49,29 @@ def test_classify_skips_plumbing():
     assert classify("Glob", None) == "search"
 
 
+def test_classify_looks_past_shell_wrappers():
+    assert classify("Bash", ["bash", "pytest"]) == "test"
+    assert classify("Bash", ["cd", "sh", "echo", "git"]) == "vcs"
+    assert classify("exec_command", ["zsh", "bash", "rg"]) == "shell_read"
+    assert classify("Bash", ["bash"]) == "other"  # nothing past the wrapper
+    assert classify("Bash", ["bash", "sh"]) == "other"
+    assert classify("Bash", ["git", "bash"]) == "vcs"  # a wrapper later on changes nothing
+
+
+def test_classify_test_runners():
+    for exe in ("pytest", "unittest", "jest", "vitest", "tox"):
+        assert classify("exec_command", ["cd", exe]) == "test", exe
+    assert classify("Bash", ["ruff"]) == "lint_check"
+
+
+def test_multiedit_spellings_are_replayed(make_db):
+    calls = pad("s", 18, 0, tool="Bash")
+    calls += [call("s", "MultiEdit", emit=30_000, exes=None),
+              call("s", "multiedit", emit=31_000, exes=None, provider="claude")]
+    corpus, _ = run(make_db, calls)
+    assert [c["class"] for c in corpus["s"]["calls"][-2:]] == ["write", "write"]
+
+
 def test_class_set_is_complete():
     mapped = set(TOOL_CLASSES.values()) | set(EXECUTABLE_CLASSES.values())
     assert mapped | {"opaque", "unparsed", "other"} == set(CLASSES)
@@ -88,14 +111,16 @@ def test_chain_cap(make_db):
 
 
 def test_chain_links_stay_within_session(make_db):
-    # A second session reuses the tool_call_id (TraceLab has two such sessions); its poll must
-    # not stretch the first session's chain.
+    # Session b re-records a's command (same tool_call_id, dropped as copied history) but keeps
+    # its own polls of it, 5 h later. They must not stretch a's chain; they stay plain calls.
     calls = chain("a", 60_000) + pad("a", 20, 100_000)
     calls += chain("b", H5) + pad("b", 20, H5 + 1000)
     corpus, report = run(make_db, calls)
     assert corpus["a"]["calls"][0]["dur_ms"] == 60_000
-    assert corpus["b"]["calls"][0]["dur_ms"] == 7_200_000
-    assert report["chains_collapsed"] == 2
+    assert len(corpus["b"]["calls"]) == 22
+    assert not any(c["chain"] for c in corpus["b"]["calls"])
+    assert (report["chains_collapsed"], report["chains_capped"]) == (1, 0)
+    assert (report["dup_calls_dropped"], report["unlinked_polls"]) == (1, 2)
 
 
 def test_caps_by_provider(make_db):
@@ -109,6 +134,8 @@ def test_caps_by_provider(make_db):
     assert (cx[0]["dur_ms"], cx[0]["work_ms"]) == (120_000, 120_000)
     assert cx[1]["dur_ms"] == 5000
     assert report["dur_capped"] == {"claude": 1, "codex": 1}
+    assert report["dur_capped_moved_ms"] == {"claude": 60_000, "codex": 80_000}
+    assert "dur_capped_ms" not in report
     assert report["by_provider"] == {"claude": 1, "codex": 1}
 
 
@@ -134,8 +161,50 @@ def test_overlap_keeps_recorded_offset(make_db):
 def test_session_floor(make_db):
     calls = pad("short", 19, 0) + pad("long", 20, 0)
     calls += [call("short", "WebFetch", emit=50_000, exes=None)]  # not replayed: no lift
+    calls += [call("none", "WebFetch", emit=0, exes=None)]  # zero replayed calls
     corpus, report = run(make_db, calls)
     assert set(corpus) == {"long"}
+    assert report["dropped_lt20"] == 2
+    assert report["total_sessions"] == 3
+
+
+def test_null_wall_dropped(make_db):
+    calls = pad("s", 20, 0) + [call("s", emit=50_000, wall=None)]
+    corpus, report = run(make_db, calls)
+    assert len(corpus["s"]["calls"]) == 20
+    assert report["null_wall_dropped"] == 1
+
+
+def test_unlinked_poll_stays_a_call(make_db):
+    calls = pad("s", 19, 0) + [call("s", "write_stdin", emit=50_000, cont=None, exes=None)]
+    corpus, report = run(make_db, calls)
+    assert len(corpus["s"]["calls"]) == 20
+    assert corpus["s"]["calls"][-1]["class"] == "unparsed"
+    assert report["unlinked_polls"] == 1
+
+
+def test_copied_history_dropped(make_db):
+    # "copy" re-records orig's 20 calls (same tool_call_ids) after its own first emit.
+    calls = [call("orig", emit=k * 1000, id=f"o{k}") for k in range(20)]
+    calls += [call("copy", emit=500_000 + k * 1000, id=f"o{k}") for k in range(20)]
+    calls += pad("copy", 20, 600_000)
+    # A tie on first emit goes to the lower session_id.
+    calls += pad("tb", 20, 0) + pad("ta", 20, 0)
+    calls += [call("tb", emit=30_000, id="shared"), call("ta", emit=30_000, id="shared")]
+    corpus, report = run(make_db, calls)
+    assert (len(corpus["orig"]["calls"]), len(corpus["copy"]["calls"])) == (20, 20)
+    assert (len(corpus["ta"]["calls"]), len(corpus["tb"]["calls"])) == (21, 20)
+    assert (report["dup_calls_dropped"], report["dup_sessions_affected"]) == (21, 2)
+
+
+def test_copied_history_dropped_before_floor(make_db):
+    calls = pad("orig", 20, 0, id=None)
+    calls = [dict(c, id=f"o{k}") for k, c in enumerate(calls)]
+    calls += [dict(c, session="copy", emit=c["emit"] + 500_000,
+                   result_at=c["result_at"] + 500_000) for c in calls]
+    calls += pad("copy", 5, 600_000)
+    corpus, report = run(make_db, calls)
+    assert set(corpus) == {"orig"}
     assert report["dropped_lt20"] == 1
     assert report["sessions"] == 1
 
@@ -186,3 +255,27 @@ def test_table(make_db):
     assert tb["wakes_per_session_h"] == pytest.approx(1 / (span / 3_600_000), abs=1e-3)
     assert tb["mean_span_min"] == pytest.approx(span / 60_000, abs=1e-3)
     assert report["H_s"] == 1800
+
+
+def test_table_on_replay_timeline(make_db):
+    # Codex session. Chain A [0, 50 s] (work 3 s) spans B [5, 13 s] and C [6, 10 s], which
+    # overlap each other; D [60, 61 s]; then 16 one-second calls 1 s apart from 1,000 s.
+    calls = chain("s", 50_000)
+    calls += [call("s", emit=5000, wall=10_000, internal=8000),
+              call("s", emit=6000, wall=4000, internal=4000),
+              call("s", emit=60_000, wall=1000)]
+    calls += pad("s", 16, 1_000_000, step=2000, wall=1000)
+    corpus, report = run(make_db, calls, H=1800)
+    offsets = [c["offset_ms"] for c in corpus["s"]["calls"][:5]]
+    assert offsets == [0, 5000, 1000, 54_000, 940_000]
+    session = 1_031_000                       # first emit 0 -> last end 1,031 s
+    busy = 50_000 + 1000 + 16 * 1000          # union of running intervals
+    idle_over = 939_000 - 300_000             # the one idle stretch beyond 300 s
+    tb = report["table"]
+    assert tb["occupied_pct"] == pytest.approx(100 * busy / session, abs=1e-6)
+    assert tb["work_pct"] == pytest.approx(100 * (3000 + 8000 + 4000 + 1000 + 16_000) / session,
+                                           abs=1e-6)
+    assert tb["calls_per_s"] == pytest.approx(20 / (session / 1000), abs=1e-9)
+    assert tb["held_t300_pct"] == pytest.approx(100 * (session - idle_over) / session, abs=1e-6)
+    assert tb["wakes_per_session_h"] == pytest.approx(1 / (session / 3_600_000), abs=1e-6)
+    assert tb["mean_span_min"] == pytest.approx(session / 60_000, abs=1e-6)

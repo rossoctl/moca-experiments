@@ -1,26 +1,29 @@
 """Command classes of SPEC §5.6.
 
 A call's class comes from its tool name; for shell calls, from its first executable after shell
-plumbing is skipped. When every executable is plumbing, the first one is used as is.
+plumbing is skipped. When every executable is plumbing, the first one is used as is. When that
+executable is a shell wrapper (`bash -c …`), the next non-plumbing, non-wrapper one is used if
+there is one.
 """
 
 TOOL_CLASSES = {
     "Read": "read",
     "Write": "write", "Edit": "write", "apply_patch": "write", "NotebookEdit": "write",
-    "multiedit": "write",
+    "multiedit": "write", "MultiEdit": "write",
     "Grep": "search", "Glob": "search", "LS": "search",
 }
 
 PLUMBING = frozenset(
     "cd echo true printf export set source test [ false : exit unset env timeout time nohup"
     " xargs tee".split())
+WRAPPERS = frozenset(("bash", "sh", "zsh"))
 
 _EXECUTABLES = {
-    "test": "pytest",
+    "test": "pytest unittest jest vitest tox",
     "interpreter": "python python3 python-script uv conda node bun deno uvicorn torchrun",
     "build": "cargo go make cmake gcc g++ javac mvn gradle tsc rustc dotnet npm npx pnpm yarn pip"
              " nvcc just",
-    "lint_check": "ruff mypy eslint prettier py_compile jest vitest tox",
+    "lint_check": "ruff mypy eslint prettier py_compile",
     "vcs": "git gh",
     "shell_read": "grep rg find cat head tail ls wc sed awk sort cut tr uniq diff stat file tree du"
                   " df jq less nl basename dirname realpath readlink which date seq pwd perl"
@@ -39,10 +42,13 @@ CLASSES = ("read write search test interpreter build lint_check vcs shell_read f
 
 
 def primary(executables):
-    """The first non-plumbing executable, else the first one, else None."""
+    """The first non-plumbing executable (past a shell wrapper), else the first one, else None."""
     if not executables:
         return None
-    return next((e for e in executables if e not in PLUMBING), executables[0])
+    core = [e for e in executables if e not in PLUMBING]
+    if not core:
+        return executables[0]
+    return next((e for e in core if e not in WRAPPERS), core[0])
 
 
 def classify(tool_name, executables):

@@ -2,13 +2,14 @@
 """E15 corpus extractor: TraceLab v0.0.2 DuckDB -> corpus.jsonl + corpus-report.json.
 
 Implements SPEC §5.2-§5.6:
-  stage 1  replayed calls of the sandbox tools, with session, provider and user;
+  stage 1  replayed calls of the sandbox tools, with session, provider and user, minus copied
+           history (a tool_call_id already seen in an earlier-starting session);
   stage 2  Codex chains: an exec_command and the write_stdin polls that continue it, linked
            within the session, collapsed into one call (lifetime capped at 2 h);
   stage 3  per-call durations with the provider caps;
   stage 4  ordering, gaps (capped at H) and emit offsets;
   then the class of each call (classes.py), the 20-call floor, the optional exclusion, and the
-  §5.4 table and §5.5 counts over the written corpus.
+  §5.4 table (on the replay timeline) and §5.5 counts over the written corpus.
 
 Usage: python3 extract.py --db PATH --H 1800 --out DIR [--exclude infra|chains]
 """
@@ -29,7 +30,7 @@ REAL_DB_NAME = "syfi_coding_trace.duckdb"
 
 REPLAYED_TOOLS = ("exec_command", "Bash", "write_stdin", "shell_command", "shell", "Read",
                   "Write", "Edit", "apply_patch", "Grep", "Glob", "LS", "NotebookEdit",
-                  "multiedit")
+                  "multiedit", "MultiEdit")
 MIN_CALLS = 20
 CHAIN_CAP_MS = 7_200_000
 DUR_CAP_MS = {"codex": 120_000, "claude": 30_000}
@@ -40,34 +41,62 @@ CODEX_CAP_MS, CLAUDE_CAP_MS = DUR_CAP_MS["codex"], DUR_CAP_MS["claude"]
 # A command's run time: Codex's internal latency when positive, else the end-to-end time.
 RUN_MS = "coalesce(nullif(tool_internal_latency_ms, 0), tool_wall_latency_ms)"
 
+# Copied history: tool_call_id repeats across 140 sessions (resumed or re-recorded ones). A call
+# belongs to the first session holding its id, by session first emit, then session_id; a
+# replayed call in any later session is dropped.
 STAGE_CALLS = f"""
-CREATE TEMP TABLE calls AS
-SELECT t.round_pk, t.tool_index, t.tool_name, t.tool_call_id,
-       epoch_ms(t.emitted_at) AS emit, epoch_ms(t.result_at) AS res,
-       t.tool_wall_latency_ms AS wall,
-       CASE WHEN r.provider = 'codex' THEN {RUN_MS} ELSE t.tool_wall_latency_ms END AS run_ms,
-       coalesce(t.is_error, false) AS is_error, coalesce(t.result_chars, 0) AS chars,
-       t.continuation_of_tool_call_id AS cont, t.executables,
-       coalesce(t.command_skeleton, '') AS skeleton,
-       r.session_id, r.provider, r."user"
-FROM tool_calls t JOIN rounds r USING (round_pk)
-WHERE t.tool_name IN ({TOOL_LIST})
+CREATE TEMP TABLE raw AS
+WITH s AS (SELECT t.*, r.session_id, r.provider, r."user"
+           FROM tool_calls t JOIN rounds r USING (round_pk)),
+f AS (SELECT session_id, min(emitted_at) AS first_emit FROM s GROUP BY session_id),
+o AS (SELECT s.*, CASE WHEN tool_call_id IS NULL THEN session_id
+                       ELSE first_value(session_id) OVER (PARTITION BY tool_call_id
+                                                          ORDER BY first_emit, session_id)
+                  END AS owner
+      FROM s JOIN f USING (session_id))
+SELECT round_pk, tool_index, tool_name, tool_call_id,
+       epoch_ms(emitted_at) AS emit, epoch_ms(result_at) AS res,
+       tool_wall_latency_ms AS wall,
+       CASE WHEN provider = 'codex' THEN {RUN_MS} ELSE tool_wall_latency_ms END AS run_ms,
+       coalesce(is_error, false) AS is_error, coalesce(result_chars, 0) AS chars,
+       continuation_of_tool_call_id AS cont, executables,
+       coalesce(command_skeleton, '') AS skeleton,
+       session_id, provider, "user", owner <> session_id AS dup
+FROM o WHERE tool_name IN ({TOOL_LIST});
+CREATE TEMP TABLE calls AS SELECT * EXCLUDE (dup) FROM raw WHERE NOT dup;
 """
 
 # Polls link to their command within the session. Two Codex sessions of one user share 4,281
 # tool_call_ids (the later one re-records the earlier one's history in one hour); a global join
 # chains 469 of the earlier session's commands to the later session's polls, days away, and
 # those make 468 of the 484 chains a global join caps at 2 h.
-STAGE_CHAINS = f"""
+STAGE_CHAINS = """
+CREATE TEMP TABLE links AS
+SELECT e.round_pk AS e_pk, e.tool_index AS e_ix, w.round_pk, w.tool_index
+FROM calls e JOIN calls w
+  ON w.tool_name = 'write_stdin' AND w.cont = e.tool_call_id AND w.session_id = e.session_id
+WHERE e.tool_name = 'exec_command';
 CREATE TEMP TABLE chains AS
 SELECT e.round_pk, e.tool_index,
        greatest(any_value(e.res), max(w.res)) - any_value(e.emit) AS life_raw,
        coalesce(any_value(e.run_ms), 0) + coalesce(sum(w.run_ms), 0) AS work_raw,
        any_value(e.chars) + sum(w.chars) AS chars
-FROM calls e JOIN calls w
-  ON w.tool_name = 'write_stdin' AND w.cont = e.tool_call_id AND w.session_id = e.session_id
-WHERE e.tool_name = 'exec_command'
-GROUP BY e.round_pk, e.tool_index
+FROM links l
+  JOIN calls e ON e.round_pk = l.e_pk AND e.tool_index = l.e_ix
+  JOIN calls w ON w.round_pk = l.round_pk AND w.tool_index = l.tool_index
+GROUP BY e.round_pk, e.tool_index;
+"""
+
+# Polls linked to a command are removed as calls; any other write_stdin stays a standalone call.
+NOT_LINKED = "NOT EXISTS (SELECT 1 FROM links l WHERE l.round_pk = c.round_pk" \
+             " AND l.tool_index = c.tool_index)"
+
+STAGE_COUNTS = f"""
+SELECT (SELECT count(*) FROM raw WHERE dup) AS dup_calls_dropped,
+       (SELECT count(DISTINCT session_id) FROM raw WHERE dup) AS dup_sessions_affected,
+       (SELECT count(*) FROM calls c WHERE wall IS NULL AND {NOT_LINKED}) AS null_wall_dropped,
+       (SELECT count(*) FROM calls c
+        WHERE tool_name = 'write_stdin' AND wall IS NOT NULL AND {NOT_LINKED}) AS unlinked_polls
 """
 
 STAGE_DURATIONS = f"""
@@ -82,8 +111,7 @@ SELECT c.round_pk, c.tool_index, c.tool_name, c.executables, c.skeleton, c.emit,
             ELSE least(c.run_ms, {CLAUDE_CAP_MS}) END AS dur,
        ch.work_raw
 FROM calls c LEFT JOIN chains ch USING (round_pk, tool_index)
-WHERE c.wall IS NOT NULL
-  AND NOT (c.tool_name = 'write_stdin' AND c.cont IS NOT NULL)
+WHERE c.wall IS NOT NULL AND {NOT_LINKED}
 """
 
 STAGE_ORDER = """
@@ -132,12 +160,15 @@ def check_db(args):
 
 
 def load(db, H_ms):
-    """Run the stages; return (replayed rows ordered by session and index, total sessions)."""
+    """Run the stages; return (replayed rows ordered by session and index, total sessions,
+    stage counts)."""
     con = duckdb.connect(db, read_only=True)
     for stage in (STAGE_CALLS, STAGE_CHAINS, STAGE_DURATIONS):
         con.execute(stage)
     con.execute(STAGE_ORDER.replace("$H", str(H_ms)))
     total = con.execute("SELECT count(DISTINCT session_id) FROM rounds").fetchone()[0]
+    cur = con.execute(STAGE_COUNTS)
+    counts = dict(zip([d[0] for d in cur.description], cur.fetchone()))
     cur = con.execute("""
         SELECT session_id, provider, "user", i, tool_name, executables, skeleton, dur, dur_raw,
                work, gap, gap_raw, emit_delta, out_bytes, chain, is_error
@@ -145,7 +176,7 @@ def load(db, H_ms):
     cols = [d[0] for d in cur.description]
     rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     con.close()
-    return rows, total
+    return rows, total, counts
 
 
 def to_call(r):
@@ -169,21 +200,43 @@ def sessions(rows):
                "calls": calls}, group
 
 
+def timeline(calls):
+    """The session on the replay timeline: each call runs [emit, emit + dur_ms], emits placed by
+    cumulative offset_ms. Returns (session time from first emit to last end, union of running
+    intervals, idle time beyond T300 between merged busy periods, idle stretches over T300)."""
+    emit, end, busy, idle_over, wakes = 0, None, 0, 0, 0
+    start = 0
+    for c in calls:
+        emit += c["offset_ms"]
+        if end is None:
+            start, end = emit, emit + c["dur_ms"]
+        elif emit > end:
+            busy += end - start
+            idle = emit - end
+            idle_over += max(0, idle - T300_MS)
+            wakes += idle > T300_MS
+            start, end = emit, emit + c["dur_ms"]
+        else:
+            end = max(end, emit + c["dur_ms"])
+    busy += end - start
+    return end, busy, idle_over, wakes
+
+
 def build(rows, total_sessions, H_ms, exclude):
     """Apply the floor and the exclusion; return (corpus, report counts and table)."""
-    corpus, dropped, excluded = [], 0, 0
+    corpus, kept, excluded = [], 0, 0
     rc = dict(chains_collapsed=0, chains_capped=0, chains_capped_ms=0,
-              dur_capped={"claude": 0, "codex": 0}, dur_capped_ms={"claude": 0, "codex": 0},
+              dur_capped={"claude": 0, "codex": 0}, dur_capped_moved_ms={"claude": 0, "codex": 0},
               gap_capped=0, gap_capped_ms=0, errored=0, infra_calls=0, infra_sessions=0,
               chain_sessions=0, opaque_calls=0, unparsed_calls=0)
     busy = {"total": 0, "opaque": 0, "unparsed": 0}
-    t = dict(calls=0, dur=0, work=0, span=0, held=0, wakes=0)
+    t = dict(calls=0, work=0, span=0, busy=0, idle_over=0, wakes=0)
     by_provider = {"claude": 0, "codex": 0}
     for s, group in sessions(rows):
         calls = s["calls"]
         if len(calls) < MIN_CALLS:
-            dropped += 1
             continue
+        kept += 1
         has_infra = any(c["class"] == "host_infra" for c in calls)
         has_chain = any(c["chain"] for c in calls)
         if (exclude == "infra" and has_infra) or (exclude == "chains" and has_chain):
@@ -201,7 +254,7 @@ def build(rows, total_sessions, H_ms, exclude):
                     rc["chains_capped_ms"] += r["dur_raw"] - CHAIN_CAP_MS
             elif r["dur_raw"] > r["dur"]:
                 rc["dur_capped"][s["provider"]] += 1
-                rc["dur_capped_ms"][s["provider"]] += r["dur_raw"] - r["dur"]
+                rc["dur_capped_moved_ms"][s["provider"]] += r["dur_raw"] - r["dur"]
             if r["gap_raw"] is not None and r["gap_raw"] > H_ms:
                 rc["gap_capped"] += 1
                 rc["gap_capped_ms"] += r["gap_raw"] - H_ms
@@ -213,21 +266,22 @@ def build(rows, total_sessions, H_ms, exclude):
                     rc[cls + "_calls"] += 1
                     busy[cls] += c["dur_ms"]
             t["calls"] += 1
-            t["dur"] += c["dur_ms"]
             t["work"] += c["work_ms"]
-            t["span"] += c["dur_ms"] + c["gap_ms"]
-            t["held"] += c["dur_ms"] + min(c["gap_ms"], T300_MS)
-            t["wakes"] += c["gap_ms"] > T300_MS
+        span, busy_ms, idle_over, wakes = timeline(calls)
+        t["span"] += span
+        t["busy"] += busy_ms
+        t["idle_over"] += idle_over
+        t["wakes"] += wakes
     n, span = len(corpus), t["span"]
     table = dict(
-        occupied_pct=100 * t["dur"] / span if span else None,
+        occupied_pct=100 * t["busy"] / span if span else None,
         work_pct=100 * t["work"] / span if span else None,
         calls_per_s=t["calls"] / (span / 1000) if span else None,
-        held_t300_pct=100 * t["held"] / span if span else None,
+        held_t300_pct=100 * (span - t["idle_over"]) / span if span else None,
         wakes_per_session_h=t["wakes"] / (span / 3_600_000) if span else None,
         mean_span_min=span / 60_000 / n if n else None)
     report = dict(sessions=n, by_provider=by_provider, total_sessions=total_sessions,
-                  dropped_lt20=dropped, excluded=excluded, **rc,
+                  dropped_lt20=total_sessions - kept, excluded=excluded, **rc,
                   chain_sessions_pct=100 * rc["chain_sessions"] / n if n else None,
                   infra_sessions_pct=100 * rc["infra_sessions"] / n if n else None,
                   opaque_busy_pct=100 * busy["opaque"] / busy["total"] if busy["total"] else None,
@@ -241,9 +295,9 @@ def main(argv=None):
     args = parse_args(argv)
     digest = check_db(args)
     H_ms = args.H * 1000
-    rows, total = load(args.db, H_ms)
+    rows, total, counts = load(args.db, H_ms)
     corpus, report = build(rows, total, H_ms, args.exclude)
-    report.update(duckdb_sha256=digest, H_s=args.H, exclude=args.exclude)
+    report.update(counts, duckdb_sha256=digest, H_s=args.H, exclude=args.exclude)
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "corpus.jsonl"), "w") as f:
         for s in corpus:
