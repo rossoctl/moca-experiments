@@ -198,7 +198,7 @@
         "id": "burn_50",
         "cmd": "cd project && python3 /workspace/scripts/burn_50.py",
         "exit": 0,
-        "nominal_ms": 134,
+        "nominal_ms": 129,
         "run_ms": null,
         "cpu_ms": null
       },
@@ -206,7 +206,7 @@
         "id": "burn_200",
         "cmd": "cd project && python3 /workspace/scripts/burn_200.py",
         "exit": 0,
-        "nominal_ms": 307,
+        "nominal_ms": 310,
         "run_ms": null,
         "cpu_ms": null
       },
@@ -214,7 +214,7 @@
         "id": "burn_1000",
         "cmd": "cd project && python3 /workspace/scripts/burn_1000.py",
         "exit": 0,
-        "nominal_ms": 1109,
+        "nominal_ms": 1114,
         "run_ms": null,
         "cpu_ms": null
       },
@@ -222,7 +222,7 @@
         "id": "burn_5000",
         "cmd": "cd project && python3 /workspace/scripts/burn_5000.py",
         "exit": 0,
-        "nominal_ms": 5110,
+        "nominal_ms": 5519,
         "run_ms": null,
         "cpu_ms": null
       },
@@ -230,7 +230,7 @@
         "id": "burn_20000",
         "cmd": "cd project && python3 /workspace/scripts/burn_20000.py",
         "exit": 0,
-        "nominal_ms": 20111,
+        "nominal_ms": 20913,
         "run_ms": null,
         "cpu_ms": null
       }
@@ -296,9 +296,9 @@
       },
       {
         "id": "git_diff_prev",
-        "cmd": "cd project && git diff --exit-code --stat HEAD~1",
+        "cmd": "cd project && git diff --exit-code --stat a80f1c56f513a2758445372f263efae6f7337561 8c1a6ef241b51ff055e89219f050ccf4f15f37f6",
         "exit": 1,
-        "nominal_ms": 49,
+        "nominal_ms": 57,
         "run_ms": null,
         "cpu_ms": null
       },
@@ -311,10 +311,10 @@
         "cpu_ms": null
       },
       {
-        "id": "git_commit_reset",
-        "cmd": "cd project && git commit -q --allow-empty -m 'e15 replay' && git reset -q --soft HEAD~1",
+        "id": "git_commit_tree",
+        "cmd": "cd project && GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' git commit-tree -p 8c1a6ef241b51ff055e89219f050ccf4f15f37f6 -m 'e15 replay' $(git write-tree)",
         "exit": 0,
-        "nominal_ms": 209,
+        "nominal_ms": 78,
         "run_ms": null,
         "cpu_ms": null
       },
@@ -574,7 +574,7 @@
         "id": "u_burn_1000",
         "cmd": "cd project && python3 /workspace/scripts/burn_1000.py",
         "exit": 0,
-        "nominal_ms": 1114,
+        "nominal_ms": 1132,
         "run_ms": null,
         "cpu_ms": null
       }
@@ -600,14 +600,14 @@
         "id": "o_burn_1000",
         "cmd": "cd project && python3 /workspace/scripts/burn_1000.py",
         "exit": 0,
-        "nominal_ms": 1108,
+        "nominal_ms": 1142,
         "run_ms": null,
         "cpu_ms": null
       }
     ]
   },
   "standin": {
-    "interpreter_id": "interpreter",
+    "interpreter_class": "interpreter",
     "infra_sleep_frac": 0.5
   }
 }

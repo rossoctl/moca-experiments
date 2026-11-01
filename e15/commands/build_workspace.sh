@@ -40,20 +40,32 @@ stage() {
   url="$(lock_field url)"
   commit="$(lock_field commit)"
   src="${E15_PROJECT_SRC:-$url}"
-  git clone -q --no-checkout "$src" "$root/project"
-  git -C "$root/project" checkout -q -B e15 "$commit"
+  # Fetch exactly the locked commit (no branches, no tags) and detach at it, so the image holds
+  # history up to the lock and nothing past it: no ref can reach a later commit.
+  git init -q "$root/project"
+  git -C "$root/project" fetch -q --no-tags "$src" "$commit"
+  git -C "$root/project" checkout -q --detach "$commit"
+  git -C "$root/project" for-each-ref --format='%(refname)' refs/heads refs/tags |
+    while read -r ref; do git -C "$root/project" update-ref -d "$ref"; done
+  # Drop FETCH_HEAD and any object fetched beyond the lock's history.
+  rm -f "$root/project/.git/FETCH_HEAD"
+  git -C "$root/project" reflog expire --expire=now --all
+  git -C "$root/project" gc -q --prune=now
   head="$(git -C "$root/project" rev-parse HEAD)"
   if [ "$head" != "$commit" ]; then
     echo "build_workspace.sh: HEAD $head is not the locked commit $commit" >&2
     exit 1
   fi
-  git -C "$root/project" remote remove origin
+  if [ -n "$(git -C "$root/project" for-each-ref)" ]; then
+    echo "build_workspace.sh: staged project still has refs besides HEAD" >&2
+    exit 1
+  fi
   # The library's scratch directory: write/file_ops invocations work under project/.e15/ and
   # must leave `git status` clean.
   mkdir -p "$root/project/.git/info"
   printf '.e15/\n' >>"$root/project/.git/info/exclude"
-  # The image is copied per session; keep the index valid across copies, and let
-  # `git commit` work without a global config (the guest has no HOME config).
+  # The image is copied per session; keep the index valid across copies, and give
+  # `git commit-tree` an identity without a global config (the guest has no HOME config).
   git -C "$root/project" config core.checkStat minimal
   git -C "$root/project" config core.trustctime false
   git -C "$root/project" config user.name e15
