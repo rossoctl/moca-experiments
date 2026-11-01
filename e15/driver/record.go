@@ -25,6 +25,7 @@ type callRecord struct {
 	Execs        int     `json:"execs"`
 	PlannedDurMs int64   `json:"planned_dur_ms"`
 	PlannedGapMs int64   `json:"planned_gap_ms"`
+	TailMs       int64   `json:"tail_ms"` // chain idle tail slept after the call's End (part of planned_dur_ms)
 	ObservedMs   float64 `json:"observed_ms"`
 	Status       string  `json:"status"`
 	Cause        string  `json:"cause"`
@@ -42,6 +43,15 @@ type sessionRecord struct {
 	WindowCalls int     `json:"window_calls"`
 	PlannedMs   int64   `json:"planned_ms"`
 	ObservedMs  float64 `json:"observed_ms"`
+}
+
+// cpuHeader is driver-cpu.jsonl's first line: the A2 denominator for the analysis.
+type cpuHeader struct {
+	Header     bool   `json:"header"`
+	NumCPU     int    `json:"num_cpu"`
+	GOMAXPROCS int    `json:"gomaxprocs"`
+	GOOS       string `json:"goos"`
+	GOARCH     string `json:"goarch"`
 }
 
 // cpuRecord is one driver-cpu.jsonl line: cumulative process CPU at t seconds (monotonic) since
@@ -100,6 +110,7 @@ func (r *Recorder) keep(err error) {
 func (r *Recorder) Call(c callRecord)       { r.keep(r.calls.write(c)) }
 func (r *Recorder) Session(s sessionRecord) { r.keep(r.sessions.write(s)) }
 func (r *Recorder) CPU(c cpuRecord)         { r.keep(r.cpu.write(c)) }
+func (r *Recorder) CPUHeader(h cpuHeader)   { r.keep(r.cpu.write(h)) }
 
 // Flush writes out every buffer and returns the first write error seen during the run.
 func (r *Recorder) Flush() error {

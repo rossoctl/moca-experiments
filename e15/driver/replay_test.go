@@ -72,6 +72,8 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 		return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_Error{Error: &pb.ExecError{ReqId: e.GetReqId(), Message: "boom"}}})
 	case cmd == "nolive":
 		return status.Error(codes.Unavailable, "no live worker for sandbox 'e15'")
+	case cmd == "unavail":
+		return status.Error(codes.Unavailable, "connection reset by peer")
 	}
 	return end(0)
 }
@@ -133,6 +135,7 @@ type result struct {
 	calls    []callRecord
 	sessions []sessionRecord
 	cpu      []cpuRecord
+	cpuRaw   []map[string]any
 	err      error
 }
 
@@ -151,12 +154,12 @@ func readLines[T any](t *testing.T, b *bytes.Buffer) []T {
 }
 
 func baseCfg() Config {
-	return Config{N: 1, Seed: 7, UserCap: 1, Window: time.Second, Spread: 0, SandboxID: "e15", RunID: "t", Token: testToken}
+	return Config{N: 1, Seed: 7, UserCap: 1, Window: time.Second, Spread: 0, Grace: 5 * time.Second, SandboxID: "e15", RunID: "t", Token: testToken}
 }
 
 func newReplay(t *testing.T, cfg Config, ss []Session, lib *Library, client pb.SandboxExecClient) (*Replayer, func() result) {
 	t.Helper()
-	var cb, sb, pb_ bytes.Buffer
+	var cb, sb, pb_, raw bytes.Buffer
 	rec := NewRecorder(&cb, &sb, &pb_)
 	r, err := NewReplayer(cfg, ss, lib, client, rec)
 	if err != nil {
@@ -167,7 +170,8 @@ func newReplay(t *testing.T, cfg Config, ss []Session, lib *Library, client pb.S
 		if ferr := rec.Flush(); ferr != nil {
 			t.Fatal(ferr)
 		}
-		return result{readLines[callRecord](t, &cb), readLines[sessionRecord](t, &sb), readLines[cpuRecord](t, &pb_), err}
+		raw.Write(pb_.Bytes())
+		return result{readLines[callRecord](t, &cb), readLines[sessionRecord](t, &sb), readLines[cpuRecord](t, &pb_), readLines[map[string]any](t, &raw), err}
 	}
 }
 
@@ -409,8 +413,17 @@ func TestDriverCPUSampled(t *testing.T) {
 	cfg := baseCfg()
 	cfg.Window = 1100 * time.Millisecond
 	res := run(t, cfg, []Session{sess("s", "u", 20, "q", "q", "q")}, testLib(nil, "q"), client)
-	if res.err != nil || len(res.cpu) < 2 || res.cpu[len(res.cpu)-1].UtimeMs+res.cpu[len(res.cpu)-1].StimeMs <= 0 {
+	if res.err != nil || len(res.cpu) < 3 || res.cpu[len(res.cpu)-1].UtimeMs+res.cpu[len(res.cpu)-1].StimeMs <= 0 {
 		t.Fatalf("%v %+v", res.err, res.cpu)
+	}
+	h := res.cpuRaw[0]
+	if h["header"] != true || h["num_cpu"].(float64) < 1 || h["goos"] == "" {
+		t.Fatalf("first driver-cpu line %v, want the header with num_cpu and goos", h)
+	}
+	for _, r := range res.cpuRaw[1:] {
+		if _, ok := r["header"]; ok {
+			t.Fatalf("header repeated: %v", r)
+		}
 	}
 }
 
@@ -428,5 +441,156 @@ func TestMainRefusesEmptyToken(t *testing.T) {
 		func(string) string { return "" }, &stderr)
 	if code == 0 || !strings.Contains(stderr.String(), "MOCA_RELAY_EXEC_TOKEN") {
 		t.Fatalf("code %d: %s", code, stderr.String())
+	}
+}
+
+// firstSession returns the sessions.jsonl record for key.
+func firstSession(t *testing.T, res result, key string) sessionRecord {
+	t.Helper()
+	for _, s := range res.sessions {
+		if s.Session == key {
+			return s
+		}
+	}
+	t.Fatalf("no session record for %s in %+v", key, res.sessions)
+	return sessionRecord{}
+}
+
+func TestChainLastInWindowPaceAgrees(t *testing.T) {
+	client, _ := newFake(t)
+	cfg := baseCfg()
+	cfg.Window = 1500 * time.Millisecond
+	s := Session{ID: "s", User: "u", Provider: "codex", Calls: []Call{
+		{I: 0, Class: "q", DurMs: 10, WorkMs: 1, GapMs: 5},
+		{I: 1, Class: "q", DurMs: 10, WorkMs: 1, GapMs: 5, OffsetMs: 15},
+		{I: 2, Class: "hold:50", DurMs: 400, WorkMs: 1, GapMs: 5, OffsetMs: 15, Chain: true},
+	}}
+	res := run(t, cfg, []Session{s}, testLib(nil, "q", "hold:50"), client)
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	var chain *callRecord
+	for i := range res.calls {
+		c := &res.calls[i]
+		if c.Session != "e15-t-0-0" {
+			continue
+		}
+		if c.Call == 2 {
+			chain = c
+		} else if c.TailMs != 0 {
+			t.Fatalf("non-chain call has tail_ms %d", c.TailMs)
+		}
+	}
+	if chain == nil || chain.TailMs != 399 {
+		t.Fatalf("chain call %+v, want tail_ms 399 (dur 400 - 1 ms run)", chain)
+	}
+	sr := firstSession(t, res, "e15-t-0-0")
+	if sr.WindowCalls != 3 || sr.PlannedMs != 10+5+10+5+400-399 {
+		t.Fatalf("session %+v, want 3 calls and planned_ms 31 (tail excluded)", sr)
+	}
+	if d := sr.ObservedMs - float64(sr.PlannedMs); d < 0 || d > 50+40 {
+		t.Fatalf("observed %.1f vs planned %d: differ by %.1f ms, want within the 50 ms hold (+slack)", sr.ObservedMs, sr.PlannedMs, d)
+	}
+}
+
+func TestChainTailSleptBetweenCalls(t *testing.T) {
+	client, f := newFake(t)
+	cfg := baseCfg()
+	cfg.Window = 800 * time.Millisecond
+	s := Session{ID: "s", User: "u", Calls: []Call{
+		{I: 0, Class: "q", DurMs: 300, WorkMs: 1, Chain: true},
+		{I: 1, Class: "q", DurMs: 10, WorkMs: 1, OffsetMs: 10},
+		{I: 2, Class: "q", DurMs: 10, WorkMs: 1, OffsetMs: 10},
+	}}
+	res := run(t, cfg, []Session{s}, testLib(nil, "q"), client)
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	ex := f.byKey()["e15-t-0-0"]
+	if len(ex) != 3 {
+		t.Fatalf("%d execs", len(ex))
+	}
+	if d := ex[1].recv.Sub(ex[0].done); d < 290*time.Millisecond {
+		t.Fatalf("call 1 sent %v after the chain call ended, want its 299 ms idle tail first", d)
+	}
+	if d := ex[2].recv.Sub(ex[1].recv); d > 60*time.Millisecond {
+		t.Fatalf("call 2 waited %v, want its 10 ms offset", d)
+	}
+}
+
+func TestChainTailCutAtEndCallRecorded(t *testing.T) {
+	client, _ := newFake(t)
+	cfg := baseCfg()
+	cfg.Window = 200 * time.Millisecond
+	s := Session{ID: "s", User: "u", Calls: []Call{
+		{I: 0, Class: "q", DurMs: 60000, WorkMs: 1, Chain: true},
+		{I: 1, Class: "q", DurMs: 10, WorkMs: 1, OffsetMs: 10},
+		{I: 2, Class: "q", DurMs: 10, WorkMs: 1, OffsetMs: 10},
+	}}
+	t0 := time.Now()
+	res := run(t, cfg, []Session{s}, testLib(nil, "q"), client)
+	if el := time.Since(t0); res.err != nil || el > time.Second {
+		t.Fatalf("%v after %v: the 60 s tail was not cut at the run's end", res.err, el)
+	}
+	if len(res.calls) != 1 || res.calls[0].Status != "ok" || res.calls[0].TailMs != 59999 || !res.calls[0].InWindow {
+		t.Fatalf("calls %+v, want the one chain call recorded ok with tail_ms 59999", res.calls)
+	}
+	if sr := firstSession(t, res, "e15-t-0-0"); sr.WindowCalls != 1 {
+		t.Fatalf("session %+v", sr)
+	}
+}
+
+func TestGraceDeadlineCancelsInFlight(t *testing.T) {
+	client, _ := newFake(t)
+	cfg := baseCfg()
+	cfg.Window, cfg.Grace = 100*time.Millisecond, 100*time.Millisecond
+	// Two Execs per call: fill picks the 50 ms invocation twice for 100 ms of work.
+	lib := &Library{Classes: map[string][]Invocation{"hold:150": {{ID: "h", Cmd: "hold:150", NominalMs: 50}}}}
+	lib.Standin.InterpreterClass = "hold:150"
+	s := Session{ID: "s", User: "u", Calls: []Call{
+		{I: 0, Class: "hold:150", DurMs: 100, WorkMs: 100},
+		{I: 1, Class: "hold:150", DurMs: 100, WorkMs: 100},
+		{I: 2, Class: "hold:150", DurMs: 100, WorkMs: 100},
+	}}
+	t0 := time.Now()
+	res := run(t, cfg, []Session{s}, lib, client)
+	el := time.Since(t0)
+	if res.err != nil || el > 400*time.Millisecond {
+		t.Fatalf("%v after %v: want the run to stop at end+grace (200 ms)", res.err, el)
+	}
+	if len(res.calls) != 1 {
+		t.Fatalf("calls %+v", res.calls)
+	}
+	c := res.calls[0]
+	if c.Status != "err" || c.Cause != "deadline" || c.Execs != 2 || c.Exit != nil {
+		t.Fatalf("call %+v, want its second Exec cancelled at the grace deadline as cause deadline", c)
+	}
+}
+
+func TestUnavailableIsNotNoLiveWorker(t *testing.T) {
+	client, _ := newFake(t)
+	cfg := baseCfg()
+	cfg.Window = 100 * time.Millisecond
+	res := run(t, cfg, []Session{sess("s", "u", 20, "unavail", "unavail", "unavail")}, testLib(nil, "unavail"), client)
+	if res.err != nil || len(res.calls) == 0 {
+		t.Fatal(res.err, len(res.calls))
+	}
+	for _, c := range res.calls {
+		if c.Status != "err" || c.Cause != "unavailable" {
+			t.Fatalf("got %s/%s, want err/unavailable", c.Status, c.Cause)
+		}
+	}
+}
+
+func TestPlanErrorFailsBeforeRun(t *testing.T) {
+	client, f := newFake(t)
+	ss := []Session{sess("ok", "u", 20, "q", "q", "q"), sess("bad", "v", 20, "q", "q", "nosuchclass")}
+	var b bytes.Buffer
+	_, err := NewReplayer(baseCfg(), ss, testLib(nil, "q"), client, NewRecorder(&b, &b, &b))
+	if err == nil || !strings.Contains(err.Error(), "bad call 2") {
+		t.Fatalf("got %v, want a plan error naming bad call 2 before the run", err)
+	}
+	if len(f.byKey()) != 0 {
+		t.Fatal("execs were sent")
 	}
 }

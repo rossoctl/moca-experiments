@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ type Config struct {
 	Warmup    time.Duration // not measured
 	Window    time.Duration // measured; the run ends at Warmup+Window
 	Spread    time.Duration // the N slots' first sessions start evenly over this span
+	Grace     time.Duration // after the run's end, Execs still in flight are cancelled at end+Grace
 	SandboxID string
 	RunID     string
 	Token     string
@@ -42,21 +44,24 @@ type Replayer struct {
 
 	reqID atomic.Uint64
 
-	t0, warmEnd, end time.Time
+	t0, warmEnd, end, graceEnd time.Time
 }
 
 func NewReplayer(cfg Config, sessions []Session, lib *Library, client pb.SandboxExecClient, rec *Recorder) (*Replayer, error) {
 	if cfg.N < 1 {
 		return nil, fmt.Errorf("n must be >= 1, got %d", cfg.N)
 	}
-	if cfg.Window <= 0 || cfg.Warmup < 0 || cfg.Spread < 0 {
-		return nil, fmt.Errorf("window must be > 0 and warmup, spread >= 0 (got %v, %v, %v)", cfg.Window, cfg.Warmup, cfg.Spread)
+	if cfg.Window <= 0 || cfg.Warmup < 0 || cfg.Spread < 0 || cfg.Grace < 0 {
+		return nil, fmt.Errorf("window must be > 0 and warmup, spread, grace >= 0 (got %v, %v, %v, %v)", cfg.Window, cfg.Warmup, cfg.Spread, cfg.Grace)
 	}
 	if cfg.Token == "" {
 		return nil, fmt.Errorf("no exec token: set MOCA_RELAY_EXEC_TOKEN to the relay's worker credential; the relay refuses SandboxExec without it")
 	}
 	s, err := NewSampler(sessions, cfg.Seed, cfg.UserCap)
 	if err != nil {
+		return nil, err
+	}
+	if err := validatePlans(sessions, lib, cfg.Seed); err != nil {
 		return nil, err
 	}
 	r := &Replayer{cfg: cfg, lib: lib, client: client, rec: rec, sampler: s, liveUsers: map[string]int{}}
@@ -68,6 +73,26 @@ func NewReplayer(cfg Config, sessions []Session, lib *Library, client pb.Sandbox
 	}
 	r.reqID.Store(uint64(binary.BigEndian.Uint32(salt[:])) << 32)
 	return r, nil
+}
+
+// validatePlans plans every call of every replayable session once, so a library that cannot
+// expand some call fails the run before it starts rather than aborting it mid-window.
+func validatePlans(sessions []Session, lib *Library, seed int64) error {
+	for _, s := range sessions {
+		if len(s.Calls) < minCalls {
+			continue // the sampler never draws it
+		}
+		for _, c := range s.Calls {
+			p, err := lib.Plan(c, seed, s.ID)
+			if err != nil {
+				return fmt.Errorf("planning %s call %d: %w", s.ID, c.I, err)
+			}
+			if len(p) == 0 {
+				return fmt.Errorf("planning %s call %d: no commands", s.ID, c.I)
+			}
+		}
+	}
+	return nil
 }
 
 // Live is the number of sessions currently live (started and not finished).
@@ -140,6 +165,11 @@ func (r *Replayer) Run(ctx context.Context) error {
 	r.t0 = time.Now()
 	r.warmEnd = r.t0.Add(r.cfg.Warmup)
 	r.end = r.warmEnd.Add(r.cfg.Window)
+	r.graceEnd = r.end.Add(r.cfg.Grace)
+	// Every Exec runs under execCtx: one still in flight at end+Grace is cancelled, and one that
+	// would start after it fails at once, both recorded as cause "deadline".
+	execCtx, cancelExec := context.WithDeadline(ctx, r.graceEnd)
+	defer cancelExec()
 
 	cpuDone := make(chan struct{})
 	cpuStop := make(chan struct{})
@@ -154,7 +184,7 @@ func (r *Replayer) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := r.runSlot(ctx, slot, r.t0.Add(at)); err != nil {
+			if err := r.runSlot(execCtx, slot, r.t0.Add(at)); err != nil {
 				cancel(err)
 			}
 		}()
@@ -196,17 +226,19 @@ func (r *Replayer) runSlot(ctx context.Context, slot int, startAt time.Time) err
 // runSession replays s from call index start to the end of its trace (or the run's end).
 func (r *Replayer) runSession(ctx context.Context, key string, s Session, start int) error {
 	var (
-		prevEmit         time.Time
-		wCalls           int
-		wPlanned         int64
-		wLastGap         int64
-		wFirst, wLastEnd time.Time
+		prevEmit          time.Time
+		wCalls            int
+		wPlanned          int64
+		wLastGap, wLastTl int64
+		wFirst, wLastEnd  time.Time
 	)
 	defer func() {
 		if wCalls > 0 {
 			r.rec.Session(sessionRecord{
 				Session: key, Trace: s.ID, Provider: s.Provider, WindowCalls: wCalls,
-				PlannedMs:  wPlanned - wLastGap,
+				// The last call's gap and chain idle tail are both after its End, where
+				// observed_ms stops, so neither is planned time for the window.
+				PlannedMs:  wPlanned - wLastGap - wLastTl,
 				ObservedMs: ms(wLastEnd.Sub(wFirst)),
 			})
 		}
@@ -214,9 +246,10 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 	for idx := start; idx < len(s.Calls); idx++ {
 		c := s.Calls[idx]
 		plan, err := r.lib.Plan(c, r.cfg.Seed, s.ID)
-		if err != nil {
+		if err != nil { // validatePlans makes this unreachable for a corpus it checked
 			return fmt.Errorf("planning %s call %d: %w", s.ID, c.I, err)
 		}
+		tail := plan[len(plan)-1].SleepAfterMs
 		if !prevEmit.IsZero() {
 			// max(0, offset - elapsed since the previous emit), via sleepUntil.
 			if !r.sleepUntil(ctx, prevEmit.Add(time.Duration(c.OffsetMs)*time.Millisecond)) {
@@ -229,6 +262,7 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 		}
 		prevEmit = send
 		rec, last := r.runCall(ctx, key, s, c, plan, send)
+		rec.TailMs = tail
 		r.rec.Call(rec)
 		if rec.InWindow {
 			if wCalls == 0 {
@@ -236,7 +270,7 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 			}
 			wCalls++
 			wPlanned += c.DurMs + c.GapMs
-			wLastGap = c.GapMs
+			wLastGap, wLastTl = c.GapMs, tail
 			wLastEnd = last
 		}
 		if ctx.Err() != nil {
@@ -244,7 +278,7 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 		}
 		// A chain call's idle tail is part of its recorded lifetime; slept whatever the outcome so
 		// a failing backend does not also compress the session's timeline.
-		if tail := plan[len(plan)-1].SleepAfterMs; tail > 0 {
+		if tail > 0 {
 			if !r.sleepUntil(ctx, last.Add(time.Duration(tail)*time.Millisecond)) {
 				return nil
 			}
@@ -266,6 +300,13 @@ func (r *Replayer) runCall(ctx context.Context, key string, s Session, c Call, p
 	}
 	var last time.Time
 	for _, p := range plan {
+		if !time.Now().Before(r.graceEnd) {
+			// Past the grace deadline: do not start the rest of this call.
+			last = time.Now()
+			rec.Exit, rec.ExpectedExit = nil, p.Exit
+			rec.Status, rec.Cause, rec.Msg = "err", causeDeadline, "not started: past the end-of-run grace deadline"
+			break
+		}
 		res := execOne(ctx, r.client, r.cfg.SandboxID, r.reqID.Add(1), p.Cmd, timeoutS, key)
 		last = time.Now()
 		rec.Execs++
@@ -295,6 +336,7 @@ func (r *Replayer) sampleCPU(stop <-chan struct{}) {
 			r.rec.CPU(cpuRecord{T: time.Since(r.t0).Seconds(), UtimeMs: u, StimeMs: s})
 		}
 	}
+	r.rec.CPUHeader(cpuHeader{Header: true, NumCPU: runtime.NumCPU(), GOMAXPROCS: runtime.GOMAXPROCS(0), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
 	sample()
 	tk := time.NewTicker(time.Second)
 	defer tk.Stop()

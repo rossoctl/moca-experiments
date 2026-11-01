@@ -49,6 +49,7 @@ const (
 	causeOK           = "ok"
 	causeExitMismatch = "exit_mismatch"
 	causeNoLiveWorker = "no_live_worker"
+	causeUnavailable  = "unavailable"
 	causeExecError    = "exec_error"
 	causeDeadline     = "deadline"
 	causeRPCError     = "rpc_error"
@@ -65,10 +66,12 @@ type execResult struct {
 func rpcCause(err error) string {
 	st, _ := status.FromError(err)
 	switch {
-	case st.Code() == codes.Unavailable || strings.Contains(strings.ToLower(st.Message()), "no live worker"):
+	case strings.Contains(strings.ToLower(st.Message()), "no live worker"):
 		return causeNoLiveWorker
 	case st.Code() == codes.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded):
 		return causeDeadline
+	case st.Code() == codes.Unavailable:
+		return causeUnavailable
 	default:
 		return causeRPCError
 	}
