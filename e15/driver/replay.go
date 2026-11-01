@@ -18,16 +18,19 @@ import (
 
 // Config is one rung's replay parameters.
 type Config struct {
-	N         int
-	Seed      int64
-	UserCap   float64       // SPEC §5.7: max fraction of the live population one user may hold
-	Warmup    time.Duration // not measured
-	Window    time.Duration // measured; the run ends at Warmup+Window
-	Spread    time.Duration // the N slots' first sessions start evenly over this span
-	Grace     time.Duration // after the run's end, Execs still in flight are cancelled at end+Grace
-	SandboxID string
-	RunID     string
-	Token     string
+	N       int
+	Seed    int64
+	UserCap float64       // SPEC §5.7: max fraction of the live population one user may hold
+	Warmup  time.Duration // not measured
+	Window  time.Duration // measured; the run ends at Warmup+Window
+	Spread  time.Duration // the N slots' first sessions start evenly over this span
+	Grace   time.Duration // after the run's end, Execs still in flight are cancelled at end+Grace
+	// EndSessionExec sends one EndSessionCommand Exec on a session's workspace_key when the session
+	// ends (its trace is done, or the run ended with it live), so the resident worker frees its VM.
+	EndSessionExec bool
+	SandboxID      string
+	RunID          string
+	Token          string
 }
 
 // Replayer holds a population of N sessions, closed-loop inside each session (SPEC §3).
@@ -43,6 +46,9 @@ type Replayer struct {
 	liveCount int
 
 	reqID atomic.Uint64
+
+	endCtx                    context.Context // bearer, not bounded by the grace deadline
+	endSent, endOK, endFailed atomic.Int64
 
 	t0, warmEnd, end, graceEnd time.Time
 }
@@ -170,6 +176,9 @@ func (r *Replayer) Run(ctx context.Context) error {
 	// would start after it fails at once, both recorded as cause "deadline".
 	execCtx, cancelExec := context.WithDeadline(ctx, r.graceEnd)
 	defer cancelExec()
+	// End-session Execs outlive the grace deadline and a SIGINT: a session live at the end still
+	// frees its VM. Each is bounded by its own TimeoutS plus execOne's slack.
+	r.endCtx = context.WithoutCancel(ctx)
 
 	cpuDone := make(chan struct{})
 	cpuStop := make(chan struct{})
@@ -192,6 +201,9 @@ func (r *Replayer) Run(ctx context.Context) error {
 	wg.Wait()
 	close(cpuStop)
 	<-cpuDone
+	if r.cfg.EndSessionExec {
+		r.rec.CPUFooter(cpuFooter{Footer: true, EndSessionsSent: r.endSent.Load(), EndSessionsOK: r.endOK.Load(), EndSessionsFailed: r.endFailed.Load()})
+	}
 	if err := context.Cause(ctx); err != nil {
 		return err
 	}
@@ -216,10 +228,35 @@ func (r *Replayer) runSlot(ctx context.Context, slot int, startAt time.Time) err
 		}
 		prev = &s
 		key := "e15-" + r.cfg.RunID + "-" + strconv.Itoa(slot) + "-" + strconv.Itoa(seq)
-		if err := r.runSession(ctx, key, s, start); err != nil {
+		err = r.runSession(ctx, key, s, start)
+		// Before the slot draws its next session, so the worker frees this VM before the next
+		// session acquires one. Sent however the session ended.
+		r.endSession(key)
+		if err != nil {
 			r.release(s)
 			return err
 		}
+	}
+}
+
+// EndSessionCommand is the resident worker's end-of-session marker (Task 5).
+const (
+	EndSessionCommand  = ": e15-end-session"
+	endSessionTimeoutS = 60
+)
+
+// endSession sends the end-session Exec on key when EndSessionExec is on. It is counted in the
+// driver-cpu.jsonl footer and never recorded as a call.
+func (r *Replayer) endSession(key string) {
+	if !r.cfg.EndSessionExec {
+		return
+	}
+	r.endSent.Add(1)
+	res := execOne(r.endCtx, r.client, r.cfg.SandboxID, r.reqID.Add(1), EndSessionCommand, endSessionTimeoutS, key)
+	if res.cause == "" && *res.exit == 0 {
+		r.endOK.Add(1)
+	} else {
+		r.endFailed.Add(1)
 	}
 }
 

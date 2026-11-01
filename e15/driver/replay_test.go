@@ -38,8 +38,9 @@ type fakeExec struct {
 // OK (what the relay does); "nolive" returns the relay's Unavailable refusal; anything else ends 0.
 type fake struct {
 	pb.UnimplementedSandboxExecServer
-	mu    sync.Mutex
-	execs []fakeExec
+	mu      sync.Mutex
+	execs   []fakeExec
+	failEnd bool // answer the end-session Exec with exit 1
 }
 
 func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.ExecEvent]) error {
@@ -49,7 +50,11 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 		return status.Error(codes.Unauthenticated, "bad bearer")
 	}
 	e := req.GetExec()
-	if req.GetSandboxId() != "e15" || e.GetWorkspaceKey() == "" || e.GetTimeoutS() < 120 {
+	minT, maxT := uint32(120), ^uint32(0)
+	if e.GetCommand() == EndSessionCommand {
+		minT, maxT = 60, 60
+	}
+	if req.GetSandboxId() != "e15" || e.GetWorkspaceKey() == "" || e.GetTimeoutS() < minT || e.GetTimeoutS() > maxT {
 		return status.Error(codes.InvalidArgument, "bad request")
 	}
 	defer func() {
@@ -72,6 +77,8 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 		return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_Error{Error: &pb.ExecError{ReqId: e.GetReqId(), Message: "boom"}}})
 	case cmd == "nolive":
 		return status.Error(codes.Unavailable, "no live worker for sandbox 'e15'")
+	case cmd == EndSessionCommand && f.failEnd:
+		return end(1)
 	case cmd == "unavail":
 		return status.Error(codes.Unavailable, "connection reset by peer")
 	}
@@ -592,5 +599,118 @@ func TestPlanErrorFailsBeforeRun(t *testing.T) {
 	}
 	if len(f.byKey()) != 0 {
 		t.Fatal("execs were sent")
+	}
+}
+
+// endSessionRun replays one slot of 3-call sessions (10 ms offsets) for 250 ms, so several sessions
+// finish mid-run and one is live at the end.
+func endSessionRun(t *testing.T, on, failEnd bool) (result, *fake) {
+	t.Helper()
+	client, f := newFake(t)
+	f.failEnd = failEnd
+	cfg := baseCfg()
+	cfg.Window, cfg.EndSessionExec = 250*time.Millisecond, on
+	return run(t, cfg, []Session{sess("s", "u", 20, "q", "q", "q", "q", "q")}, testLib(nil, "q"), client), f
+}
+
+func TestEndSessionExecPerSession(t *testing.T) {
+	res, f := endSessionRun(t, true, false)
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	keys := map[string]bool{}
+	for _, c := range res.calls {
+		if c.Class == EndSessionCommand || strings.Contains(c.Msg, "e15-end-session") {
+			t.Fatalf("end-session Exec recorded as a call: %+v", c)
+		}
+		keys[c.Session] = true
+	}
+	if len(keys) < 3 {
+		t.Fatalf("only %d sessions ran; want several finishing mid-run", len(keys))
+	}
+	by := f.byKey()
+	for k := range keys {
+		ex := by[k]
+		n := 0
+		for i, e := range ex {
+			if e.cmd == EndSessionCommand {
+				n++
+				if i != len(ex)-1 {
+					t.Fatalf("%s: end-session Exec was not the session's last Exec", k)
+				}
+			}
+		}
+		if n != 1 {
+			t.Fatalf("%s got %d end-session Execs, want 1 (including the session live at the end)", k, n)
+		}
+	}
+	// Each mid-run end is sent before the slot's next session starts.
+	for seq := 1; ; seq++ {
+		next, ok := by[fmt.Sprintf("e15-t-0-%d", seq)]
+		if !ok {
+			break
+		}
+		prev := by[fmt.Sprintf("e15-t-0-%d", seq-1)]
+		if end := prev[len(prev)-1]; next[0].recv.Before(end.done) {
+			t.Fatalf("session %d started before session %d's end-session Exec finished", seq, seq-1)
+		}
+	}
+	last := res.cpuRaw[len(res.cpuRaw)-1]
+	if last["footer"] != true || int(last["end_sessions_sent"].(float64)) != len(keys) ||
+		int(last["end_sessions_ok"].(float64)) != len(keys) || last["end_sessions_failed"].(float64) != 0 {
+		t.Fatalf("footer %v, want sent=ok=%d failed=0", last, len(keys))
+	}
+}
+
+func TestEndSessionExecFailuresCounted(t *testing.T) {
+	res, _ := endSessionRun(t, true, true)
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	last := res.cpuRaw[len(res.cpuRaw)-1]
+	sent := last["end_sessions_sent"].(float64)
+	if last["footer"] != true || sent < 3 || last["end_sessions_failed"].(float64) != sent || last["end_sessions_ok"].(float64) != 0 {
+		t.Fatalf("footer %v, want every end-session counted failed", last)
+	}
+	for _, c := range res.calls {
+		if c.Status != "ok" {
+			t.Fatalf("a failed end-session Exec leaked into calls.jsonl: %+v", c)
+		}
+	}
+}
+
+func TestEndSessionExecOffByDefault(t *testing.T) {
+	res, f := endSessionRun(t, false, false)
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	for k, ex := range f.byKey() {
+		for _, e := range ex {
+			if e.cmd == EndSessionCommand {
+				t.Fatalf("%s: end-session Exec sent with the flag off", k)
+			}
+		}
+	}
+	for _, r := range res.cpuRaw {
+		if _, ok := r["footer"]; ok {
+			t.Fatalf("footer written with the flag off: %v", r)
+		}
+	}
+}
+
+func TestEndSessionExecAfterGraceDeadline(t *testing.T) {
+	client, f := newFake(t)
+	cfg := baseCfg()
+	cfg.Window, cfg.Grace, cfg.EndSessionExec = 100*time.Millisecond, 0, true
+	res := run(t, cfg, []Session{sess("s", "u", 1000, "q", "q", "q")}, testLib(nil, "q"), client)
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	ex := f.byKey()["e15-t-0-0"]
+	if len(ex) != 2 || ex[1].cmd != EndSessionCommand {
+		t.Fatalf("execs %+v, want the call then the end-session Exec after the grace deadline", ex)
+	}
+	if last := res.cpuRaw[len(res.cpuRaw)-1]; last["end_sessions_ok"].(float64) != 1 {
+		t.Fatalf("footer %v", last)
 	}
 }

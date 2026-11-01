@@ -54,6 +54,14 @@ type cpuHeader struct {
 	GOARCH     string `json:"goarch"`
 }
 
+// cpuFooter is driver-cpu.jsonl's last line when --end-session-exec is on.
+type cpuFooter struct {
+	Footer            bool  `json:"footer"`
+	EndSessionsSent   int64 `json:"end_sessions_sent"`
+	EndSessionsOK     int64 `json:"end_sessions_ok"`
+	EndSessionsFailed int64 `json:"end_sessions_failed"`
+}
+
 // cpuRecord is one driver-cpu.jsonl line: cumulative process CPU at t seconds (monotonic) since
 // the start of the run.
 type cpuRecord struct {
@@ -111,6 +119,7 @@ func (r *Recorder) Call(c callRecord)       { r.keep(r.calls.write(c)) }
 func (r *Recorder) Session(s sessionRecord) { r.keep(r.sessions.write(s)) }
 func (r *Recorder) CPU(c cpuRecord)         { r.keep(r.cpu.write(c)) }
 func (r *Recorder) CPUHeader(h cpuHeader)   { r.keep(r.cpu.write(h)) }
+func (r *Recorder) CPUFooter(f cpuFooter)   { r.keep(r.cpu.write(f)) }
 
 // Flush writes out every buffer and returns the first write error seen during the run.
 func (r *Recorder) Flush() error {
