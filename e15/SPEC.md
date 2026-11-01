@@ -1,6 +1,8 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
-Version: 0.3 (draft for review), 2026-11-01
+Version: 0.4 (draft for review), 2026-11-01
+2026-11-01: §5.3–§5.6 numbers regenerated from e15/extract after fixing a cross-session chain join
+and removing re-recorded history.
 Status: **Design. Not approved. Nothing is built.**
 Stage: **Preliminary**, on one nested-KVM AWS instance. A metal run follows (§13).
 Record: `EXPERIMENTS.md` (written when results exist). Predictions: `predictions.json`, written after
@@ -159,11 +161,11 @@ The earlier draft used v0.0.1, which has none of the first three fields.
 ### 5.2 Which calls are replayed
 
 Only tools that run in the sandbox: `exec_command`, `Bash`, `write_stdin`, `shell_command`, `shell`,
-`Read`, `Write`, `Edit`, `apply_patch`, `Grep`, `Glob`, `LS`, `NotebookEdit`, `multiedit`. They are
+`Read`, `Write`, `Edit`, `apply_patch`, `Grep`, `Glob`, `LS`, `NotebookEdit`, `MultiEdit`. They are
 **86.8%** of all tool calls. Every other tool call (`WebFetch`, `Agent`, `TaskUpdate`, …) folds into
 the gap that follows it: the sandbox does not see that time.
 
-A session enters the corpus when it has at least 20 replayed calls: **4,210 sessions** after chain
+A session enters the corpus when it has at least 20 replayed calls: **4,147 sessions** after chain
 collapsing (§5.3). One pseudonymous user holds 27.2% of all sessions and the top three hold 42.6%;
 §5.7 limits how much of a population one user can make up.
 
@@ -175,10 +177,9 @@ a process alive between commands, so each **chain** (a command and its polls) is
 command**:
 
 - **Lifetime:** from the `exec_command` emit to the last poll's result, capped at **2 hours**. The VM
-  is occupied for the whole lifetime. 37,463 chains; 484 exceed the cap (orphaned processes left
-  polling for days) and are cut to it.
+  is occupied for the whole lifetime. 36,994 chains; 16 exceed the cap and are cut to it.
 - **Work:** the command's own recorded run time plus the polls' run times, at most the lifetime.
-  Across all chains, work is **28%** of lifetime; the rest is the model thinking between polls.
+  Across all chains, work is **63%** of lifetime; the rest is the model thinking between polls.
 - The replayed command runs its real class's program for the work time, then idles until the end of
   its lifetime.
 
@@ -205,16 +206,20 @@ For each session, the extractor writes the ordered list of replayed calls. Each 
   median round span 4.1× the sum of its calls) and replay that way. Codex's overlap (76% distinct
   emit times, span 0.5× the sum) and replay that way too.
 
-The replay model's own numbers on the full corpus (computed from the v0.0.2 DuckDB, 2026-11-01).
-"Occupied" is the share of session time a command is running; "work" is the share in which it burns
-CPU; "held at T300" is the share of session time a resident VM with a 300-second idle timeout is
-alive; "cold wakes" are the restarts that timeout causes:
+The replay model's own numbers on the full corpus (computed by `e15/extract` from the v0.0.2
+DuckDB, 2026-11-01). Each session is laid on its replay timeline: calls at their offsets, each
+running for `dur_ms`; session time runs from the first emit to the last call's end. "Occupied" is
+the share of session time at least one command is running (the union of running intervals);
+"work" is the sum of `work_ms` over session time; "held at T300" is the share of session time a
+resident VM with a 300-second idle timeout is alive (an idle stretch between busy periods counts
+for at most 300 s); "cold wakes" are the restarts that timeout causes (idle stretches longer than
+300 s). All are totals over sessions, so long sessions weigh more:
 
 | `H` | occupied | work | calls/s per session | held at T300 | cold wakes per session-hour | mean session span |
 |---|---|---|---|---|---|---|
-| 300 s | 30.9% | 11.8% | 0.0249 | 100% | 0 | 87 min |
-| **1800 s (default)** | **18.8%** | **7.2%** | **0.0152** | **61%** | **2.1** | **142 min** |
-| 7200 s | 12.9% | 5.0% | 0.0104 | 42% | 1.5 | 207 min |
+| 300 s | 16.8% | 14.7% | 0.0313 | 100% | 0 | 69 min |
+| **1800 s (default)** | **9.5%** | **8.2%** | **0.0174** | **56%** | **2.3** | **123 min** |
+| 7200 s | 6.3% | 5.4% | 0.0115 | 37% | 1.5 | 187 min |
 
 The default `H` of 30 minutes keeps most of the trace's idle time and stops a session from idling for
 a whole night. Short caps turn the test into a CPU-wall test (A5); they appear only as sensitivity
@@ -227,8 +232,8 @@ For each run's corpus, the extractor reports:
 1. **Chains collapsed** (§5.3): count, share of sessions affected, and lifetime removed by the cap.
 2. **Duration caps**: count and total time removed, per provider.
 3. **Gap caps** at `H`: count and total time removed.
-4. **Errored calls** (6.0%): replayed as successful commands of the recorded duration. The error
-   itself is not reproduced.
+4. **Errored calls** (5.1% of corpus calls): replayed as successful commands of the recorded
+   duration. The error itself is not reproduced.
 5. **Sessions dropped** (fewer than 20 replayed calls): count.
 6. **Host-infrastructure calls** (§5.6): count, and share of sessions that use them.
 7. **Opaque and unparsed calls**: count and share of busy time.
@@ -241,17 +246,17 @@ skipped. Shares are of replayed calls and of replayed busy time, with chains col
 
 | class | executables (examples) | calls | busy time | replays as |
 |---|---|---|---|---|
-| interpreter | `python`, `python-script`, `uv`, `conda`, `node`, `uvicorn` | 10.1% | 30.9% | a Python script from the workspace's script set, chosen by `dur_ms` |
-| host infra | `docker`, `nvidia-smi`, `ssh`, `sshpass`, `perf`, `nsys` | 5.0% | 14.0% | a stand-in (below) |
-| opaque | `custom_N` (names TraceLab withheld) | 1.7% | 13.4% | the interpreter stand-in, for its recorded time |
-| shell read | `grep`, `rg`, `sed`, `cat`, `head`, `tail`, `ls`, `find`, `wc`, `awk` | 40.3% | 11.9% | the same tools over the workspace, piped per the skeleton |
-| wait | `sleep`, `wait` | 1.1% | 7.0% | `sleep` for the recorded time |
-| file ops | `cp`, `mv`, `rm`, `mkdir`, `tar` | 1.4% | 3.9% | the same tools on workspace files |
-| test | `pytest` | 1.0% | 3.3% | `pytest` on a subset of the workspace's tests, chosen by `dur_ms` |
-| write | `Write`, `Edit`, `apply_patch` | 13.6% | 2.9% | a file write or patch in the workspace |
-| build | `cargo`, `make`, `npm`, `pip`, `go` | 1.2% | 2.1% | the interpreter stand-in, for its recorded time (no compilers in the template) |
-| vcs | `git` | 6.1% | 1.7% | `git status`, `git diff`, `git log` or `git commit` in the workspace |
-| other, process, network, lint, read, search | | 18.5% | 9.0% | the closest real tool in the template (`ps`, `python -m py_compile`, `cat`, `rg`), else the interpreter stand-in |
+| interpreter | `python`, `python-script`, `uv`, `conda`, `node`, `uvicorn` | 10.4% | 31.4% | a Python script from the workspace's script set, chosen by `dur_ms` |
+| host infra | `docker`, `nvidia-smi`, `ssh`, `sshpass`, `perf`, `nsys` | 5.0% | 11.6% | a stand-in (below) |
+| opaque | `custom_N` (names TraceLab withheld) | 1.7% | 14.5% | the interpreter stand-in, for its recorded time |
+| shell read | `grep`, `rg`, `sed`, `cat`, `head`, `tail`, `ls`, `find`, `wc`, `awk` | 40.5% | 12.5% | the same tools over the workspace, piped per the skeleton |
+| wait | `sleep`, `wait` | 1.1% | 7.7% | `sleep` for the recorded time |
+| file ops | `cp`, `mv`, `rm`, `mkdir`, `tar` | 1.4% | 5.2% | the same tools on workspace files |
+| test | `pytest` | 1.0% | 2.2% | `pytest` on a subset of the workspace's tests, chosen by `dur_ms` |
+| write | `Write`, `Edit`, `apply_patch` | 13.8% | 2.5% | a file write or patch in the workspace |
+| build | `cargo`, `make`, `npm`, `pip`, `go` | 1.2% | 2.0% | the interpreter stand-in, for its recorded time (no compilers in the template) |
+| vcs | `git` | 6.2% | 1.6% | `git status`, `git diff`, `git log` or `git commit` in the workspace |
+| other, process, network, lint, read, search | | 17.3% | 8.4% | the closest real tool in the template (`ps`, `python -m py_compile`, `cat`, `rg`), else the interpreter stand-in |
 
 **Real command, recorded duration.** A real command almost never takes exactly the recorded time.
 The command library holds, for each class, a set of real invocations with measured run times on the
@@ -263,7 +268,7 @@ than the shortest invocation of its class runs that invocation once.
 **Host infrastructure.** `docker`, `nvidia-smi`, `ssh` and the like reach things a sandbox does not
 have: a container engine, a GPU, other hosts. They are replayed as a stand-in of the same duration:
 `sleep` for the share of their time spent waiting on the remote side, and the interpreter stand-in
-for the rest. Our call: half and half. 23.5% of sessions use them at all, and 2.4% spend more than
+for the rest. Our call: half and half. 21.5% of sessions use them at all, and 2.2% spend more than
 half their busy time in them. The run reports results with and without those sessions (§10.3).
 
 **The workspace project.** Every session's workspace holds the same project, a real open-source
@@ -413,7 +418,7 @@ Two values:
 - **∞**: the VM lives as long as its session. This is the plain resident baseline.
 - **300 s**: the VM is destroyed after 5 minutes without a command and restored cold on the next
   one. This is a resident arm that tries to save memory, at the cost of a cold start after each
-  long pause (2.1 per session-hour at the default `H`).
+  long pause (2.3 per session-hour at the default `H`).
 
 These are our settings, not a product's. E2B's default 5-minute timeout, for example, is a fixed
 lifetime that commands do not extend ([E2B docs](https://docs.e2b.dev/sandbox/auto-resume)), not an
@@ -512,9 +517,9 @@ The direction of each prediction is fixed now:
 1. **SBX is bound by CPU. Resident ∞ is bound by memory.**
 2. **SBX holds more sessions than resident ∞ at the default point.** Sketch with today's numbers: if
    a resident VM grows to 250–450 MiB, about 11.5 GiB usable gives resident ∞ an `N_max` of 26–47.
-   SBX's CPU per session is the commands' own work (at most 7.2% of a core, less where commands wait)
-   plus lifecycle (0.0152 calls/s × ~0.31 core-seconds nested ≈ 0.005 cores), at most about 0.077
-   cores; about 3.5 usable vCPUs gives at least 45. The sealed version replaces these with measured
+   SBX's CPU per session is the commands' own work (at most 8.2% of a core, less where commands wait)
+   plus lifecycle (0.0174 calls/s × ~0.31 core-seconds nested ≈ 0.005 cores), at most about 0.088
+   cores; about 3.5 usable vCPUs gives at least 39. The sealed version replaces these with measured
    values.
 3. **Resident 300 s comes within one ladder step of SBX, in either direction.** It holds only 61% of
    its VMs at a time, and its CPU per session is the commands' own work alone. Both then meet the
