@@ -1,0 +1,753 @@
+diff --git a/remote-worker/cmd/microvm-worker/main.go b/remote-worker/cmd/microvm-worker/main.go
+index 95301f8f..cc26ec5c 100644
+--- a/remote-worker/cmd/microvm-worker/main.go
++++ b/remote-worker/cmd/microvm-worker/main.go
+@@ -168,7 +168,12 @@ func poolConfig(get func(string) string) (vmpool.Config, error) {
+ 			"this process and every run on the host (spec §6)")
+ 	}
+ 	var err error
+-	if v, e := envInt64(get, "SH_STANDBY_DEPTH", vmpool.DefaultStandbyDepth); e != nil {
++	if get("E15_RESIDENT") == "1" && get("SH_STANDBY_DEPTH") == "0" {
++		// E15 resident arm (rig-only patch): depth 0 is that arm's setting, and
++		// vmpool.Normalize keeps it only when Resident is set (from the same env, in
++		// vmpool.New). Stock still refuses 0, below.
++		cfg.StandbyDepth = 0
++	} else if v, e := envInt64(get, "SH_STANDBY_DEPTH", vmpool.DefaultStandbyDepth); e != nil {
+ 		err = e
+ 	} else {
+ 		cfg.StandbyDepth = int(v)
+@@ -521,6 +526,14 @@ type diagStats struct {
+ 	// and the budget is genuinely too small" (#452). Stats.BudgetEvictions has the
+ 	// reading instructions.
+ 	BudgetEvictions uint64 `json:"budgetEvictions"`
++
++	// E15 resident arm (rig-only patch). omitempty: a stock worker's /stats is unchanged.
++	ResidentVMs       int    `json:"residentVMs,omitempty"`
++	ResidentExecuting int    `json:"residentExecuting,omitempty"`
++	ResidentReuses    uint64 `json:"residentReuses,omitempty"`
++	ResidentIdled     uint64 `json:"residentIdled,omitempty"`
++	ResidentRetired   uint64 `json:"residentRetired,omitempty"`
++	ResidentEnded     uint64 `json:"residentEnded,omitempty"`
+ }
+ 
+ func toDiagStats(st vmpool.Stats, maxConcurrent int) diagStats {
+@@ -543,6 +556,12 @@ func toDiagStats(st vmpool.Stats, maxConcurrent int) diagStats {
+ 		BarrierUnobserved:     st.BarrierUnobserved,
+ 		TimeoutsClamped:       st.TimeoutsClamped,
+ 		BudgetEvictions:       st.BudgetEvictions,
++		ResidentVMs:           st.ResidentVMs,
++		ResidentExecuting:     st.ResidentExecuting,
++		ResidentReuses:        st.ResidentReuses,
++		ResidentIdled:         st.ResidentIdled,
++		ResidentRetired:       st.ResidentRetired,
++		ResidentEnded:         st.ResidentEnded,
+ 	}
+ 	for k, v := range st.ColdAcquires {
+ 		out.ColdAcquires[string(k)] = v
+@@ -774,6 +793,10 @@ func main() {
+ 		cfg.StandbyDepth, cfg.GuestRAMBytes>>20, cfg.MaxCommittedBytes>>20, maxConcurrent,
+ 		standbyHeadroomLabel(cfg), cfg.HostMemFloorBytes>>20,
+ 		effectiveWorkspaceIdle(cfg), labels)
++	if r := get("E15_RESIDENT"); r != "" {
++		log.Printf("microvm-worker: E15 RESIDENT ARM (rig-only patch) E15_RESIDENT=%s E15_RESIDENT_IDLE_S=%s",
++			r, get("E15_RESIDENT_IDLE_S"))
++	}
+ 	if w := slotBudgetWarning(cfg, maxConcurrent); w != "" {
+ 		log.Printf("microvm-worker: %s", w)
+ 	}
+diff --git a/remote-worker/internal/vmpool/config.go b/remote-worker/internal/vmpool/config.go
+index cbf61770..40fbcc6d 100644
+--- a/remote-worker/internal/vmpool/config.go
++++ b/remote-worker/internal/vmpool/config.go
+@@ -101,6 +101,12 @@ type Config struct {
+ 	ReplenishDelay      time.Duration // grace before refilling a popped slot
+ 	ReclaimScanInterval time.Duration // idle-host sweep tick
+ 	MaxReclaimsPerScan  int           // VMs destroyed per sweep; rate-limits munmap
++
++	// E15 resident arm (rig-only patch, resident.go). Filled by New from
++	// E15_RESIDENT=1 / E15_RESIDENT_IDLE_S; false = stock. ResidentIdle 0 = never
++	// idle-destroy.
++	Resident     bool
++	ResidentIdle time.Duration
+ }
+ 
+ // Normalize fills defaults and then validates, returning the first violation.
+@@ -110,7 +116,7 @@ type Config struct {
+ // §7.4's prediction 1 into "confirmed by the host falling over", which is not a
+ // measurement, and an inverted idle pair pins RAM while deleting the cheap thing.
+ func (c *Config) Normalize() error {
+-	if c.StandbyDepth <= 0 {
++	if c.StandbyDepth < 0 || (c.StandbyDepth == 0 && !c.Resident) {
+ 		c.StandbyDepth = DefaultStandbyDepth
+ 	}
+ 	if c.GuestRAMBytes <= 0 {
+diff --git a/remote-worker/internal/vmpool/launcher_fake_test.go b/remote-worker/internal/vmpool/launcher_fake_test.go
+index 99dd2866..89526d0c 100644
+--- a/remote-worker/internal/vmpool/launcher_fake_test.go
++++ b/remote-worker/internal/vmpool/launcher_fake_test.go
+@@ -30,6 +30,10 @@ type fakeLauncher struct {
+ 	keyOverride   string                       // hand back a VM bound to this key instead of the requested one
+ 	serialize     bool                         // SerializesExecsPerRun's return value; false unless a test sets it
+ 	standbyFn     func(*fakeVM) (int64, error) // fakeVM.StandbyBytes' answer; nil = "unreadable"
++	// allowReuse (E15 resident tests only) lets fakeVM.Run accept repeat Runs. Set
++	// before the pool is built; false keeps the one-Exec-per-VM check every stock
++	// test, including TestGateNoVMReuse, relies on.
++	allowReuse bool
+ }
+ 
+ func newFakeLauncher() *fakeLauncher {
+@@ -121,6 +125,8 @@ func (l *fakeLauncher) getStandbyFn() func(*fakeVM) (int64, error) {
+ 	return l.standbyFn
+ }
+ 
++func (l *fakeLauncher) reuseAllowed() bool { l.mu.Lock(); defer l.mu.Unlock(); return l.allowReuse }
++
+ func (l *fakeLauncher) createdCount() int { l.mu.Lock(); defer l.mu.Unlock(); return l.created }
+ 
+ func (l *fakeLauncher) liveCount() int { l.mu.Lock(); defer l.mu.Unlock(); return len(l.live) }
+@@ -199,7 +205,7 @@ func (v *fakeVM) Run(ctx context.Context, c Command, out Sink) (Result, error) {
+ 	v.runs++
+ 	n := v.runs
+ 	v.mu.Unlock()
+-	if n > 1 {
++	if n > 1 && !v.lc.reuseAllowed() {
+ 		// The property the whole slice exists for.
+ 		return Result{}, fmt.Errorf("fakeVM %s: Run called %d times — a VM must serve exactly one Exec", v.id, n)
+ 	}
+diff --git a/remote-worker/internal/vmpool/pool.go b/remote-worker/internal/vmpool/pool.go
+index c44694eb..949654fd 100644
+--- a/remote-worker/internal/vmpool/pool.go
++++ b/remote-worker/internal/vmpool/pool.go
+@@ -138,6 +138,9 @@ type pool struct {
+ // the reclaim ticker (spec §4.2's second sweep trigger) before returning, so a
+ // caller's very first Exec is already covered by both.
+ func New(cfg Config, lc Launcher, clk Clock) (Pool, error) {
++	if err := applyResidentEnv(&cfg); err != nil {
++		return nil, err
++	}
+ 	if err := cfg.Normalize(); err != nil {
+ 		return nil, err
+ 	}
+@@ -279,6 +282,10 @@ func (p *pool) ExecPhased(ctx context.Context, key string, e Exec, out Sink, ph
+ 	})
+ 	defer tm.Stop()
+ 
++	if p.cfg.Resident {
++		return p.execResident(ctx, runCtx, key, e, out, ph, &timedOut, timeoutS)
++	}
++
+ 	t0 := p.clk.Now()
+ 	vm, rp, cause, err := p.acquire(runCtx, key)
+ 	if ph != nil {
+@@ -445,7 +452,7 @@ func (p *pool) acquire(ctx context.Context, key string) (VM, *runPool, ColdCause
+ 		if !counted {
+ 			cause = ColdExhausted
+ 			switch {
+-			case fresh:
++			case fresh || rp.unacquired:
+ 				cause = ColdFirstExec
+ 			case rp.parked:
+ 				cause = ColdParked
+@@ -454,6 +461,7 @@ func (p *pool) acquire(ctx context.Context, key string) (VM, *runPool, ColdCause
+ 			counted = true
+ 		}
+ 		rp.parked = false
++		rp.unacquired = false
+ 
+ 		if rp.warming > 0 {
+ 			settled := rp.settled
+@@ -697,6 +705,12 @@ func (p *pool) Stats() Stats {
+ 		if rp.idleFor(now) > half {
+ 			s.IdleStandbyResidency += len(rp.ready)
+ 		}
++		if rp.resident != nil {
++			s.ResidentVMs++
++			if len(rp.execGate) > 0 {
++				s.ResidentExecuting++
++			}
++		}
+ 	}
+ 	s.CommittedBytes = p.committedLocked()
+ 	s.StandbyCommittedBytes = p.standbyCommittedLocked()
+@@ -737,6 +751,10 @@ func (p *pool) Close() error {
+ 		}
+ 		rp.pending = nil
+ 	}
++	var residents []residentVictim
++	if p.cfg.Resident {
++		residents = p.closeResidentsLocked()
++	}
+ 	p.mu.Unlock()
+ 
+ 	// Wait for background replenishment warms already in flight. p.closed is now set,
+@@ -771,6 +789,9 @@ func (p *pool) Close() error {
+ 			}
+ 		}
+ 	}
++	if err := p.destroyResidentVictims(residents); err != nil && firstErr == nil {
++		firstErr = err
++	}
+ 
+ 	// p.closed is now true, and every sweep checks it under p.mu before sending on
+ 	// reclaimQ (see sweep) — so no sweep can still be attempting a send here, and
+diff --git a/remote-worker/internal/vmpool/replenish.go b/remote-worker/internal/vmpool/replenish.go
+index ad43e777..b2ee1ffa 100644
+--- a/remote-worker/internal/vmpool/replenish.go
++++ b/remote-worker/internal/vmpool/replenish.go
+@@ -51,6 +51,10 @@ func (p *pool) scheduleReplenishLocked(rp *runPool) {
+ 	if p.closed {
+ 		return
+ 	}
++	// E15 resident arm: a resident key keeps its VM, never standbys.
++	if p.cfg.Resident {
++		return
++	}
+ 	// Refill toward D, counting what is already Ready or on its way.
+ 	if len(rp.ready)+rp.warming >= p.cfg.StandbyDepth {
+ 		return
+diff --git a/remote-worker/internal/vmpool/resident.go b/remote-worker/internal/vmpool/resident.go
+new file mode 100644
+index 00000000..5edf8344
+--- /dev/null
++++ b/remote-worker/internal/vmpool/resident.go
+@@ -0,0 +1,416 @@
++package vmpool
++
++// E15 RESIDENT ARM — a rig-only patch (moca-experiments e15/resident/), never part of
++// moca. With E15_RESIDENT=1 a workspace_key keeps the VM its first command acquired
++// and runs every later command on it, one at a time, until the key has been idle for
++// E15_RESIDENT_IDLE_S (0 = never), the guest agent dies, the driver ends the session,
++// or the pool closes. With E15_RESIDENT unset none of this code runs.
++//
++// What is the SAME as stock, on purpose (SPEC §6.4): acquire (standby pop or cold
++// restore, admission, budget charge), Resume, Run over a fresh vsock connection, the
++// per-key execGate, the timeout bound and its classification. What differs is only the
++// VM's lifetime: the charge taken at acquire (rp.inFlight++) is held while the VM is
++// resident and released when it is destroyed, never per Exec.
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"log"
++	"os"
++	"strconv"
++	"sync"
++	"sync/atomic"
++	"time"
++)
++
++// ResidentEndSession is the in-band "the driver ended this session" command: an Exec
++// whose Command is exactly this string destroys the key's resident VM (if any) and
++// returns exit 0 without running anything. Resident mode only. It is a valid shell
++// no-op, so a stock worker that receives it runs `:` and exits 0 — but it still costs
++// that worker one VM, so a driver sends it to resident arms only.
++const ResidentEndSession = ": e15-end-session"
++
++// deadAgentMarker is what internal/guestagent answers every command with once a
++// timeout has killed its parked shell (agent.go, ServeConn).
++const deadAgentMarker = "this agent is dead"
++
++// residentFromEnv reads E15_RESIDENT / E15_RESIDENT_IDLE_S. Unset E15_RESIDENT is
++// stock (on=false, nil error). Anything ambiguous refuses, so a mistyped arm fails at
++// start instead of silently measuring the other one.
++func residentFromEnv(get func(string) string) (on bool, idle time.Duration, err error) {
++	sw, idleS := get("E15_RESIDENT"), get("E15_RESIDENT_IDLE_S")
++	switch sw {
++	case "":
++		if idleS != "" {
++			return false, 0, fmt.Errorf("vmpool: E15_RESIDENT_IDLE_S=%q is set but E15_RESIDENT is not: "+
++				"refusing to run the stock arm with a resident setting", idleS)
++		}
++		return false, 0, nil
++	case "1":
++	default:
++		return false, 0, fmt.Errorf("vmpool: E15_RESIDENT=%q: want \"1\" or unset", sw)
++	}
++	n, perr := strconv.ParseInt(idleS, 10, 64)
++	if idleS == "" || perr != nil || n < 0 {
++		return false, 0, fmt.Errorf("vmpool: E15_RESIDENT=1 needs E15_RESIDENT_IDLE_S as integer seconds "+
++			">= 0 (0 = never idle-destroy), got %q", idleS)
++	}
++	return true, time.Duration(n) * time.Second, nil
++}
++
++// applyResidentEnv folds the environment into cfg before Normalize. Called from New.
++func applyResidentEnv(cfg *Config) error {
++	on, idle, err := residentFromEnv(os.Getenv)
++	if err != nil {
++		return err
++	}
++	if on {
++		cfg.Resident = true
++		cfg.ResidentIdle = idle
++	}
++	return nil
++}
++
++// residentVictim is a resident VM the sweep detached for idle. The sweep took its
++// key's execGate (non-blocking) when it detached it; the gate is released only after
++// the VM is destroyed, so a command queued for that key restores a fresh VM but
++// cannot Resume it — mount the workspace — while the old one still holds it.
++type residentVictim struct {
++	vm   VM
++	gate chan struct{}
++}
++
++// stderrWatch tees a Sink and remembers whether the dead-agent text crossed stderr,
++// across chunk boundaries (a bounded tail is kept, not the stream).
++type stderrWatch struct {
++	out  Sink
++	mu   sync.Mutex
++	tail []byte
++	hit  bool
++}
++
++func (w *stderrWatch) Stdout(b []byte) { w.out.Stdout(b) }
++
++func (w *stderrWatch) Stderr(b []byte) {
++	w.out.Stderr(b)
++	w.mu.Lock()
++	defer w.mu.Unlock()
++	if w.hit {
++		return
++	}
++	w.tail = append(w.tail, b...)
++	if bytes.Contains(w.tail, []byte(deadAgentMarker)) {
++		w.hit = true
++		w.tail = nil
++		return
++	}
++	if keep := len(deadAgentMarker) - 1; len(w.tail) > keep {
++		w.tail = append(w.tail[:0], w.tail[len(w.tail)-keep:]...)
++	}
++}
++
++func (w *stderrWatch) dead() bool { w.mu.Lock(); defer w.mu.Unlock(); return w.hit }
++
++// residentDestroy releases a resident (or would-be resident) VM's charge and tears it
++// down synchronously. The caller holds rp.execGate, so the gate opens only after the
++// VM is gone — the stock ordering (destroy before gate release). The charge is
++// released before the teardown, as stock destroy does. No replenishment is scheduled:
++// resident mode never keeps standbys.
++func (p *pool) residentDestroy(key string, rp *runPool, vm VM, reason string) {
++	p.mu.Lock()
++	if rp.resident == vm {
++		rp.resident = nil
++	}
++	if rp.inFlight > 0 {
++		rp.inFlight--
++	}
++	p.mu.Unlock()
++	if reason != "" {
++		p.counters.residentRetired()
++		log.Printf("vmpool: e15 resident retire workspace_key=%q vm=%s reason=%s", key, vmID(vm), reason)
++	}
++	if err := vm.Destroy(); err != nil {
++		p.counters.destroyFailed()
++		log.Printf("vmpool: destroy VM for %q: %v", key, err)
++	}
++}
++
++// execResident is ExecPhased in resident mode. runCtx carries the Exec's timeout
++// (armed by ExecPhased exactly as in stock); ctx is the caller's, for classify.
++//
++// GATE FIRST, THEN ACQUIRE — the one ordering difference from stock, where a VM is
++// acquired and then waits on the gate. Stock can do that because every Exec has its
++// own VM; here an Exec that acquired before taking the gate would restore a second VM
++// for a key that is about to (or already does) hold one, costing a restore and a
++// transient charge the resident arm should not pay. Holding the gate across acquire
++// makes "at most one VM per key" structural: the sweep's idle destroy and a retirement
++// both hold the same gate until the old VM is gone, so a queued command restores a
++// fresh VM only after that. The wait is selectable on runCtx, as in stock, and holds
++// no VM and no charge.
++func (p *pool) execResident(ctx, runCtx context.Context, key string, e Exec, out Sink, ph *Phases,
++	timedOut *atomic.Bool, timeoutS uint32) (Result, error) {
++	cancelled := func() error {
++		if cErr := p.classify(ctx, timedOut, timeoutS); cErr != nil {
++			return cErr
++		}
++		return ErrAborted
++	}
++
++	// Pin the run (busy() is true while pinned) so the sweep cannot delete the entry
++	// whose gate this Exec is about to wait on — otherwise acquire could mint a new
++	// runPool, with another gate, behind it. A brand-new key goes through runLocked's
++	// stock admission (MaxRuns, budget) here, exactly as acquire would have.
++	p.mu.Lock()
++	if p.closed {
++		p.mu.Unlock()
++		return Result{}, ErrClosed
++	}
++	if e.Command == ResidentEndSession && p.runs[key] == nil {
++		p.mu.Unlock()
++		return Result{}, nil // nothing to end; never create a run for it
++	}
++	rp, fresh, err := p.runLocked(key)
++	if err != nil {
++		p.mu.Unlock()
++		return Result{}, p.countRefusal(err)
++	}
++	if fresh {
++		rp.unacquired = true // acquire must still count this key's first restore as first-exec
++	}
++	rp.pinned++
++	p.mu.Unlock()
++	defer func() {
++		p.mu.Lock()
++		rp.pinned--
++		p.mu.Unlock()
++	}()
++
++	select {
++	case rp.execGate <- struct{}{}:
++	case <-runCtx.Done():
++		return Result{}, cancelled()
++	}
++	defer func() { <-rp.execGate }()
++
++	p.mu.Lock()
++	vm := rp.resident
++	closed := p.closed
++	p.mu.Unlock()
++	if closed {
++		// Close skipped this key's resident VM because this Exec held the gate; it is
++		// this Exec's to destroy, or it would outlive the pool.
++		if vm != nil {
++			p.residentDestroy(key, rp, vm, "pool-closed")
++		}
++		return Result{}, ErrClosed
++	}
++
++	if e.Command == ResidentEndSession {
++		return p.endResidentSession(key, rp, vm, ph)
++	}
++
++	if vm != nil {
++		if ph != nil {
++			ph.VMID = vmID(vm)
++		}
++		p.counters.residentReuse()
++		return p.runResident(ctx, runCtx, key, rp, vm, e, out, ph, timedOut, timeoutS)
++	}
++
++	// No resident VM: acquire and resume exactly as stock does.
++	t0 := p.clk.Now()
++	vm, arp, cause, err := p.acquire(runCtx, key)
++	if ph != nil {
++		ph.Acquire = p.clk.Now().Sub(t0)
++		ph.Cold = cause
++	}
++	if err != nil {
++		if cErr := p.classify(ctx, timedOut, timeoutS); cErr != nil {
++			return Result{}, cErr
++		}
++		return Result{}, err
++	}
++	if ph != nil {
++		ph.VMID = vmID(vm)
++	}
++	if arp != rp {
++		// Unreachable while rp is pinned (the sweep skips busy runs and Reclaim keeps
++		// them). Checked anyway: running under the wrong gate is the one-mount bug.
++		p.residentDestroy(key, arp, vm, "")
++		return Result{}, fmt.Errorf("vmpool: e15 resident: run entry for %q changed under a pinned Exec", key)
++	}
++	if vm.Key() != key {
++		p.residentDestroy(key, rp, vm, "key-mismatch")
++		return Result{}, fmt.Errorf("%w: popped %q for %q", ErrKeyMismatch, vm.Key(), key)
++	}
++	t0 = p.clk.Now()
++	resumeErr := vm.Resume(runCtx)
++	if ph != nil {
++		ph.Resume = p.clk.Now().Sub(t0)
++		if rph, ok := vm.(resumePhaser); ok {
++			ph.VMResume, ph.VsockDial, ph.Mount = rph.ResumePhases()
++		} else {
++			ph.VMResume, ph.VsockDial, ph.Mount = 0, 0, 0
++		}
++	}
++	if resumeErr != nil {
++		p.residentDestroy(key, rp, vm, "resume-error")
++		if cErr := p.classify(ctx, timedOut, timeoutS); cErr != nil {
++			return Result{}, cErr
++		}
++		return Result{}, p.refuse(RefuseSpawn, "resume %q: %v", key, resumeErr)
++	}
++	// Installed BEFORE the run so runResident has one path for a fresh and a reused
++	// VM; it retires the VM if the run leaves it unusable.
++	p.mu.Lock()
++	rp.resident = vm
++	p.mu.Unlock()
++	return p.runResident(ctx, runCtx, key, rp, vm, e, out, ph, timedOut, timeoutS)
++}
++
++// runResident runs one command on the key's resident VM. Caller holds rp.execGate
++// (and a pin on rp) and has set rp.resident = vm. On return the VM is either still resident (charge
++// held, lastExec = now) or retired and destroyed (charge released) — never both,
++// never neither.
++func (p *pool) runResident(ctx, runCtx context.Context, key string, rp *runPool, vm VM, e Exec, out Sink,
++	ph *Phases, timedOut *atomic.Bool, timeoutS uint32) (Result, error) {
++	w := &stderrWatch{out: out}
++	t0 := p.clk.Now()
++	res, runErr := vm.Run(runCtx, Command{
++		Command:   e.Command,
++		Stdin:     e.Stdin,
++		TimeoutS:  timeoutS,
++		Streaming: e.Streaming,
++		CapBytes:  OutputCapBytes,
++	}, w)
++	if ph != nil {
++		ph.Run = p.clk.Now().Sub(t0)
++	}
++	cErr := p.classify(ctx, timedOut, timeoutS)
++
++	reason := ""
++	switch {
++	case timedOut.Load():
++		reason = "timeout" // the guest killed its parked shell; the agent is dead
++	case runErr != nil:
++		reason = "run-error"
++	case w.dead():
++		reason = "dead-agent"
++	}
++	p.mu.Lock()
++	if reason == "" && p.closed {
++		reason = "pool-closed"
++	}
++	if reason == "" {
++		rp.lastExec = p.clk.Now() // idle counts from the command's END (Review Focus 5)
++		p.mu.Unlock()
++	} else {
++		p.mu.Unlock()
++		t1 := p.clk.Now()
++		p.residentDestroy(key, rp, vm, reason)
++		if ph != nil {
++			ph.Destroy = p.clk.Now().Sub(t1)
++		}
++	}
++	if cErr != nil {
++		return res, cErr
++	}
++	return res, runErr
++}
++
++// endResidentSession handles ResidentEndSession: destroy the key's resident VM, if
++// any. Caller holds rp.execGate; it never acquires a VM.
++func (p *pool) endResidentSession(key string, rp *runPool, vm VM, ph *Phases) (Result, error) {
++	if vm == nil {
++		return Result{}, nil
++	}
++	p.mu.Lock()
++	rp.parked = true
++	p.mu.Unlock()
++	if ph != nil {
++		ph.VMID = vmID(vm)
++	}
++	t0 := p.clk.Now()
++	p.residentDestroy(key, rp, vm, "")
++	p.counters.residentEnded()
++	log.Printf("vmpool: e15 resident end-session workspace_key=%q vm=%s", key, vmID(vm))
++	if ph != nil {
++		ph.Destroy = p.clk.Now().Sub(t0)
++	}
++	return Result{}, nil
++}
++
++// sweepResidentLocked is sweepOnce's resident step for one run. It reports whether
++// the run holds a resident VM (the caller then skips the stock steps for it: the run
++// is busy by construction). Caller holds p.mu.
++//
++// Destroy only when the key is idle AND its gate is free (Review Focus 5). The gate
++// is taken here with a non-blocking send and released by doReclaim after the VM is
++// destroyed — so a command that arrives meanwhile restores a fresh VM, and waits on
++// the gate before resuming it, never touching the destroyed one.
++func (p *pool) sweepResidentLocked(rp *runPool, now time.Time, b *reclaimBatch, budget *int) bool {
++	if rp.resident == nil {
++		// A gate held with no resident VM is a VM this sweep (or Close) detached and
++		// has not finished destroying: keep the stock steps — workspace reclaim — off
++		// the run until it is gone. Every other gate holder is pinned, hence busy.
++		return len(rp.execGate) > 0
++	}
++	if p.cfg.ResidentIdle <= 0 || rp.idleFor(now) < p.cfg.ResidentIdle {
++		return true
++	}
++	select {
++	case rp.execGate <- struct{}{}:
++	default:
++		return true // a command holds the gate: not idle, whatever lastExec says
++	}
++	vm := rp.resident
++	rp.resident = nil
++	if rp.inFlight > 0 {
++		rp.inFlight--
++	}
++	rp.parked = true // the next command is a cold wake, counted as ColdParked
++	b.residents = append(b.residents, residentVictim{vm: vm, gate: rp.execGate})
++	*budget--
++	p.counters.residentIdled()
++	log.Printf("vmpool: e15 resident idle-destroy workspace_key=%q vm=%s idle=%s", rp.key, vmID(vm), rp.idleFor(now))
++	return true
++}
++
++// closeResidentsLocked detaches every resident VM whose gate is free, for Close. A
++// resident VM whose gate is held is mid-command; that Exec sees p.closed when its run
++// ends and retires the VM itself. Caller holds p.mu, with p.closed already set.
++func (p *pool) closeResidentsLocked() []residentVictim {
++	var out []residentVictim
++	for _, rp := range p.runs {
++		if rp.resident == nil {
++			continue
++		}
++		select {
++		case rp.execGate <- struct{}{}:
++		default:
++			continue
++		}
++		out = append(out, residentVictim{vm: rp.resident, gate: rp.execGate})
++		rp.resident = nil
++		if rp.inFlight > 0 {
++			rp.inFlight--
++		}
++	}
++	return out
++}
++
++func (p *pool) destroyResidentVictims(vs []residentVictim) error {
++	var firstErr error
++	for _, r := range vs {
++		if err := r.vm.Destroy(); err != nil {
++			p.counters.destroyFailed()
++			log.Printf("vmpool: destroy resident VM %s: %v", vmID(r.vm), err)
++			if firstErr == nil {
++				firstErr = err
++			}
++		}
++		<-r.gate
++	}
++	return firstErr
++}
+diff --git a/remote-worker/internal/vmpool/runpool.go b/remote-worker/internal/vmpool/runpool.go
+index da6ac643..50648cdc 100644
+--- a/remote-worker/internal/vmpool/runpool.go
++++ b/remote-worker/internal/vmpool/runpool.go
+@@ -56,6 +56,16 @@ type runPool struct {
+ 	// that is never going to answer. Created in runLocked: unlike a zero Mutex, a
+ 	// nil channel would block forever.
+ 	execGate chan struct{}
++
++	// E15 resident arm (resident.go). All guarded by pool.mu; zero in stock mode.
++	// resident is the kept VM (nil when none): it holds one inFlight charge for as
++	// long as it is resident. pinned counts resident-mode Execs between arrival and
++	// return, so busy() keeps the sweep off the entry whose gate they wait on.
++	// unacquired marks a run created by a resident Exec's pin, so acquire still
++	// counts its first restore as ColdFirstExec.
++	resident   VM
++	pinned     int
++	unacquired bool
+ }
+ 
+ func (rp *runPool) signalSettledLocked() {
+@@ -67,7 +77,7 @@ func (rp *runPool) idleFor(now time.Time) time.Duration { return now.Sub(rp.last
+ 
+ // busy reports whether anything about this run is in motion. A run with work in
+ // flight or a warming pending is never swept, whatever its idle clock says.
+-func (rp *runPool) busy() bool { return rp.inFlight > 0 || rp.warming > 0 }
++func (rp *runPool) busy() bool { return rp.inFlight > 0 || rp.warming > 0 || rp.pinned > 0 }
+ 
+ // forgetPending drops a fired timer so pending does not grow across a long run.
+ // Caller holds pool.mu.
+diff --git a/remote-worker/internal/vmpool/stats.go b/remote-worker/internal/vmpool/stats.go
+index fad49a9f..6faf19d5 100644
+--- a/remote-worker/internal/vmpool/stats.go
++++ b/remote-worker/internal/vmpool/stats.go
+@@ -60,6 +60,19 @@ type Stats struct {
+ 	// ColdAcquires[ColdParked] means this is churning standbys rather than relieving
+ 	// anything.
+ 	BudgetEvictions uint64
++
++	// E15 resident arm (resident.go); all zero in stock mode. ResidentVMs are kept
++	// VMs (each also counted in InFlight, since it holds a running charge);
++	// ResidentExecuting is those whose key's gate is held right now (a command running or
++	// about to, or the sweep mid-destroy) — a sampling gauge, not an exact count. ResidentReuses counts Execs
++	// served by an already-resident VM; the other three count VMs destroyed by idle,
++	// by retirement (dead agent, run error, timeout, pool closed) and by end-session.
++	ResidentVMs       int
++	ResidentExecuting int
++	ResidentReuses    uint64
++	ResidentIdled     uint64
++	ResidentRetired   uint64
++	ResidentEnded     uint64
+ }
+ 
+ // counters is the mutable half. A mutex over two small maps rather than atomics
+@@ -75,8 +88,17 @@ type counters struct {
+ 	barrierUnobs      uint64
+ 	timeoutsClamped   uint64
+ 	budgetEvictions   uint64
++	residentReuses    uint64
++	residentIdles     uint64
++	residentRetires   uint64
++	residentEnds      uint64
+ }
+ 
++func (c *counters) residentReuse()   { c.mu.Lock(); c.residentReuses++; c.mu.Unlock() }
++func (c *counters) residentIdled()   { c.mu.Lock(); c.residentIdles++; c.mu.Unlock() }
++func (c *counters) residentRetired() { c.mu.Lock(); c.residentRetires++; c.mu.Unlock() }
++func (c *counters) residentEnded()   { c.mu.Lock(); c.residentEnds++; c.mu.Unlock() }
++
+ func newCounters() *counters {
+ 	return &counters{cold: map[ColdCause]uint64{}, refusals: map[RefusalReason]uint64{}}
+ }
+@@ -112,6 +134,10 @@ func (c *counters) snapshot(into *Stats) {
+ 	into.BarrierUnobserved = c.barrierUnobs
+ 	into.TimeoutsClamped = c.timeoutsClamped
+ 	into.BudgetEvictions = c.budgetEvictions
++	into.ResidentReuses = c.residentReuses
++	into.ResidentIdled = c.residentIdles
++	into.ResidentRetired = c.residentRetires
++	into.ResidentEnded = c.residentEnds
+ 	into.ColdAcquires = make(map[ColdCause]uint64, len(c.cold))
+ 	for k, v := range c.cold {
+ 		into.ColdAcquires[k] = v
+diff --git a/remote-worker/internal/vmpool/sweep.go b/remote-worker/internal/vmpool/sweep.go
+index c1227dd7..78ea942f 100644
+--- a/remote-worker/internal/vmpool/sweep.go
++++ b/remote-worker/internal/vmpool/sweep.go
+@@ -13,6 +13,9 @@ import (
+ type reclaimBatch struct {
+ 	vms  []VM
+ 	dirs []string
++	// residents are E15 resident VMs detached for idle, each with its key's execGate
++	// held; doReclaim releases the gate only after the VM is destroyed.
++	residents []residentVictim
+ }
+ 
+ // sweepOnce walks every run and detaches what has aged out, under the lock,
+@@ -37,6 +40,9 @@ func (p *pool) sweepOnce(now time.Time) reclaimBatch {
+ 		if budget <= 0 {
+ 			break
+ 		}
++		if p.cfg.Resident && p.sweepResidentLocked(rp, now, &b, &budget) {
++			continue
++		}
+ 		// A run with work in flight or a warming pending is never swept, whatever its
+ 		// idle clock says: reclaiming here would pull the workspace out from under a
+ 		// running command.
+@@ -112,7 +118,7 @@ func (p *pool) sweepOnce(now time.Time) reclaimBatch {
+ // ticker firing near shutdown could send on a channel Close had already closed.
+ func (p *pool) sweep(now time.Time) {
+ 	b := p.sweepOnce(now)
+-	if len(b.vms) == 0 && len(b.dirs) == 0 {
++	if len(b.vms) == 0 && len(b.dirs) == 0 && len(b.residents) == 0 {
+ 		return
+ 	}
+ 	p.mu.Lock()
+@@ -131,6 +137,7 @@ func (p *pool) sweep(now time.Time) {
+ }
+ 
+ func (p *pool) doReclaim(b reclaimBatch) {
++	_ = p.destroyResidentVictims(b.residents)
+ 	for _, vm := range b.vms {
+ 		if err := vm.Destroy(); err != nil {
+ 			p.counters.destroyFailed()
