@@ -1,0 +1,8 @@
+{"version":1,"classes":{
+ "test":[{"id":"t1","cmd":"pytest -q a","exit":0,"nominal_ms":1000,"run_ms":null,"cpu_ms":null},
+         {"id":"t5","cmd":"pytest -q b","exit":0,"nominal_ms":4000,"run_ms":5000,"cpu_ms":null},
+         {"id":"t20","cmd":"pytest -q c","exit":1,"nominal_ms":20000,"run_ms":20000,"cpu_ms":null}],
+ "interpreter":[{"id":"i1","cmd":"python s1.py","exit":0,"nominal_ms":100,"run_ms":null,"cpu_ms":null},
+         {"id":"i2","cmd":"python s2.py","exit":0,"nominal_ms":500,"run_ms":null,"cpu_ms":null},
+         {"id":"i3","cmd":"python s3.py","exit":0,"nominal_ms":500,"run_ms":null,"cpu_ms":null}]},
+ "standin":{"interpreter_class":"interpreter","infra_sleep_frac":0.5}}
