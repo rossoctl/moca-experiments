@@ -153,7 +153,13 @@ def build(rung_dir, params):
         refusals += oom
         by_reason["oom_kill"] = by_reason.get("oom_kill", 0) + oom
 
-    ev = H.evaluate(calls, sessions, p.get("baseline_p95_ms"), arm=arm, refusals=refusals)
+    baseline = None
+    if p.get("baseline_path"):
+        with open(p["baseline_path"]) as f:
+            baseline = json.load(f)
+        if "excess_p95_ms" not in baseline or "global_median_ms" not in baseline:
+            raise SystemExit("record.py: %s is not a class-matched baseline.json" % p["baseline_path"])
+    ev = H.evaluate(calls, sessions, baseline, arm=arm, refusals=refusals)
     ws = window_samples(samples, start, end)
     rec = dict(p)
     rec.update(ev)

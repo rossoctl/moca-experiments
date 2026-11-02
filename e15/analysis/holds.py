@@ -3,6 +3,8 @@ import math
 
 PACE_MAX = 0.10
 P95_FACTOR = 3.0
+EXCESS_FLOOR_MS = 50.0  # condition 4 limit never drops below this (class-matched, SPEC §8)
+MIN_CLASS_CALLS = 5
 ABS_ADDED_MS = 250  # holds_abs: condition 4 as baseline + 250 ms (Task 7 fix round 1)
 MIN_SESSION_CALLS = 3
 
@@ -34,6 +36,33 @@ def window_added_ms(calls):
     """Added latency of the in-window ok calls: the population condition 4's p95 is over, and
     the N=1 baseline pools (baseline.py)."""
     return [added_ms(c) for c in calls if c.get("in_window") and c.get("status") == "ok"]
+
+
+def window_ok_calls(calls):
+    return [c for c in calls if c.get("in_window") and c.get("status") == "ok"]
+
+
+def class_medians(baseline_calls, min_n=MIN_CLASS_CALLS):
+    """Per-class median added latency over the in-window ok calls; classes with fewer than min_n
+    calls are omitted (they use the global median). Returns (medians, global_median)."""
+    ok = window_ok_calls(baseline_calls)
+    by = {}
+    for c in ok:
+        by.setdefault(c.get("class"), []).append(added_ms(c))
+    medians = {k: median(v) for k, v in by.items() if len(v) >= min_n}
+    return medians, median([added_ms(c) for c in ok])
+
+
+def excess_ms(calls, medians, global_median):
+    """Added latency of each in-window ok call minus its class's N=1 median (the global median
+    for a class with no median). Returns (excess list, fallback_count)."""
+    out, fb = [], 0
+    for c in window_ok_calls(calls):
+        m = medians.get(c.get("class"))
+        if m is None:
+            m, fb = global_median, fb + 1
+        out.append(added_ms(c) - m)
+    return out, fb
 
 
 def _not_failure_cause(call):
@@ -73,7 +102,8 @@ def _split(calls, key, arm):
     return out
 
 
-def evaluate(calls, sessions, baseline_p95_ms, arm="sbx", refusals=0):
+def evaluate(calls, sessions, baseline, arm="sbx", refusals=0):
+    """baseline: baseline.json's dict (class_medians, global_median_ms, excess_p95_ms) or None (N=1)."""
     win = [c for c in calls if c.get("in_window")]
     failed = [c for c in win if _is_failure(c, arm)]
     not_started = [c for c in win if c.get("status") == "err"
@@ -95,15 +125,20 @@ def evaluate(calls, sessions, baseline_p95_ms, arm="sbx", refusals=0):
         paces.append(s["observed_ms"] / float(s["planned_ms"]) - 1)
     med = median(paces)
 
-    p95_limit = None if baseline_p95_ms is None else P95_FACTOR * max(baseline_p95_ms, 1.0)
+    if baseline is None:
+        exc, fb, p95_exc, exc_limit = [], 0, None, None
+    else:
+        exc, fb = excess_ms(win, baseline.get("class_medians", {}), baseline["global_median_ms"])
+        p95_exc = percentile(exc, 95)
+        exc_limit = max(P95_FACTOR * baseline["excess_p95_ms"], EXCESS_FLOOR_MS)
     c1 = len(failed) == 0
     c2 = refusals == 0
     c3 = med is None or med <= PACE_MAX + 1e-9  # float slack at the inclusive boundary
-    c4 = p95_limit is None or p95 is None or p95 <= p95_limit
-    # holds_abs (Task 7 fix round 1, user decision): the same conditions, but condition 4 is an
-    # absolute bound -- p95 added latency at most baseline + ABS_ADDED_MS. N=1 skips it as before.
-    p95_limit_abs = None if baseline_p95_ms is None else baseline_p95_ms + ABS_ADDED_MS
-    c4_abs = p95_limit_abs is None or p95 is None or p95 <= p95_limit_abs
+    c4 = exc_limit is None or p95_exc is None or p95_exc <= exc_limit
+    # holds_abs: the same conditions, but condition 4 is absolute -- p95 excess at most
+    # ABS_ADDED_MS. N=1 skips it as before.
+    p95_limit_abs = None if baseline is None else ABS_ADDED_MS
+    c4_abs = p95_limit_abs is None or p95_exc is None or p95_exc <= p95_limit_abs
     empty = len(win) == 0 or len(paces) == 0
     out = {
         "holds": bool(c1 and c2 and c3 and c4) and not empty,
@@ -120,7 +155,9 @@ def evaluate(calls, sessions, baseline_p95_ms, arm="sbx", refusals=0):
         "refusals": refusals,
         "median_pace": med,
         "p95_added_ms": p95,
-        "p95_limit_ms": p95_limit,
+        "p95_excess_ms": p95_exc,
+        "excess_limit_ms": exc_limit,
+        "fallback_calls": fb,
         "sessions_evaluated": len(paces),
         "sessions_excluded_lt3": excluded,
         "causes": causes,

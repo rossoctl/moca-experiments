@@ -18,29 +18,35 @@ def sess(pace, n=5):
     return dict(session="s", window_calls=n, planned_ms=1000, observed_ms=1000 * (1 + pace))
 
 
+def BL(excess=100, gmed=0, medians=None, **kw):
+    d = dict(class_medians=medians or {}, global_median_ms=gmed, excess_p95_ms=excess)
+    d.update(kw)
+    return d
+
+
 def good_calls():
     return [call(added=a) for a in [50] * 18 + [150, 150]]
 
 
 def test_holds_all_green():
-    r = H.evaluate(good_calls(), [sess(0.05)] * 3, 100)
+    r = H.evaluate(good_calls(), [sess(0.05)] * 3, BL())
     assert r["holds"] and r["p95_added_ms"] == 150 and r["failed_calls"] == 0
 
 
 def test_fails_on_one_failed_call():
     c = good_calls() + [call(status="err", cause="rpc_error")]
-    assert not H.evaluate(c, [sess(0.05)], 100)["holds"]
+    assert not H.evaluate(c, [sess(0.05)], BL())["holds"]
 
 
 def test_control_exit_mismatch_ok_but_other_causes_fail():
     c = [call(status="err", cause="exit_mismatch")]
-    assert H.evaluate(c, [sess(0)], 100, arm="control")["holds"]
-    assert not H.evaluate(c, [sess(0)], 100, arm="sbx")["holds"]
+    assert H.evaluate(c, [sess(0)], BL(), arm="control")["holds"]
+    assert not H.evaluate(c, [sess(0)], BL(), arm="sbx")["holds"]
 
 
 def test_not_started_deadline_not_failure():
     c = [call(), call(status="err", cause="deadline", execs=0)]
-    r = H.evaluate(c, [sess(0)], 100)
+    r = H.evaluate(c, [sess(0)], BL())
     assert r["holds"] and r["not_started"] == 1
 
 
@@ -63,8 +69,8 @@ def test_pace_boundary():
 
 
 def test_p95_boundary():
-    assert H.evaluate([call(added=300)], [sess(0)], 100)["holds"]
-    assert not H.evaluate([call(added=301)], [sess(0)], 100)["holds"]
+    assert H.evaluate([call(added=300)], [sess(0)], BL())["holds"]
+    assert not H.evaluate([call(added=301)], [sess(0)], BL())["holds"]
 
 
 def test_baseline_none_skips_cond4():
@@ -73,7 +79,7 @@ def test_baseline_none_skips_cond4():
 
 
 def test_excludes_short_sessions():
-    r = H.evaluate([call()], [sess(5.0, n=2), sess(0.0, n=3)], 100)
+    r = H.evaluate([call()], [sess(5.0, n=2), sess(0.0, n=3)], BL())
     assert r["sessions_excluded_lt3"] == 1 and r["holds"]
 
 
@@ -122,22 +128,23 @@ import pytest
 
 
 def test_empty_window():
-    r = H.evaluate([], [sess(0)], 100)
+    r = H.evaluate([], [sess(0)], BL())
     assert not r["holds"] and r["reason"] == "empty_window"
-    r = H.evaluate([call()], [sess(0, n=2)], 100)
+    r = H.evaluate([call()], [sess(0, n=2)], BL())
     assert not r["holds"] and r["reason"] == "empty_window"
 
 
 def test_out_of_window_excluded():
     out = dict(call(status="err", cause="rpc_error"), in_window=False)
-    r = H.evaluate([call(), out], [sess(0)], 100)
+    r = H.evaluate([call(), out], [sess(0)], BL())
     assert r["holds"] and r["window_calls"] == 1
 
 
 def test_baseline_nonpositive_floor():
-    assert H.evaluate([call(added=3)], [sess(0)], 0)["holds"]
-    assert not H.evaluate([call(added=4)], [sess(0)], 0)["holds"]
-    assert H.evaluate([call(added=3)], [sess(0)], -5)["p95_limit_ms"] == 3.0
+    assert H.evaluate([call(added=50)], [sess(0)], BL(excess=0))["holds"]
+    assert not H.evaluate([call(added=51)], [sess(0)], BL(excess=0))["holds"]
+    assert H.evaluate([call(added=3)], [sess(0)], BL(excess=-5))["excess_limit_ms"] == 50.0
+    assert H.evaluate([call(added=3)], [sess(0)], BL(excess=100))["excess_limit_ms"] == 300.0
 
 
 def test_multi_session_median_and_splits():
@@ -259,15 +266,15 @@ def test_oom_kills_are_refusals(tmp_path):
     assert r["conditions"]["no_refusals"] is False and r["binding"] == "gate"
 
 
-def test_holds_abs_adds_250ms_not_3x():
-    # baseline 100 ms: 3x limit 300 ms, absolute limit 350 ms; p95 here is 320 ms
-    c = [call(added=a) for a in [50] * 18 + [320, 320]]
-    r = H.evaluate(c, [sess(0.05)] * 3, 100)
-    assert r["p95_added_ms"] == 320
+def test_holds_abs_excess_250ms():
+    # baseline excess 50 ms: 3x limit 150 ms, absolute limit 250 ms
+    c = [call(added=a) for a in [50] * 18 + [200, 200]]
+    r = H.evaluate(c, [sess(0.05)] * 3, BL(excess=50))
+    assert r["p95_excess_ms"] == 200 and r["p95_added_ms"] == 200
     assert not r["holds"] and r["holds_abs"]
-    assert r["p95_limit_abs_ms"] == 350 and r["conditions_abs"]["added_latency"]
-    c = [call(added=a) for a in [50] * 18 + [400, 400]]
-    r = H.evaluate(c, [sess(0.05)] * 3, 100)
+    assert r["p95_limit_abs_ms"] == 250 and r["conditions_abs"]["added_latency"]
+    c = [call(added=a) for a in [50] * 18 + [300, 300]]
+    r = H.evaluate(c, [sess(0.05)] * 3, BL(excess=50))
     assert not r["holds"] and not r["holds_abs"]
 
 
@@ -294,13 +301,13 @@ def test_holds_abs_forced_false_with_holds(tmp_path):
 
 def test_cut_at_end_not_failure_and_excluded_from_latency():
     c = good_calls() + [call(status="err", cause="cut_at_end", added=99999)]
-    r = H.evaluate(c, [sess(0.05)], 100)
+    r = H.evaluate(c, [sess(0.05)], BL())
     assert r["holds"] and r["failed_calls"] == 0 and r["cut_at_end"] == 1
     assert r["p95_added_ms"] == 150 and r["causes"] == {"cut_at_end": 1}
     assert r["by_class"]["x"]["failed"] == 0 and r["by_class"]["x"]["p95_added_ms"] == 150
     # a cut call outside the window is not counted
     out = dict(call(status="err", cause="cut_at_end"), in_window=False)
-    assert H.evaluate(good_calls() + [out], [sess(0)], 100)["cut_at_end"] == 0
+    assert H.evaluate(good_calls() + [out], [sess(0)], BL())["cut_at_end"] == 0
 
 
 def test_window_added_ms_ok_in_window_only():
@@ -354,7 +361,7 @@ def test_baseline_needs_a_dir_and_calls(tmp_path):
 def test_cut_at_end_needs_an_exec():
     # cut_at_end with no Exec sent is not a run-end cut the driver can produce: a failure
     c = good_calls() + [call(status="err", cause="cut_at_end", execs=0)]
-    r = H.evaluate(c, [sess(0)], 100)
+    r = H.evaluate(c, [sess(0)], BL())
     assert not r["holds"] and r["failed_calls"] == 1 and r["cut_at_end"] == 0
 
 
@@ -403,3 +410,59 @@ def test_baseline_records_evaluable_and_skipped(tmp_path, monkeypatch):
     assert [e["dir"] for e in got["evaluable"]] == dirs
     assert got["skipped"] == [{"seed": 2, "tag": "s2", "reason": "empty_window"}]
     assert got["calls"] == 30
+
+
+# --- class-matched condition 4 -------------------------------------------------------------
+
+def test_class_medians_and_fallback():
+    cs = [call(added=a, cls="x") for a in (10, 20, 30, 40, 50)] + [call(added=500, cls="y")] * 4
+    m, g = H.class_medians(cs)
+    assert m == {"x": 30} and g == 50  # y has 4 < 5 calls: omitted; global over all 9 ok calls
+    exc, fb = H.excess_ms([call(added=100, cls="x"), call(added=100, cls="y")], m, g)
+    assert exc == [70, 50] and fb == 1
+    out = dict(call(added=1, cls="x"), in_window=False)
+    assert H.excess_ms([out, call(added=9, status="err", cause="rpc_error")], m, g) == ([], 0)
+
+
+def test_excess_p95_and_floor_boundary():
+    bl = BL(excess=10, medians={"x": 100}, gmed=100)
+    assert H.evaluate([call(added=150)], [sess(0)], bl)["holds"]       # excess 50 = floor
+    r = H.evaluate([call(added=151)], [sess(0)], bl)
+    assert not r["holds"] and r["p95_excess_ms"] == 51 and r["excess_limit_ms"] == 50.0
+
+
+def test_heavy_class_matches_its_median():
+    # heavy class normally +800 ms; light +10. Old pooled rule (p95 14 ms x 3) would fail it.
+    bl = BL(excess=10, medians={"heavy": 800, "light": 10}, gmed=10)
+    c = [call(added=810, cls="heavy"), call(added=15, cls="light")] * 10
+    r = H.evaluate(c, [sess(0)], bl)
+    assert r["holds"] and r["p95_added_ms"] == 810 and r["p95_excess_ms"] == 10
+    slow = [call(added=a + 200, cls=k) for k, a in (("heavy", 800), ("light", 10))] * 10
+    r = H.evaluate(slow, [sess(0)], bl)
+    assert not r["holds"] and r["p95_excess_ms"] == 200
+    assert r["holds_abs"] is True and r["fallback_calls"] == 0
+
+
+def test_record_reads_baseline_path(tmp_path):
+    bp = tmp_path / "b.json"
+    bp.write_text(json.dumps(BL(excess=10, medians={"x": 100}, gmed=100)))
+    (tmp_path / "calls.jsonl").write_text(json.dumps(call(added=130)) + "\n")
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
+    r = R.build(str(tmp_path), dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(bp)))
+    assert r["holds"] and r["p95_excess_ms"] == 30 and r["excess_limit_ms"] == 50.0
+
+
+def test_baseline_writes_class_fields(tmp_path, monkeypatch):
+    d = tmp_path / "r"
+    d.mkdir()
+    rows = [call(added=a, cls="x") for a in (10, 20, 30, 40, 50)] + [call(added=7, cls="y")] * 2
+    (d / "calls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (d / "record.json").write_text(json.dumps(dict(library_sha256="L", driver_bin_sha256="D", corpus_sha256="C")))
+    monkeypatch.setenv("E15_BASELINE_COVERED", "x y z")
+    out = tmp_path / "b.json"
+    B.main([str(out), str(d)])
+    g = json.loads(out.read_text())
+    assert g["class_medians"] == {"x": 30} and g["class_counts"] == {"x": 5, "y": 2}
+    assert g["undercovered"] == ["y", "z"] and g["global_median_ms"] == 20
+    # excess over own medians: x: -20,-10,0,10,20 ; y falls back to global 20: -13,-13
+    assert g["excess_p95_ms"] == 20 and g["baseline_p95_ms"] is not None

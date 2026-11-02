@@ -1,6 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
-Version: 0.5 (draft for review), 2026-11-02
+Version: 0.6 (draft for review), 2026-11-02
+2026-11-02: condition 4 class-matched (user decision before sealing): per-class N=1 medians, excess p95 ≤ max(3× baseline excess p95, 50 ms); absolute verdict excess p95 ≤ 250 ms; baseline draws seeds until every class with ≥1% of calls has ≥5 N=1 calls.
 2026-11-02: §8 condition 4 factor 2× → 3× (user decision before sealing; calibration baselines unchanged, they do not depend on the factor).
 2026-11-01: §5.3–§5.6 numbers regenerated from e15/extract after fixing a cross-session chain join
 and removing re-recorded history.
@@ -438,8 +439,13 @@ rung, all four conditions are true:
    (observed time from its first to its last completed call in the window) ÷ (planned time for the
    same calls and gaps) − 1. The **median pace is at most 10%**. Sessions with fewer than 3 calls in
    the window are excluded from this condition and counted.
-4. **Added latency stays bounded.** Per call, added latency = observed time from send to `End`, minus
-   the planned duration. The **p95 of added latency is at most 3× that arm's own p95 at `N = 1`**.
+4. **Added latency stays bounded, class by class.** Per call, added latency = observed time from send
+   to `End`, minus the planned duration. From the arm's pooled `N = 1` calls take the median added
+   latency of each command class (a class with fewer than 5 such calls uses the median of all of
+   them). A call's **excess** is its added latency minus the `N = 1` median of its own class. The
+   **p95 of excess is at most the larger of 3× the arm's own `N = 1` excess p95 (each `N = 1` call
+   measured against its own class median) and 50 ms**. The absolute verdict asks only that the p95
+   of excess is at most 250 ms.
 
 `N_max` for an arm is the largest `N` on the ladder for which the host holds, with every smaller rung
 having held too. A failed rung ends the ladder for that arm.
@@ -479,6 +485,9 @@ disk ≥ 90% full, a moca gate refusal).
 3. Bring up the stack and run each arm at `N = 1` for 3 sessions. Record each arm's per-command
    overhead at `N = 1` (added latency, §8.4).
 4. Run the control arm at `N = 128` and confirm A2 (driver below 1% of host CPU).
+   The baseline draws seeds until there are at least 3 evaluable runs and 30 pooled calls and every
+   class with at least 1% of the corpus's calls has at least 5 `N = 1` calls (cap 30 seeds; classes
+   still short at the cap are recorded as undercovered).
 5. Write the predictions from these numbers (§11) and seal them.
 
 ### 10.2 Rungs

@@ -1,7 +1,8 @@
 """N=1 baseline pooling (SPEC §8 condition 4): `python3 baseline.py OUT_JSON RUN_DIR [RUN_DIR...]`.
 
 Pools the in-window ok calls of the given N=1 rung directories (each with calls.jsonl) and writes
-{"baseline_p95_ms", "calls", "runs": [{"dir", "calls", "p95_added_ms"}], "library_sha256",
+{"baseline_p95_ms" (information), "class_medians", "global_median_ms", "excess_p95_ms",
+"class_counts", "covered_classes" (E15_BASELINE_COVERED), "undercovered", "calls", "runs": [{"dir", "calls", "p95_added_ms"}], "library_sha256",
 "driver_bin_sha256", "corpus_sha256", "evaluable": [{"seed", "dir"}], "skipped": [{"seed", "tag",
 "reason"}]} to OUT_JSON (only evaluable runs are given and pooled; the seed lists come from
 baseline.sh via E15_BASELINE_SEEDS / E15_BASELINE_SKIPPED). The three hashes come from each run's
@@ -42,12 +43,24 @@ def run_hashes(dirs):
 
 
 def pool(dirs):
-    pooled, runs = [], []
+    pooled, runs, calls = [], [], []
     for d in dirs:
-        added = H.window_added_ms(read_jsonl(os.path.join(d, "calls.jsonl")))
+        cs = read_jsonl(os.path.join(d, "calls.jsonl"))
+        added = H.window_added_ms(cs)
         runs.append({"dir": d, "calls": len(added), "p95_added_ms": H.percentile(added, 95)})
         pooled.extend(added)
-    return {"baseline_p95_ms": H.percentile(pooled, 95), "calls": len(pooled), "runs": runs}
+        calls.extend(H.window_ok_calls(cs))
+    medians, gmed = H.class_medians(calls)
+    exc, _ = H.excess_ms(calls, medians, gmed)
+    counts = {}
+    for c in calls:
+        counts[str(c.get("class"))] = counts.get(str(c.get("class")), 0) + 1
+    covered = os.environ.get("E15_BASELINE_COVERED", "").split()
+    return {"baseline_p95_ms": H.percentile(pooled, 95), "calls": len(pooled), "runs": runs,
+            "class_medians": medians, "global_median_ms": gmed,
+            "excess_p95_ms": H.percentile(exc, 95), "class_counts": counts,
+            "covered_classes": covered,
+            "undercovered": sorted(k for k in covered if counts.get(k, 0) < H.MIN_CLASS_CALLS)}
 
 
 def main(argv=None):

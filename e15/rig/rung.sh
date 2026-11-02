@@ -18,7 +18,7 @@
 #   1. stop any rung units left over; wipe /srv/e15/workspaces and /srv/e15/jail (E15's own)
 #   2. pre-create /srv/e15/workspaces/<key>/workspace.img by `cp --reflink=always` of the template
 #      for key = e15-<run>-<slot>-<seq>, slot 0..N-1, seq 0..K-1,
-#      K = ceil((warmup_s + window_s) / (corpus mean session span)) + 3
+#      K = max(16, ceil((warmup_s + window_s) / (corpus mean session span)) + 3) x K_MULT
 #   3. start the arm's worker (e15-worker.service in e15-vms.slice; SPEC §7 env; lib.sh worker_env)
 #      or, for control, the null-responder on 127.0.0.1:9645
 #   4. start sample.sh and e15-driver together (sampler origin = the epoch just before the driver
@@ -139,6 +139,14 @@ print("SKIP no %s" % key if v is None else v)' "$cand" "$lib_sha" "$drv_sha" "$w
 fi
 [ "$baseline" = null ] || python3 -c 'import sys; float(sys.argv[1])' "$baseline" 2>/dev/null ||
   die "baseline p95 '$baseline' is not a number"
+# Condition 4 is class-matched (SPEC §8): N>1 needs the pooled baseline.json with class medians.
+baseline_path=null
+if [ "$N" != 1 ]; then
+  case "$baseline_src" in
+  */baseline.json) baseline_path=\"$baseline_src\" ;;
+  *) die "condition 4 needs a pooled class-matched baseline.json (run baseline.sh $POINT $ARM); got source '$baseline_src'" ;;
+  esac
+fi
 [ -f "$E15_TEMPLATE" ] || die "no workspace template $E15_TEMPLATE (run setup.sh)"
 if [ "$ARM" != control ]; then
   unit_active "$E15_UNIT_RELAY" || die "$E15_UNIT_RELAY is not running (run setup.sh)"
@@ -170,7 +178,7 @@ stop_rung_units
 refuse_shared_paths "$E15_WORKSPACES" "$E15_JAIL"
 sudo -n find "$E15_WORKSPACES" "$E15_JAIL" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 span_min=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["table"]["mean_span_min"])' "$CORPUS_DIR/corpus-report.json")
-K=$(python3 -c 'import math,sys; w,s=float(sys.argv[1]),float(sys.argv[2])*60; print((int(math.ceil(w/s))+3)*int(sys.argv[3]))' "$((WARMUP + WINDOW))" "$span_min" "$K_MULT")
+K=$(python3 -c 'import math,sys; w,s=float(sys.argv[1]),float(sys.argv[2])*60; print(max(16, (int(math.ceil(w/s))+3)*int(sys.argv[3])))' "$((WARMUP + WINDOW))" "$span_min" "$K_MULT")
 log "pre-creating $((N * K)) reflink workspaces (K=$K, mean span ${span_min} min)"
 sudo -n bash -c '
   set -e
@@ -318,13 +326,14 @@ arm = "$ARM"
 wbin = {"sbx": "$E15_BIN/microvm-worker", "resident-inf": "$E15_BIN/microvm-worker-resident",
         "resident-300": "$E15_BIN/microvm-worker-resident"}.get(arm)
 baseline = json.loads("$baseline")
+baseline_path = json.loads('$baseline_path')
 p = {
     "arm": arm, "n": $N, "point": "$POINT", "seed": $SEED, "run_id": run,
     "warmup_s": $WARMUP, "window_s": $WINDOW, "spread_s": $SPREAD, "grace_s": $GRACE,
     "floor_mb": $E15_FLOOR_MB, "driver_exit": $driver_exit,
     "rung_start_ts": float("$rung_start_ts"), "launch_ts": float("$launch_ts"),
     "driver_load_s": float("$rung_start_ts") - float("$launch_ts"),
-    "baseline_p95_ms": baseline, "baseline_source": "$baseline_src",
+    "baseline_p95_ms": baseline, "baseline_path": baseline_path, "baseline_source": "$baseline_src",
     "workspaces_per_slot": $K, "workspaces_k_mult": $K_MULT, "workspaces_precreated": len(pre),
     "oom_kills": $oom_after - $oom_before,
     "unseeded_sessions": len(keys - pre), "sessions_started": len(keys),

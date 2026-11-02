@@ -285,6 +285,14 @@ SH
   check "ladder: repeat_required re-runs with warm-up doubled and the repeat counts" "$(lj n_max)/$(grep -c '^1-repeat k=1 w=60' "$TMP/lcalls")" "1/1"
 fi
 
+# rung.sh: K has a floor of 16 workspaces per slot
+if [ -f "$RIG/rung.sh" ]; then
+  check "rung.sh K floor: max(16, formula)" "$(grep -c 'print(max(16, (int(math.ceil' "$RIG/rung.sh")" "1"
+  kf=$(sed -n '/^K=\$(python3/p' "$RIG/rung.sh" | sed 's/^K=\$(//; s/)$//')
+  # shellcheck disable=SC2001
+  check "rung.sh K: short run gets 16" "$(eval "$(echo "$kf" | sed 's/"\$((WARMUP + WINDOW))" "\$span_min" "\$K_MULT"/"1500" "30" "1"/')")" "16"
+fi
+
 # (3) rung.sh refuses N>1 with no baseline before touching anything
 if [ -f "$RIG/rung.sh" ]; then
   mkdir -p "$TROOT/corpora/default" "$TROOT/src/e15/commands" "$TROOT/bin" "$TROOT/template"
@@ -432,17 +440,28 @@ printf '{"holds": %s, "seed": %s, "failed_calls": %s, "refusals": 0%s}\n' "$hold
 add=$(( ${E15_SEED} * 10 ))
 : >"$d/calls.jsonl"
 for ((i = 0; i < ${!cvar:-${CALLS_ALL:-10}}; i++)); do
-  printf '{"in_window": true, "status": "ok", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$add" >>"$d/calls.jsonl"
+  printf '{"in_window": true, "status": "ok", "class": "a", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$add" >>"$d/calls.jsonl"
+done
+bvar="NB_${E15_TAG}"
+for ((i = 0; i < ${!bvar:-0}; i++)); do
+  printf '{"in_window": true, "status": "ok", "class": "b", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$add" >>"$d/calls.jsonl"
 done
 SH
   mkdir -p "$TROOT/src/e15"
   ln -sfn "$RIG/../analysis" "$TROOT/src/e15/analysis"
+  # corpus: 50 calls of class a, 50 of b (both covered) unless CORPUS_B=0 (a only)
+  mkcorpus() {
+    python3 -c 'import json,sys
+n = int(sys.argv[1])
+print(json.dumps({"calls": [{"class": "a"}] * 50 + [{"class": "b"}] * n}))' "$1" >"$TROOT/corpora/default/corpus.jsonl"
+  }
   bl() {
     rm -rf "$TROOT/runs"
     : >"$TMP/bcalls"
     env E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$BRUNG" B_CALLS="$TMP/bcalls" \
       PATH="$SPATH" E15_MANIFEST="$TMP/m.md" "$@" bash "$RIG/baseline.sh" default sbx >"$TMP/b.out" 2>&1
   }
+  mkcorpus 0
   bl
   check "baseline.sh exits 0 when all three hold" "$?" "0"
   check "baseline.sh ran three N=1 rungs, seeds 1-3, tags s1-s3" "$(tr '\n' '|' <"$TMP/bcalls")" "sbx 1 default 1 s1|sbx 1 default 2 s2|sbx 1 default 3 s3|"
@@ -464,10 +483,24 @@ SH
   bl CALLS_ALL=40
   check "baseline.sh: 3 runs is the minimum even when calls suffice" "$(grep -c . "$TMP/bcalls")" "3"
   # at most 12 seeds
-  bl REASON_ALL=empty_window
+  bl REASON_ALL=empty_window E15_BASELINE_MAX_SEEDS=12
   check "baseline.sh dies after 12 seeds without enough" "$?" "1"
   check "baseline.sh drew exactly 12 seeds" "$(grep -c . "$TMP/bcalls")" "12"
   check "baseline.sh writes no baseline.json after 12 seeds" "$([ -f "$bj" ] && echo yes || echo no)" "no"
+  # class coverage: b is a covered class (50% of corpus calls); draw seeds until it has >= 5 calls
+  mkcorpus 50
+  bl NB_s4=5
+  check "baseline.sh: stops only once every covered class has >= 5 calls" "$(grep -c . "$TMP/bcalls")" "4"
+  check "baseline.sh: covered classes recorded, none undercovered" "$(bjf 'd["covered_classes"]' 'd["undercovered"]' 'd["class_counts"]["b"]')" "['a', 'b'] [] 5"
+  bl E15_BASELINE_MAX_SEEDS=6
+  check "baseline.sh: at the cap undercovered classes are recorded, not a failure" "$?" "0"
+  check "baseline.sh: cap run drew 6 seeds" "$(grep -c . "$TMP/bcalls")" "6"
+  check "baseline.json lists the undercovered class" "$(bjf 'd["undercovered"]')" "['b']"
+  mkcorpus 0
+  # a class under 1% of corpus calls is not covered
+  python3 -c 'import json; print(json.dumps({"calls": [{"class": "a"}] * 200 + [{"class": "b"}]}))' >"$TROOT/corpora/default/corpus.jsonl"
+  bl
+  check "baseline.sh: a <1% class does not extend the draw" "$(grep -c . "$TMP/bcalls")" "3"
   # an empty window that still saw a failed call is a failure, not a skip
   bl REASON_s1=empty_window FAILED_s1=1
   check "baseline.sh dies on an empty_window run with a failed call" "$?" "1"
