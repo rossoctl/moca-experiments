@@ -6,12 +6,13 @@ Two kinds of N=1 run go in:
   * PROBE_DIR (after --probe): the per-class probe runs (classprobe.sh, one class alone on an idle
     worker, 20 calls). Their in-window ok calls give "class_medians" (per-class median added
     latency; a class with < 5 ok probe calls is omitted and listed in "undercovered"),
-    "global_median_ms" (median over all probe calls) and "excess_p95_ms" (B: the p95 over the probe
+    "global_median_ms" (median over all probe calls) and "excess_p95_ms" (B: the p95 over the covered classes' probe
     calls of added latency minus the call's own class median -- the within-class spread).
 Also written: "class_counts" (ok probe calls per class), "probe_failed" ({class: failed calls}),
 "probe_runs", "runs", the three hashes (from the RUN_DIRs' record.json, which must agree: rung.sh
 refuses a baseline whose library or driver differs from the rung's own), and "evaluable" /
 "skipped" (seed lists from baseline.sh via E15_BASELINE_SEEDS / E15_BASELINE_SKIPPED).
+E15_BASELINE_ARM (baseline.sh) names the arm for failure counting (control tolerates exit_mismatch).
 Added latency is holds.py's added_ms; percentiles are nearest-rank.
 """
 import json
@@ -45,7 +46,7 @@ def run_hashes(dirs):
     return seen[1]
 
 
-def pool(dirs, probe_dirs=()):
+def pool(dirs, probe_dirs=(), arm="sbx"):
     pooled, runs = [], []
     for d in dirs:
         added = H.window_added_ms(read_jsonl(os.path.join(d, "calls.jsonl")))
@@ -58,10 +59,12 @@ def pool(dirs, probe_dirs=()):
         probe_runs.append({"dir": d, "ok": len(ok), "calls": len(cs)})
         probe_calls.extend(ok)
         for c in cs:
-            if c.get("status") == "err" and H.counts_as_failure(c):
+            if c.get("status") == "err" and H.counts_as_failure(c, arm):
                 failed[str(c.get("class"))] = failed.get(str(c.get("class")), 0) + 1
     medians, gmed = H.class_medians(probe_calls)
-    exc, _ = H.excess_ms(probe_calls, medians, gmed)
+    # B is the within-class spread: only classes that have a median (>= 5 ok probe calls) count;
+    # an undercovered class would measure against the global median, a different thing.
+    exc, _ = H.excess_ms([c for c in probe_calls if c.get("class") in medians], medians, gmed)
     counts = {}
     for c in probe_calls:
         counts[str(c.get("class"))] = counts.get(str(c.get("class")), 0) + 1
@@ -88,7 +91,7 @@ def main(argv=None):
         if not os.path.isfile(os.path.join(d, "calls.jsonl")):
             sys.exit("baseline.py: no %s" % os.path.join(d, "calls.jsonl"))
     hashes = run_hashes(dirs)
-    b = pool(dirs, probes)
+    b = pool(dirs, probes, os.environ.get("E15_BASELINE_ARM", "sbx"))
     b.update(hashes)
     # baseline.sh passes which seeds were pooled and which were skipped as not evaluable
     seeds = os.environ.get("E15_BASELINE_SEEDS", "").split()

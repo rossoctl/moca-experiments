@@ -1,0 +1,10 @@
+{
+  "probe_class": "build",
+  "H_s": null,
+  "exclude": null,
+  "table": {
+    "mean_span_min": 0.14166666666666666
+  },
+  "span_ms": 8500,
+  "from_corpus": false
+}

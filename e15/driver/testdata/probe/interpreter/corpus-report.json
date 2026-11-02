@@ -1,0 +1,10 @@
+{
+  "probe_class": "interpreter",
+  "H_s": null,
+  "exclude": null,
+  "table": {
+    "mean_span_min": 0.16166666666666665
+  },
+  "span_ms": 9700,
+  "from_corpus": false
+}

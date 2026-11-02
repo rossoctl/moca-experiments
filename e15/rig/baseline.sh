@@ -90,6 +90,7 @@ while IFS= read -r line; do
   [ -z "$line" ] || probes+=("$line")
 done <<<"$probe_out"
 [ "${#probes[@]}" -gt 0 ] || die "classprobe.sh $POINT $ARM produced no probe runs"
-p95=$(E15_BASELINE_SEEDS="${seeds[*]}" E15_BASELINE_SKIPPED="${skipped[*]}" \
+p95=$(E15_BASELINE_ARM="$ARM" E15_BASELINE_SEEDS="${seeds[*]}" E15_BASELINE_SKIPPED="${skipped[*]}" \
   python3 "$E15_SRC/analysis/baseline.py" "$OUT" "${dirs[@]}" --probe "${probes[@]}") || die "baseline.py failed for ${dirs[*]}"
+log "baseline $ARM probe_failed: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["probe_failed"] or "none")' "$OUT")"
 log "baseline $ARM point=$POINT: p95 added ${p95} ms over ${#dirs[@]} evaluable N=1 runs, $calls calls, ${#probes[@]} class probes (seeds ${seeds[*]}; skipped ${skipped[*]:-none}) ($OUT)"

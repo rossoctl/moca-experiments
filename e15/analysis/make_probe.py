@@ -5,7 +5,8 @@
 For every class in LIBRARY plus the stand-in classes (opaque, build, host_infra) writes
 OUT_DIR/<class>/corpus.jsonl: ONE session (id probe-<class>, user probe, provider probe) of
 --per-class calls of that class. Each call's (work_ms, dur_ms) pair is drawn, seeded, from that
-class's non-chain calls in CORPUS (chains excluded: their duration is mostly idle tail); a class
+class's non-chain calls in CORPUS (chains excluded: their duration is mostly idle tail), dur_ms
+capped at 30 000 ms and work_ms at dur_ms; a class
 CORPUS has none of falls back to the library's invocation times. gap_ms is 2000 and offset_ms is
 the previous call's dur_ms + gap_ms (0 for the first), so the class is measured alone on an idle
 worker. Also writes OUT_DIR/<class>/corpus-report.json (the fields rung.sh reads) and
@@ -18,6 +19,7 @@ import os
 import random
 
 GAP_MS = 2000
+CAP_MS = 30000  # a probe measures per-class medians, not tails
 STANDIN = ("opaque", "build", "host_infra")
 
 
@@ -44,7 +46,8 @@ def probe_session(cls, pairs, per_class, rng):
     calls, prev_dur = [], 0
     for i in range(per_class):
         work, dur = rng.choice(pairs)
-        dur = max(dur, work)
+        dur = min(max(dur, work), CAP_MS)
+        work = min(work, dur)
         calls.append({"i": i, "class": cls, "skeleton": "probe", "dur_ms": dur, "work_ms": work,
                       "gap_ms": GAP_MS, "offset_ms": 0 if i == 0 else prev_dur + GAP_MS,
                       "out_bytes": 0, "chain": False})

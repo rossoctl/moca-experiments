@@ -546,3 +546,44 @@ def test_make_probe_deterministic(tmp_path):
     assert rd("a") == rd("b") and rd("a") != rd("c")
     # validatePlans needs >= 3 calls and a class in the library or the stand-ins; both hold
     # (the Go side is covered by the driver's own tests; no Go in this suite).
+
+
+def test_b_excludes_undercovered_classes(tmp_path):
+    px = _probe_dir(tmp_path, "p-x", "x", [10, 10, 10, 10, 10])
+    py = _probe_dir(tmp_path, "p-y", "y", [900, 1000, 800])   # 3 calls: undercovered
+    seeded = _rung_dir(tmp_path, "N1-s1", [5] * 10)
+    out = tmp_path / "b.json"
+    B.main([str(out), seeded, "--probe", px, py])
+    g = json.loads(out.read_text())
+    assert g["undercovered"] == ["y"] and g["excess_p95_ms"] == 0
+
+
+def test_probe_failed_uses_arm_and_record_copies_it(tmp_path, monkeypatch):
+    d = tmp_path / "pc"
+    d.mkdir()
+    rows = [call(cls="c") for _ in range(5)] + [call(cls="c", status="err", cause="exit_mismatch")]
+    (d / "calls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    seeded = _rung_dir(tmp_path, "N1-s1", [5] * 3)
+    out = tmp_path / "b.json"
+    B.main([str(out), seeded, "--probe", str(d)])
+    assert json.loads(out.read_text())["probe_failed"] == {"c": 1}
+    monkeypatch.setenv("E15_BASELINE_ARM", "control")
+    B.main([str(out), seeded, "--probe", str(d)])
+    assert json.loads(out.read_text())["probe_failed"] == {}
+    bj = json.loads(out.read_text())
+    bj["probe_failed"] = {"c": 2}
+    (tmp_path / "b2.json").write_text(json.dumps(bj))
+    (tmp_path / "calls.jsonl").write_text(json.dumps(call(cls="c")) + "\n")
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
+    r = R.build(str(tmp_path), dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(tmp_path / "b2.json")))
+    assert r["probe_failed"] == {"c": 2}
+
+
+def test_make_probe_caps_durations(tmp_path):
+    corpus = tmp_path / "c.jsonl"
+    corpus.write_text(json.dumps({"calls": [{"class": "read", "work_ms": 90000, "dur_ms": 120000, "chain": False}]}) + "\n")
+    lib = tmp_path / "l.json"
+    lib.write_text(json.dumps({"classes": {"read": [{"id": "r", "cmd": "x", "nominal_ms": 3}]}}))
+    MP.main([str(corpus), str(lib), str(tmp_path / "o"), "--per-class", "4"])
+    for x in json.loads((tmp_path / "o" / "read" / "corpus.jsonl").read_text())["calls"]:
+        assert x["dur_ms"] == 30000 and x["work_ms"] == 30000

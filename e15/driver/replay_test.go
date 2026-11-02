@@ -1022,3 +1022,17 @@ func TestStartAtZero(t *testing.T) {
 		}
 	}
 }
+
+func TestMaxSessionsEndsRunEarly(t *testing.T) {
+	client, _ := newFake(t)
+	cfg := baseCfg()
+	cfg.StartAtZero, cfg.MaxSessions, cfg.Window = true, 1, 20*time.Second
+	t0 := time.Now()
+	res := run(t, cfg, []Session{sess("s", "u", 20, "q", "q", "q")}, testLib(nil, "q"), client)
+	if res.err != nil || len(res.calls) != 3 {
+		t.Fatalf("%v: %d calls, want exactly 3", res.err, len(res.calls))
+	}
+	if d := time.Since(t0); d > 10*time.Second {
+		t.Fatalf("run took %v, want it to end before the 20 s window", d)
+	}
+}

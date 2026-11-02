@@ -11,6 +11,7 @@
 #   E15_TAG            suffix for the rung directory (ladder.sh uses "repeat")
 #   E15_CORPUS_OVERRIDE  a probe corpus.jsonl to replay instead of POINT's (classprobe.sh)
 #   E15_START_ZERO     1: every session starts at its first call (probe runs)
+#   E15_MAX_SESSIONS   start at most this many sessions, then end the run early (probe runs)
 # The N=1 baseline is the pooled N1/baseline.json that baseline.sh writes (see "the N=1 baseline").
 #
 # Steps:
@@ -83,7 +84,8 @@ if [ -n "${E15_CORPUS_OVERRIDE:-}" ]; then
   CORPUS_DIR=$(dirname "$CORPUS")
 fi
 start_flag=()
-[ "${E15_START_ZERO:-0}" = 1 ] && start_flag=(--start-at-zero)
+[ "${E15_START_ZERO:-0}" = 1 ] && start_flag+=(--start-at-zero)
+[ -n "${E15_MAX_SESSIONS:-}" ] && start_flag+=(--max-sessions "$E15_MAX_SESSIONS")
 LIBRARY=$E15_SRC/commands/library.json
 DRIVER=$E15_BIN/e15-driver
 [ -f "$CORPUS" ] || die "no corpus $CORPUS"

@@ -32,6 +32,9 @@ type Config struct {
 	// StartAtZero makes every session start at its first call instead of a seeded random index
 	// (the class probe replays a synthetic session end to end).
 	StartAtZero bool
+	// MaxSessions > 0 caps the sessions started in total: once that many have started no slot
+	// starts another, and the run ends (exit 0) when every slot is idle. 0 = unlimited.
+	MaxSessions int
 	SandboxID   string
 	RunID       string
 	Token       string
@@ -48,6 +51,7 @@ type Replayer struct {
 	sampler   *Sampler
 	liveUsers map[string]int
 	liveCount int
+	started   int // sessions started so far (Config.MaxSessions)
 
 	reqID atomic.Uint64
 
@@ -139,6 +143,9 @@ func (r *Replayer) Live() int {
 
 // swap ends prev (if non-nil) and draws its replacement in one critical section, so the live
 // count never dips between a session's end and its successor's start.
+// errSessionLimit is swap's answer once Config.MaxSessions sessions have started.
+var errSessionLimit = errors.New("session limit reached")
+
 func (r *Replayer) swap(prev *Session) (Session, int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -146,10 +153,14 @@ func (r *Replayer) swap(prev *Session) (Session, int, error) {
 		r.liveUsers[prev.User]--
 		r.liveCount--
 	}
+	if r.cfg.MaxSessions > 0 && r.started >= r.cfg.MaxSessions {
+		return Session{}, 0, errSessionLimit
+	}
 	s, start, err := r.sampler.Next(r.liveUsers, r.cfg.N)
 	if err != nil {
 		return Session{}, 0, err
 	}
+	r.started++
 	if r.cfg.StartAtZero {
 		start = 0
 	}
@@ -256,6 +267,9 @@ func (r *Replayer) runSlot(ctx context.Context, slot int, startAt time.Time) err
 			return nil
 		}
 		s, start, err := r.swap(prev)
+		if errors.Is(err, errSessionLimit) {
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("slot %d: drawing session %d: %w", slot, seq, err)
 		}

@@ -1,7 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
 Version: 0.6 (draft for review), 2026-11-02
-2026-11-02: condition 4 class-matched (user decision before sealing): per-class N=1 medians, excess p95 ≤ max(3× baseline excess p95, 50 ms); absolute verdict excess p95 ≤ 250 ms; medians from a per-class N=1 probe, 20 calls per class drawn from the corpus distribution (each class alone on an idle worker), so every class is covered by construction.
+2026-11-02: condition 4 class-matched (user decision before sealing): per-class N=1 medians, excess p95 ≤ max(3× baseline excess p95, 50 ms); absolute verdict excess p95 ≤ 250 ms; medians from a per-class N=1 probe, 20 calls per class drawn from the corpus distribution (each class alone on an idle worker), every class is probed; a class with fewer than 5 ok probe calls is undercovered and uses the global median.
 2026-11-02: §8 condition 4 factor 2× → 3× (user decision before sealing; calibration baselines unchanged, they do not depend on the factor).
 2026-11-01: §5.3–§5.6 numbers regenerated from e15/extract after fixing a cross-session chain join
 and removing re-recorded history.
@@ -440,9 +440,9 @@ rung, all four conditions are true:
    same calls and gaps) − 1. The **median pace is at most 10%**. Sessions with fewer than 3 calls in
    the window are excluded from this condition and counted.
 4. **Added latency stays bounded, class by class.** Per call, added latency = observed time from send
-   to `End`, minus the planned duration. From the arm's pooled `N = 1` calls take the median added
-   latency of each command class, measured by the per-class probe (§10.1: each class alone on an idle
-   worker, 20 calls drawn from the corpus's distribution for that class); a class with fewer than 5
+   to `End`, minus the planned duration. From the arm's per-class `N = 1` probe (§10.1: each class alone on an idle
+   worker, 20 calls drawn from the corpus's distribution for that class) take the median added
+   latency of each command class; a class with fewer than 5
    ok probe calls uses the median of all probe calls. A call's **excess** is its added latency minus the `N = 1` median of its own class. The
    **p95 of excess is at most the larger of 3× the arm's own probe excess p95 (each probe call
    measured against its own class median) and 50 ms**. The absolute verdict asks only that the p95

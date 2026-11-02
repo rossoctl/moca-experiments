@@ -34,6 +34,7 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 		warmupS   = fs.Int("warmup-s", 600, "unmeasured warm-up, seconds")
 		windowS   = fs.Int("window-s", 900, "measured window, seconds")
 		spreadS   = fs.Int("spread-s", 60, "first sessions start spread over this many seconds")
+		maxSess   = fs.Int("max-sessions", 0, "start at most this many sessions in total, then end the run early (0 = unlimited; class probe)")
 		startZero = fs.Bool("start-at-zero", false, "every session starts at its first call (class probe)")
 		endSess   = fs.Bool("end-session-exec", false, "send '"+EndSessionCommand+"' on a session's workspace_key when it ends (resident arm)")
 		graceS    = fs.Int("grace-s", 300, "after the run's end, Execs still in flight are cancelled after this many seconds")
@@ -105,7 +106,7 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 	r, err := NewReplayer(Config{
 		N: *n, Seed: *seed, UserCap: *userCap,
 		Warmup: time.Duration(*warmupS) * time.Second, Window: time.Duration(*windowS) * time.Second,
-		Spread: time.Duration(*spreadS) * time.Second, Grace: time.Duration(*graceS) * time.Second, EndSessionExec: *endSess, StartAtZero: *startZero, SandboxID: *sandboxID, RunID: *runID, Token: token,
+		Spread: time.Duration(*spreadS) * time.Second, Grace: time.Duration(*graceS) * time.Second, EndSessionExec: *endSess, StartAtZero: *startZero, MaxSessions: *maxSess, SandboxID: *sandboxID, RunID: *runID, Token: token,
 	}, ss, lib, pb.NewSandboxExecClient(cc), rec)
 	if err != nil {
 		_ = closeAll()
