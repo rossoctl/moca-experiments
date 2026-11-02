@@ -971,10 +971,13 @@ func TestAppendTailBounded(t *testing.T) {
 func TestValidatePlansRefusesOversizeScript(t *testing.T) {
 	client, f := newFake(t)
 	big := strings.Repeat("x", 400)
-	// Two invocations of the class, alternating would defeat run-length encoding: fill picks the
-	// 10 ms tie at random, so 200 steps of two distinct ~400-byte commands exceed 30 KiB.
-	lib := &Library{Classes: map[string][]Invocation{"q": {
-		{ID: "a", Cmd: ": a" + big, NominalMs: 10}, {ID: "b", Cmd: ": b" + big, NominalMs: 10}}}}
+	// 100 distinct ~400-byte invocations of 10 ms, picked at random: 200 steps over ~90 distinct
+	// commands, so even grouped into loops the script is tens of KiB, over the frame.
+	inv := make([]Invocation, 100)
+	for i := range inv {
+		inv[i] = Invocation{ID: strconv.Itoa(i), Cmd: fmt.Sprintf(": %d%s", i, big), NominalMs: 10}
+	}
+	lib := &Library{Classes: map[string][]Invocation{"q": inv}}
 	lib.Standin.InterpreterClass = "q"
 	ss := []Session{sess("ok", "u", 20, "q", "q", "q")}
 	ss[0].Calls[2].WorkMs = 2000
@@ -982,6 +985,26 @@ func TestValidatePlansRefusesOversizeScript(t *testing.T) {
 	_, err := NewReplayer(baseCfg(), ss, lib, client, NewRecorder(&b, &b, &b))
 	if err == nil || !strings.Contains(err.Error(), "1 call") || !strings.Contains(err.Error(), "30720") {
 		t.Fatalf("got %v, want a refusal naming 1 call over the 30720-byte limit", err)
+	}
+	if len(f.byKey()) != 0 {
+		t.Fatal("execs were sent")
+	}
+}
+
+func TestValidatePlansChecksEncodedFrame(t *testing.T) {
+	client, f := newFake(t)
+	// Under 30 KiB raw, over it encoded: '<' is 6 bytes once json.Marshal escapes it.
+	lib := &Library{Classes: map[string][]Invocation{"q": {{ID: "a", Cmd: ": " + strings.Repeat("<", 6000), NominalMs: 10}}}}
+	lib.Standin.InterpreterClass = "q"
+	ss := []Session{sess("ok", "u", 20, "q", "q", "q")}
+	script, _ := JoinPlan([]Planned{{Cmd: lib.Classes["q"][0].Cmd}}, 0)
+	if len(script) > maxJoinedBytes || guestFrameBytes(script) <= maxJoinedBytes {
+		t.Fatalf("fixture: raw %d, encoded %d; want raw under and encoded over %d", len(script), guestFrameBytes(script), maxJoinedBytes)
+	}
+	var b bytes.Buffer
+	_, err := NewReplayer(baseCfg(), ss, lib, client, NewRecorder(&b, &b, &b))
+	if err == nil || !strings.Contains(err.Error(), "encoded") || !strings.Contains(err.Error(), "30720") {
+		t.Fatalf("got %v, want a refusal on the encoded guest frame size", err)
 	}
 	if len(f.byKey()) != 0 {
 		t.Fatal("execs were sent")

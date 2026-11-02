@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -245,6 +246,26 @@ func fill(invs []Invocation, work int64, rng *rand.Rand) []step {
 	return out
 }
 
+// groupSteps reorders a call's fill steps in place so identical invocations (same Cmd and Exit)
+// are contiguous, each group at its first appearance, stably. A greedy duration fill's order is
+// arbitrary, so the work and the total duration are unchanged; contiguous steps let JoinPlan
+// run-length encode them and keep the joined script under the guest frame limit. Deterministic.
+func groupSteps(ps []Planned) {
+	type key struct {
+		cmd  string
+		exit int32
+	}
+	first := map[key]int{}
+	for i, p := range ps {
+		if _, ok := first[key{p.Cmd, p.Exit}]; !ok {
+			first[key{p.Cmd, p.Exit}] = i
+		}
+	}
+	sort.SliceStable(ps, func(a, b int) bool {
+		return first[key{ps[a].Cmd, ps[a].Exit}] < first[key{ps[b].Cmd, ps[b].Exit}]
+	})
+}
+
 // Plan expands one call into the commands to send, deterministically for (seed, sessionID, c.I).
 // Classes without a library entry use the interpreter stand-in; host_infra is sleep plus
 // interpreter invocations.
@@ -274,6 +295,9 @@ func (l *Library) Plan(c Call, seed int64, sessionID string) ([]Planned, error) 
 		out[i] = st.p
 		sum += st.runMs
 	}
+	// host_infra's stand-in sleep is step 0 and unlike any fill step, so first-appearance
+	// grouping keeps it first.
+	groupSteps(out)
 	if c.Chain && len(out) > 0 {
 		if tail := c.DurMs - sum; tail > 0 {
 			out[len(out)-1].SleepAfterMs = tail
@@ -333,6 +357,40 @@ func JoinPlan(steps []Planned, tailMs int64) (string, error) {
 	}
 	b.WriteString("exit 0\n")
 	return b.String(), nil
+}
+
+// firecrackerWrapPrefix and firecrackerWrapSuffix are what the microVM launcher puts around
+// every command before sending it (wrapCommand, remote-worker/internal/vmpool/
+// launcher_firecracker.go:1089 at moca v0.9.0; both the per-Exec and the resident worker run
+// through it).
+const (
+	firecrackerWrapPrefix = "cd /workspace\n( "
+	firecrackerWrapSuffix = "\n)\n__fc_rc=$?\nsync\n(exit $__fc_rc)\n"
+)
+
+// guestRequest mirrors guestagent.Request (protocol.go at v0.9.0), which the worker sends as
+// ONE JSON frame (WriteJSON: json.Marshal, payload <= MaxFrame 32 KiB; guestconn.go:105).
+type guestRequest struct {
+	Command       string `json:"command"`
+	TimeoutS      uint32 `json:"timeout_s"`
+	Streaming     bool   `json:"streaming"`
+	CapBytes      int64  `json:"cap_bytes"`
+	HasStdin      bool   `json:"has_stdin"`
+	HostUnixNanos int64  `json:"host_unix_nanos"`
+}
+
+// guestFrameSlack covers any field this mirror lacks or a later worker adds.
+const guestFrameSlack = 512
+
+// guestFrameBytes is an upper bound on the guest Request frame payload for a joined script: the
+// launcher-wrapped command JSON-encoded as the worker does (json.Marshal escapes <, >, & as six
+// bytes and newlines and quotes as two), every numeric field at its widest, plus guestFrameSlack.
+func guestFrameBytes(script string) int {
+	b, _ := json.Marshal(guestRequest{
+		Command: firecrackerWrapPrefix + script + firecrackerWrapSuffix, TimeoutS: math.MaxUint32,
+		Streaming: true, CapBytes: math.MinInt64, HasStdin: true, HostUnixNanos: math.MinInt64,
+	})
+	return len(b) + guestFrameSlack
 }
 
 const failedMarker = "E15_FAILED_STEP="

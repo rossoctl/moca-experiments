@@ -84,9 +84,10 @@ func NewReplayer(cfg Config, sessions []Session, lib *Library, client pb.Sandbox
 	return r, nil
 }
 
-// maxJoinedBytes bounds a joined script: the guest agent's protocol caps a frame at 32 KiB
-// (MaxFrame, remote-worker/internal/guestagent/protocol.go, moca v0.9.0), and a larger Exec never
-// completes, running into its timeout. 30 KiB leaves room for the frame's other fields.
+// maxJoinedBytes bounds the guest Request frame a joined script becomes (guestFrameBytes: the
+// launcher-wrapped, JSON-encoded command plus slack): the guest agent's protocol caps a frame at
+// 32 KiB (MaxFrame, remote-worker/internal/guestagent/protocol.go, moca v0.9.0), and a larger
+// Exec never completes, running into its timeout.
 const maxJoinedBytes = 30 << 10
 
 // validatePlans plans and joins every call of every replayable session once, so a library that
@@ -111,16 +112,16 @@ func validatePlans(sessions []Session, lib *Library, seed int64) error {
 			if err != nil {
 				return fmt.Errorf("joining %s call %d: %w", s.ID, c.I, err)
 			}
-			if len(script) > maxJoinedBytes {
+			if n := guestFrameBytes(script); n > maxJoinedBytes {
 				over++
-				if len(script) > largest {
-					largest, where = len(script), fmt.Sprintf("%s call %d, class %s, %d steps", s.ID, c.I, c.Class, len(p))
+				if n > largest {
+					largest, where = n, fmt.Sprintf("%s call %d, class %s, %d steps, %d raw bytes", s.ID, c.I, c.Class, len(p), len(script))
 				}
 			}
 		}
 	}
 	if over > 0 {
-		return fmt.Errorf("%d call(s) join into a script over the guest frame limit of %d bytes; the largest is %d bytes (%s)",
+		return fmt.Errorf("%d call(s) join into a script whose encoded guest frame is over the limit of %d bytes; the largest is %d bytes encoded (%s)",
 			over, maxJoinedBytes, largest, where)
 	}
 	return nil

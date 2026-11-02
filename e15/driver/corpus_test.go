@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -567,5 +568,109 @@ func TestJoinPlanLoopFailureStepIndex(t *testing.T) {
 	rc, stderr = runJoinedErr(t, s3)
 	if fk, frcp, ok := failedFromExit(int32(rc), []byte(stderr)); rc != 92 || !ok || fk != 2 || frcp == nil || *frcp != 1 {
 		t.Fatalf("exit %d failedFromExit %d %v %v (%q), want 92 step 2 rc 1", rc, fk, frcp, ok, stderr)
+	}
+}
+
+// --- contiguous fill steps (frame-limit round 2) ----------------------------------------------
+
+// alternating is a library whose fill alternates two commands: 500 ms ties a/b picked at random.
+func alternating() *Library {
+	l := &Library{Classes: map[string][]Invocation{"x": {
+		{ID: "a", Cmd: "cmd-a", NominalMs: 500}, {ID: "b", Cmd: "cmd-b", NominalMs: 500}}}}
+	l.Standin.InterpreterClass = "x"
+	return l
+}
+
+func TestPlanGroupsIdenticalSteps(t *testing.T) {
+	l := alternating()
+	ps := plan(t, l, Call{I: 4, Class: "x", WorkMs: 20000, DurMs: 20000}, 3, "s")
+	if len(ps) != 40 {
+		t.Fatalf("%d steps, want 40", len(ps))
+	}
+	// contiguous: the command changes at most once, in first-appearance order
+	changes := 0
+	for k := 1; k < len(ps); k++ {
+		if ps[k].Cmd != ps[k-1].Cmd {
+			changes++
+		}
+	}
+	if changes != 1 {
+		t.Fatalf("command changes %d times, want once (two groups): %v", changes, ps)
+	}
+	script, _ := JoinPlan(ps, 0)
+	if n := strings.Count(script, "for __i in $(seq "); n != 2 || strings.Count(script, "__rc=$?") != 2 {
+		t.Fatalf("%d loops, want the two groups as two loops:\n%s", n, script)
+	}
+	// the grouping keeps the multiset of steps: same work, same duration
+	na := strings.Count(script, "(\ncmd-a\n)")
+	if na != 1 || !strings.Contains(script, fmt.Sprintf("seq %d); do (\ncmd-a", countCmd(ps, "cmd-a"))) {
+		t.Fatalf("cmd-a loop count does not match its %d picks:\n%s", countCmd(ps, "cmd-a"), script)
+	}
+	if countCmd(ps, "cmd-a")+countCmd(ps, "cmd-b") != 40 || countCmd(ps, "cmd-a") == 0 || countCmd(ps, "cmd-b") == 0 {
+		t.Fatalf("picks a=%d b=%d", countCmd(ps, "cmd-a"), countCmd(ps, "cmd-b"))
+	}
+	// deterministic, and first-appearance order varies with the seed's first pick
+	if fmt.Sprint(ps) != fmt.Sprint(plan(t, l, Call{I: 4, Class: "x", WorkMs: 20000, DurMs: 20000}, 3, "s")) {
+		t.Fatal("not deterministic")
+	}
+	first := map[string]bool{}
+	for i := 0; i < 30; i++ {
+		first[plan(t, l, Call{I: i, Class: "x", WorkMs: 5000, DurMs: 5000}, 3, "s")[0].Cmd] = true
+	}
+	if len(first) != 2 {
+		t.Fatalf("first group is always %v: the order should follow the random first pick", first)
+	}
+}
+
+func countCmd(ps []Planned, cmd string) int {
+	n := 0
+	for _, p := range ps {
+		if p.Cmd == cmd {
+			n++
+		}
+	}
+	return n
+}
+
+func TestPlanGroupingKeepsInfraSleepFirstAndChainTailLast(t *testing.T) {
+	l := lib(t)
+	ps := plan(t, l, Call{I: 3, Class: "host_infra", WorkMs: 4000, DurMs: 4000}, 1, "s")
+	if ps[0].Cmd != "sleep 2.0" {
+		t.Fatalf("first step %q, want the stand-in sleep", ps[0].Cmd)
+	}
+	for k := 2; k < len(ps); k++ {
+		for j := 1; j < k-1; j++ {
+			if ps[j].Cmd == ps[k].Cmd && ps[k-1].Cmd != ps[k].Cmd {
+				t.Fatalf("step %d %q is not contiguous with step %d", k, ps[k].Cmd, j)
+			}
+		}
+	}
+	ps = plan(t, alternating(), Call{I: 1, Class: "x", WorkMs: 3000, DurMs: 9000, Chain: true}, 1, "s")
+	for k, p := range ps {
+		if (k == len(ps)-1) != (p.SleepAfterMs != 0) {
+			t.Fatalf("tail on step %d of %d: %v", k, len(ps), ps)
+		}
+	}
+	if ps[len(ps)-1].SleepAfterMs != 6000 {
+		t.Fatalf("tail %d, want 6000", ps[len(ps)-1].SleepAfterMs)
+	}
+}
+
+func TestGuestFrameBytes(t *testing.T) {
+	// the launcher's wrapper and the Request's JSON escaping both count
+	// The worker's exact wrapper (launcher_firecracker.go wrapCommand, v0.9.0), JSON-escaped: 9
+	// newlines are 2 bytes each in the frame.
+	const wrapper = "cd /workspace\n( \n)\n__fc_rc=$?\nsync\n(exit $__fc_rc)\n"
+	wrapEnc, _ := json.Marshal(wrapper)
+	fields, _ := json.Marshal(guestRequest{TimeoutS: 1<<32 - 1, Streaming: true, CapBytes: -1 << 63, HasStdin: true, HostUnixNanos: -1 << 63})
+	if got, min := guestFrameBytes(""), len(wrapEnc)-2+len(fields)+guestFrameSlack; got < min {
+		t.Fatalf("frame for an empty script is %d bytes, want >= %d (escaped wrapper + slack + JSON)", got, min)
+	}
+	if d := guestFrameBytes("true") - guestFrameBytes(""); d != len("true") {
+		t.Fatalf("'true' adds %d bytes, want 4", d)
+	}
+	esc := strings.Repeat("<>&\n\"", 100) // 500 raw bytes; json.Marshal makes them 6+6+6+2+2 each
+	if got, base := guestFrameBytes(esc), guestFrameBytes(""); got-base < 2200 {
+		t.Fatalf("escaped command added %d bytes, want >= 2200 (500 raw, escaped)", got-base)
 	}
 }
