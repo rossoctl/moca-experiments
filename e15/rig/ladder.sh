@@ -9,7 +9,7 @@
 #                              die if still unseeded
 #   repeat_required=true  -> the rung is re-run ONCE with the warm-up doubled (tag repeat);
 #                            the repeat's record is the one that counts
-#   two verdicts per rung (record.json): holds (SPEC §8, condition 4 = 2x the N=1 p95) and
+#   two verdicts per rung (record.json): holds (SPEC §8, condition 4 = 3x the N=1 p95) and
 #   holds_abs (condition 4 = N=1 p95 + 250 ms). Each has its own ladder: n_max (primary) is the
 #   largest N holding with every rung before it holding; n_max_abs likewise for holds_abs. The
 #   ladder climbs while EITHER is still unbroken and stops at the first rung where both are. A rung below START_N is assumed held (SPEC §10.3: other points start two

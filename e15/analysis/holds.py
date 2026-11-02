@@ -2,7 +2,7 @@
 import math
 
 PACE_MAX = 0.10
-P95_FACTOR = 2.0
+P95_FACTOR = 3.0
 ABS_ADDED_MS = 250  # holds_abs: condition 4 as baseline + 250 ms (Task 7 fix round 1)
 MIN_SESSION_CALLS = 3
 

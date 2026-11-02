@@ -1,6 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
-Version: 0.4 (draft for review), 2026-11-01
+Version: 0.5 (draft for review), 2026-11-02
+2026-11-02: §8 condition 4 factor 2× → 3× (user decision before sealing; calibration baselines unchanged, they do not depend on the factor).
 2026-11-01: §5.3–§5.6 numbers regenerated from e15/extract after fixing a cross-session chain join
 and removing re-recorded history.
 Status: **Design. Not approved. Nothing is built.**
@@ -438,7 +439,7 @@ rung, all four conditions are true:
    same calls and gaps) − 1. The **median pace is at most 10%**. Sessions with fewer than 3 calls in
    the window are excluded from this condition and counted.
 4. **Added latency stays bounded.** Per call, added latency = observed time from send to `End`, minus
-   the planned duration. The **p95 of added latency is at most 2× that arm's own p95 at `N = 1`**.
+   the planned duration. The **p95 of added latency is at most 3× that arm's own p95 at `N = 1`**.
 
 `N_max` for an arm is the largest `N` on the ladder for which the host holds, with every smaller rung
 having held too. A failed rung ends the ladder for that arm.
@@ -529,6 +530,7 @@ The direction of each prediction is fixed now:
 5. **Removing host-infrastructure sessions and chains moves both arms the same way.** Neither point
    reverses the default result.
 6. **The driver uses less than 1% of host CPU at every `N`** (A2).
+8. **The metal rig shows the largest SBX gain.** On the metal run (§13), SBX's N_max divided by resident ∞'s N_max is larger than on this nested instance. Falsified by a metal ratio no larger than the preliminary one.
 
 Prediction 3 matters most for SBX: an idle-reclaiming resident VM is the strongest baseline, and on a
 4-vCPU host both may meet the same CPU wall. If it holds, the metal run, where CPU is not scarce, is

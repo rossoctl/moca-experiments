@@ -63,8 +63,8 @@ def test_pace_boundary():
 
 
 def test_p95_boundary():
-    assert H.evaluate([call(added=200)], [sess(0)], 100)["holds"]
-    assert not H.evaluate([call(added=201)], [sess(0)], 100)["holds"]
+    assert H.evaluate([call(added=300)], [sess(0)], 100)["holds"]
+    assert not H.evaluate([call(added=301)], [sess(0)], 100)["holds"]
 
 
 def test_baseline_none_skips_cond4():
@@ -135,9 +135,9 @@ def test_out_of_window_excluded():
 
 
 def test_baseline_nonpositive_floor():
-    assert H.evaluate([call(added=2)], [sess(0)], 0)["holds"]
-    assert not H.evaluate([call(added=3)], [sess(0)], 0)["holds"]
-    assert H.evaluate([call(added=2)], [sess(0)], -5)["p95_limit_ms"] == 2.0
+    assert H.evaluate([call(added=3)], [sess(0)], 0)["holds"]
+    assert not H.evaluate([call(added=4)], [sess(0)], 0)["holds"]
+    assert H.evaluate([call(added=3)], [sess(0)], -5)["p95_limit_ms"] == 3.0
 
 
 def test_multi_session_median_and_splits():
@@ -259,11 +259,11 @@ def test_oom_kills_are_refusals(tmp_path):
     assert r["conditions"]["no_refusals"] is False and r["binding"] == "gate"
 
 
-def test_holds_abs_adds_250ms_not_2x():
-    # baseline 100 ms: 2x limit 200 ms, absolute limit 350 ms; p95 here is 300 ms
-    c = [call(added=a) for a in [50] * 18 + [300, 300]]
+def test_holds_abs_adds_250ms_not_3x():
+    # baseline 100 ms: 3x limit 300 ms, absolute limit 350 ms; p95 here is 320 ms
+    c = [call(added=a) for a in [50] * 18 + [320, 320]]
     r = H.evaluate(c, [sess(0.05)] * 3, 100)
-    assert r["p95_added_ms"] == 300
+    assert r["p95_added_ms"] == 320
     assert not r["holds"] and r["holds_abs"]
     assert r["p95_limit_abs_ms"] == 350 and r["conditions_abs"]["added_latency"]
     c = [call(added=a) for a in [50] * 18 + [400, 400]]
