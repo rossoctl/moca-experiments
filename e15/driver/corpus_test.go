@@ -408,8 +408,21 @@ func TestJoinPlanHostInfraSleepInside(t *testing.T) {
 	if !strings.HasPrefix(script, "(\nsleep 2.0\n); __rc=$?; [ \"$__rc\" -eq 0 ] || { echo \"E15_FAILED_STEP=0 RC=$__rc\" >&2; exit 90; }\n") {
 		t.Fatalf("host_infra stand-in sleep is not the script's first step:\n%s", script)
 	}
-	if n := strings.Count(script, "__rc=$?"); n != len(ps) {
-		t.Fatalf("%d steps in the script, want %d", n, len(ps))
+	// every planned step is in the script: singles once, a run of identical steps as one loop
+	n := 0
+	for k := 0; k < len(ps); {
+		r := 1
+		for k+r < len(ps) && ps[k+r].Cmd == ps[k].Cmd && ps[k+r].Exit == ps[k].Exit {
+			r++
+		}
+		if r > 1 && !strings.Contains(script, fmt.Sprintf("for __i in $(seq %d); do (\n%s\n)", r, ps[k].Cmd)) {
+			t.Fatalf("run of %d x %q is not one loop:\n%s", r, ps[k].Cmd, script)
+		}
+		n++
+		k += r
+	}
+	if c := strings.Count(script, "__rc=$?"); c != n {
+		t.Fatalf("%d checks in the script, want %d (singles and loops)", c, n)
 	}
 }
 
@@ -468,5 +481,91 @@ func TestParseFailedMarker(t *testing.T) {
 		if k != tc.k || rc != tc.rc || ok != tc.ok {
 			t.Fatalf("%q: got %d %d %v", tc.in, k, rc, ok)
 		}
+	}
+}
+
+// --- repeated steps under the guest frame limit -----------------------------------------------
+
+func TestJoinPlanCompressesIdenticalRun(t *testing.T) {
+	steps := make([]Planned, 124)
+	for i := range steps {
+		steps[i] = Planned{Cmd: "cd project && tar czf /tmp/x.tgz more_itertools && tar xzf /tmp/x.tgz -C /tmp # a comment"}
+	}
+	script, err := JoinPlan(steps, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(script) >= 1024 || strings.Count(script, "for __i in $(seq 124); do") != 1 || strings.Count(script, "tar czf") != 1 {
+		t.Fatalf("%d bytes, want one 124-iteration loop under 1 KiB:\n%s", len(script), script)
+	}
+	// every iteration really runs, and the script still exits 0
+	dir := t.TempDir()
+	s, _ := JoinPlan(repeat(Planned{Cmd: "echo x >>" + dir + "/n"}, 124), 0)
+	if rc := runJoined(t, s); rc != 0 {
+		t.Fatalf("exit %d:\n%s", rc, s)
+	}
+	if b, _ := os.ReadFile(dir + "/n"); strings.Count(string(b), "x") != 124 {
+		t.Fatalf("%d iterations ran, want 124", strings.Count(string(b), "x"))
+	}
+}
+
+func repeat(p Planned, n int) []Planned {
+	out := make([]Planned, n)
+	for i := range out {
+		out[i] = p
+	}
+	return out
+}
+
+func TestJoinPlanCompressesOnlyRuns(t *testing.T) {
+	var steps []Planned
+	steps = append(steps, Planned{Cmd: "sleep 0"})                      // single
+	steps = append(steps, repeat(Planned{Cmd: "true"}, 3)...)           // run of 3
+	steps = append(steps, Planned{Cmd: "true", Exit: 1})                // same Cmd, other Exit: not part of the run
+	steps = append(steps, repeat(Planned{Cmd: "false", Exit: 1}, 2)...) // run of 2
+	steps = append(steps, Planned{Cmd: "true"})                         // single
+	script, _ := JoinPlan(steps, 0)
+	if n := strings.Count(script, "for __i in"); n != 2 {
+		t.Fatalf("%d loops, want 2:\n%s", n, script)
+	}
+	if !strings.Contains(script, "for __i in $(seq 3); do") || !strings.Contains(script, "for __i in $(seq 2); do") {
+		t.Fatalf("loops are not the 3- and 2-runs:\n%s", script)
+	}
+	if n := strings.Count(script, "__rc=$?"); n != 5 {
+		t.Fatalf("%d checks, want 5 (3 singles, 2 loops):\n%s", n, script)
+	}
+	// step 4 ("true" expected 1) fails: index after the single and the 3-run
+	rc, stderr := runJoinedErr(t, script)
+	k, frc, ok := ParseFailedMarker([]byte(stderr))
+	if rc != 94 || !ok || k != 4 || frc != 0 {
+		t.Fatalf("exit %d marker %d/%d/%v (%q), want 94 and step 4 rc 0", rc, k, frc, ok, stderr)
+	}
+}
+
+func TestJoinPlanLoopFailureStepIndex(t *testing.T) {
+	// K0 = 2 (two single steps first); iteration 50 of the loop fails with rc 7, so the failing
+	// step is K0+49 = 51 (exit capped at 125). A counter file decides which iteration fails.
+	dir := t.TempDir()
+	cmd := "n=$(cat " + dir + "/c 2>/dev/null || echo 0); n=$((n+1)); echo $n >" + dir + "/c; [ $n -ne 50 ] || exit 7"
+	steps := append([]Planned{{Cmd: "true"}, {Cmd: "true"}}, repeat(Planned{Cmd: cmd}, 60)...)
+	script, _ := JoinPlan(steps, 0)
+	if strings.Count(script, "for __i in $(seq 60)") != 1 {
+		t.Fatalf("not one 60-iteration loop:\n%s", script)
+	}
+	rc, stderr := runJoinedErr(t, script)
+	k, frc, ok := ParseFailedMarker([]byte(stderr))
+	if rc != maxStepExit || !ok || k != 51 || frc != 7 {
+		t.Fatalf("exit %d marker %d/%d/%v (%q), want 125 and step 51 rc 7", rc, k, frc, ok, stderr)
+	}
+	if fk, frcp, ok := failedFromExit(int32(rc), []byte(stderr)); !ok || fk != 51 || frcp == nil || *frcp != 7 {
+		t.Fatalf("failedFromExit %d %v %v", fk, frcp, ok)
+	}
+	// below the cap the loop's exit code is per iteration too: K0=0, iteration 3 -> step 2 -> 92
+	os.Remove(dir + "/c")
+	cmd3 := "n=$(cat " + dir + "/c 2>/dev/null || echo 0); n=$((n+1)); echo $n >" + dir + "/c; [ $n -ne 3 ]"
+	s3, _ := JoinPlan(repeat(Planned{Cmd: cmd3}, 5), 0)
+	rc, stderr = runJoinedErr(t, s3)
+	if fk, frcp, ok := failedFromExit(int32(rc), []byte(stderr)); rc != 92 || !ok || fk != 2 || frcp == nil || *frcp != 1 {
+		t.Fatalf("exit %d failedFromExit %d %v %v (%q), want 92 step 2 rc 1", rc, fk, frcp, ok, stderr)
 	}
 }

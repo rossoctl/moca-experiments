@@ -51,6 +51,7 @@ type fake struct {
 
 var (
 	stepRE = regexp.MustCompile(`(?s)\(\n(.*?)\n\); __rc=\$\?; \[ "\$__rc" -eq (\d+) \] \|\| \{ echo "E15_FAILED_STEP=\d+ RC=\$__rc" >&2; exit (\d+); \}\n`)
+	loopRE = regexp.MustCompile(`(?s)^for __i in \$\(seq (\d+)\); do \(\n(.*?)\n\); __rc=\$\?; \[ "\$__rc" -eq (\d+) \] \|\| \{ __k=\$\(\((\d+) \+ __i - 1\)\); [^\n]*; \}; done\n`)
 	tailRE = regexp.MustCompile(`\nsleep ([0-9.]+)\nexit 0\n$`)
 )
 
@@ -93,10 +94,23 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 		want, code int32
 	}
 	var steps []fstep
-	for _, m := range stepRE.FindAllStringSubmatch(script, -1) {
-		w, _ := strconv.Atoi(m[2])
-		c, _ := strconv.Atoi(m[3])
-		steps = append(steps, fstep{m[1], int32(w), int32(c)})
+	for rest := script; ; {
+		if m := stepRE.FindStringSubmatchIndex(rest); m != nil && m[0] == 0 {
+			w, _ := strconv.Atoi(rest[m[4]:m[5]])
+			c, _ := strconv.Atoi(rest[m[6]:m[7]])
+			steps = append(steps, fstep{rest[m[2]:m[3]], int32(w), int32(c)})
+			rest = rest[m[1]:]
+		} else if m := loopRE.FindStringSubmatch(rest); m != nil {
+			n, _ := strconv.Atoi(m[1])
+			w, _ := strconv.Atoi(m[3])
+			k0, _ := strconv.Atoi(m[4])
+			for i := 0; i < n; i++ {
+				steps = append(steps, fstep{m[2], int32(w), int32(min(stepExitBase+k0+i, maxStepExit))})
+			}
+			rest = rest[len(m[0]):]
+		} else {
+			break
+		}
 	}
 	if steps == nil {
 		steps = []fstep{{script, -1, 0}} // not joined: its own exit is the Exec's
@@ -131,7 +145,7 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 			return end(rc)
 		}
 		if rc != st.want {
-			if err := stderr([]byte(fmt.Sprintf("E15_FAILED_STEP=%d RC=%d\n", k, rc))); err != nil {
+			if err := stderr(fmt.Appendf(nil, "E15_FAILED_STEP=%d RC=%d\n", k, rc)); err != nil {
 				return err
 			}
 			return end(st.code)
@@ -826,8 +840,8 @@ func TestOneExecPerRecordedCall(t *testing.T) {
 		t.Fatalf("%d Execs for %d recorded calls, want one each (3)", len(ex), len(mine))
 	}
 	for i, e := range ex {
-		if n := strings.Count(e.cmd, "__rc=$?"); n != 5 {
-			t.Fatalf("Exec %d joins %d steps, want 5:\n%s", i, n, e.cmd)
+		if !strings.HasPrefix(e.cmd, "for __i in $(seq 5); do") || strings.Count(e.cmd, "__rc=$?") != 1 {
+			t.Fatalf("Exec %d does not join its 5 identical steps into one loop:\n%s", i, e.cmd)
 		}
 	}
 	for _, c := range res.calls {
@@ -951,5 +965,25 @@ func TestAppendTailBounded(t *testing.T) {
 	tail = appendTail(tail, bytes.Repeat([]byte("w"), 10000))
 	if len(tail) != stderrTailMax || bytes.ContainsAny(tail, "yz") {
 		t.Fatalf("an over-size chunk did not replace the tail")
+	}
+}
+
+func TestValidatePlansRefusesOversizeScript(t *testing.T) {
+	client, f := newFake(t)
+	big := strings.Repeat("x", 400)
+	// Two invocations of the class, alternating would defeat run-length encoding: fill picks the
+	// 10 ms tie at random, so 200 steps of two distinct ~400-byte commands exceed 30 KiB.
+	lib := &Library{Classes: map[string][]Invocation{"q": {
+		{ID: "a", Cmd: ": a" + big, NominalMs: 10}, {ID: "b", Cmd: ": b" + big, NominalMs: 10}}}}
+	lib.Standin.InterpreterClass = "q"
+	ss := []Session{sess("ok", "u", 20, "q", "q", "q")}
+	ss[0].Calls[2].WorkMs = 2000
+	var b bytes.Buffer
+	_, err := NewReplayer(baseCfg(), ss, lib, client, NewRecorder(&b, &b, &b))
+	if err == nil || !strings.Contains(err.Error(), "1 call") || !strings.Contains(err.Error(), "30720") {
+		t.Fatalf("got %v, want a refusal naming 1 call over the 30720-byte limit", err)
+	}
+	if len(f.byKey()) != 0 {
+		t.Fatal("execs were sent")
 	}
 }

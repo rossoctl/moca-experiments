@@ -300,18 +300,33 @@ const (
 // (tailMs > 0) is the script's final sleep, so the replayed process holds its sandbox for the
 // chain's whole lifetime. The script exits 0 when every step matched. host_infra's stand-in sleep
 // is an ordinary step.
+//
+// Consecutive identical steps (same Cmd and Exit) are run-length encoded into one loop that keeps
+// the per-iteration check and reports the actual step index (K0+__i-1), so the work is the same
+// but the script stays under the guest agent's 32 KiB frame (MaxFrame, guestagent/protocol.go):
+// Plan fills a long work_ms by repeating one short invocation, up to thousands of times.
 func JoinPlan(steps []Planned, tailMs int64) (string, error) {
 	if len(steps) == 0 {
 		return "", errors.New("join: no steps")
 	}
 	var b strings.Builder
-	for k, p := range steps {
-		code := stepExitBase + k
-		if code > maxStepExit {
-			code = maxStepExit
+	for k := 0; k < len(steps); {
+		p := steps[k]
+		n := 1
+		for k+n < len(steps) && steps[k+n].Cmd == p.Cmd && steps[k+n].Exit == p.Exit {
+			n++
 		}
-		fmt.Fprintf(&b, "(\n%s\n); __rc=$?; [ \"$__rc\" -eq %d ] || { echo \"%s%d RC=$__rc\" >&2; exit %d; }\n",
-			p.Cmd, p.Exit, failedMarker, k, code)
+		if n == 1 {
+			code := min(stepExitBase+k, maxStepExit)
+			fmt.Fprintf(&b, "(\n%s\n); __rc=$?; [ \"$__rc\" -eq %d ] || { echo \"%s%d RC=$__rc\" >&2; exit %d; }\n",
+				p.Cmd, p.Exit, failedMarker, k, code)
+		} else {
+			// __k is the failing iteration's step index; its exit code is capped as for a single step.
+			fmt.Fprintf(&b, "for __i in $(seq %d); do (\n%s\n); __rc=$?; [ \"$__rc\" -eq %d ] || { __k=$((%d + __i - 1)); "+
+				"echo \"%s$__k RC=$__rc\" >&2; exit $((__k < %d ? %d + __k : %d)); }; done\n",
+				n, p.Cmd, p.Exit, k, failedMarker, maxStepExit-stepExitBase, stepExitBase, maxStepExit)
+		}
+		k += n
 	}
 	if tailMs > 0 {
 		fmt.Fprintf(&b, "sleep %.3f\n", float64(tailMs)/1000)
