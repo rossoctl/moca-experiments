@@ -3,7 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
+	"time"
 )
 
 func lib(t *testing.T) *Library {
@@ -262,5 +266,144 @@ func TestPlanZeroWork(t *testing.T) {
 	ps := plan(t, l, Call{I: 1, Class: "test", WorkMs: 0}, 1, "s")
 	if len(ps) != 1 || ps[0].Cmd != "pytest -q a" {
 		t.Fatalf("%v", ps)
+	}
+}
+
+// runJoined runs a JoinPlan script under bash in a scratch dir and returns its exit code.
+func runJoined(t *testing.T, script string) int {
+	t.Helper()
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Dir = t.TempDir()
+	err := cmd.Run()
+	var ee *exec.ExitError
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &ee):
+		return ee.ExitCode()
+	}
+	t.Fatalf("running joined script: %v", err)
+	return -1
+}
+
+func TestJoinPlanRunsAllStepsExitsZero(t *testing.T) {
+	dir := t.TempDir()
+	steps := []Planned{
+		{Cmd: "true"},
+		{Cmd: "false", Exit: 1},
+		{Cmd: "sh -c 'exit 1'", Exit: 1},
+		{Cmd: "cd / # a step's cd and a trailing comment stay inside its subshell"},
+		{Cmd: "touch " + dir + "/ran-last"},
+	}
+	script, err := JoinPlan(steps, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc := runJoined(t, script); rc != 0 {
+		t.Fatalf("exit %d, want 0 when every step exits as expected:\n%s", rc, script)
+	}
+	if _, err := os.Stat(dir + "/ran-last"); err != nil {
+		t.Fatalf("last step did not run: %v", err)
+	}
+}
+
+func TestJoinPlanExitsAtMismatchedStep(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		steps []Planned
+		want  int
+	}{
+		{[]Planned{{Cmd: "false"}}, 90},
+		{[]Planned{{Cmd: "true"}, {Cmd: "true", Exit: 1}}, 91},
+		{[]Planned{{Cmd: "true"}, {Cmd: "false", Exit: 1}, {Cmd: "sh -c 'exit 1'"}, {Cmd: "touch " + dir + "/never"}}, 92},
+	} {
+		script, err := JoinPlan(tc.steps, 5000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rc := runJoined(t, script); rc != tc.want {
+			t.Fatalf("exit %d, want %d:\n%s", rc, tc.want, script)
+		}
+	}
+	if _, err := os.Stat(dir + "/never"); err == nil {
+		t.Fatal("a step after the failing one ran")
+	}
+}
+
+func TestJoinPlanStepCodeCapped(t *testing.T) {
+	steps := make([]Planned, 50)
+	for i := range steps {
+		steps[i] = Planned{Cmd: "true"}
+	}
+	steps[49].Exit = 1
+	script, err := JoinPlan(steps, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc := runJoined(t, script); rc != maxStepExit {
+		t.Fatalf("exit %d, want the capped %d", rc, maxStepExit)
+	}
+	if k, ok := FailedStep(maxStepExit); !ok || k != maxStepExit-stepExitBase {
+		t.Fatalf("FailedStep(%d) = %d %v", maxStepExit, k, ok)
+	}
+	if k, ok := FailedStep(92); !ok || k != 2 {
+		t.Fatalf("FailedStep(92) = %d %v", k, ok)
+	}
+	for _, c := range []int32{0, 1, 89, 126, 137} {
+		if _, ok := FailedStep(c); ok {
+			t.Fatalf("FailedStep(%d) claims a step", c)
+		}
+	}
+}
+
+func TestJoinPlanChainTailIsFinalSleep(t *testing.T) {
+	l := lib(t)
+	ps := plan(t, l, Call{I: 1, Class: "test", WorkMs: 3000, DurMs: 60000, Chain: true}, 1, "s")
+	tail := ps[len(ps)-1].SleepAfterMs
+	script, err := JoinPlan(ps, tail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("\nsleep %.1f\nexit 0\n", float64(tail)/1000)
+	if !strings.HasSuffix(script, want) {
+		t.Fatalf("script does not end with %q:\n%s", want, script)
+	}
+	script, _ = JoinPlan(ps, 0)
+	if strings.Contains(script, "\nsleep ") || !strings.HasSuffix(script, "\nexit 0\n") {
+		t.Fatalf("no-tail script has a sleep or lacks exit 0:\n%s", script)
+	}
+	start := time.Now()
+	s, _ := JoinPlan([]Planned{{Cmd: "true"}}, 300)
+	if rc := runJoined(t, s); rc != 0 || time.Since(start) < 290*time.Millisecond {
+		t.Fatalf("exit %d after %v, want 0 after the 0.3 s tail", rc, time.Since(start))
+	}
+}
+
+func TestJoinPlanHostInfraSleepInside(t *testing.T) {
+	l := lib(t)
+	ps := plan(t, l, Call{I: 3, Class: "host_infra", WorkMs: 4000, DurMs: 4000}, 1, "s")
+	script, err := JoinPlan(ps, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(script, "(\nsleep 2.0\n); __rc=$?; [ \"$__rc\" -eq 0 ] || exit 90\n") {
+		t.Fatalf("host_infra stand-in sleep is not the script's first step:\n%s", script)
+	}
+	if n := strings.Count(script, "__rc=$?"); n != len(ps) {
+		t.Fatalf("%d steps in the script, want %d", n, len(ps))
+	}
+}
+
+func TestJoinPlanDeterministic(t *testing.T) {
+	l := lib(t)
+	c := Call{I: 2, Class: "opaque", WorkMs: 5000, DurMs: 9000, Chain: true}
+	p1, p2 := plan(t, l, c, 9, "s"), plan(t, l, c, 9, "s")
+	a, _ := JoinPlan(p1, p1[len(p1)-1].SleepAfterMs)
+	b, _ := JoinPlan(p2, p2[len(p2)-1].SleepAfterMs)
+	if a != b {
+		t.Fatal("differs")
+	}
+	if _, err := JoinPlan(nil, 0); err == nil {
+		t.Fatal("empty plan joined")
 	}
 }

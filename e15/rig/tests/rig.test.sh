@@ -16,7 +16,7 @@
 set -uo pipefail
 
 RIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPTS=(lib.sh setup.sh teardown.sh rung.sh ladder.sh sample.sh tests/rig.test.sh)
+SCRIPTS=(lib.sh setup.sh teardown.sh rung.sh ladder.sh sample.sh baseline.sh tests/rig.test.sh)
 fails=0
 check() {
   if [ "$2" = "$3" ]; then
@@ -330,6 +330,86 @@ if [ -f "$RIG/rung.sh" ]; then
   rm -rf "$TROOT/runs/default/sbx/N1-k2"
   check "baseline: N1 when it is the only run" "$(base_of)" "100"
   printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
+fi
+
+# --- Task 8a ---------------------------------------------------------------------------------
+
+# rung.sh's baseline lookup: pooled N1/baseline.json (this point, then default) before any record.json
+if [ -f "$RIG/rung.sh" ]; then
+  printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
+  base_at() {
+    E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash -c '
+      set -e; source "$1"; E15_PROG=t
+      N=8 POINT=$3 ARM=sbx
+      eval "$(sed -n "/^baseline=\${E15_BASELINE_P95_MS:-}/,/^  die \"baseline p95/p" "$2")"
+      echo "$baseline $baseline_src"' _ "$RIG/lib.sh" "$RIG/rung.sh" "$1" 2>/dev/null
+  }
+  rm -rf "$TROOT/runs"
+  for pt in default short; do
+    mkdir -p "$TROOT/runs/$pt/sbx/N1-repeat"
+    printf '{"p95_added_ms": 300}\n' >"$TROOT/runs/$pt/sbx/N1-repeat/record.json"
+  done
+  mkdir -p "$TROOT/runs/default/sbx/N1"
+  printf '{"baseline_p95_ms": 42.5, "calls": 9, "runs": []}\n' >"$TROOT/runs/default/sbx/N1/baseline.json"
+  check "baseline lookup: the default point's baseline.json before this point's record.json" "$(base_at short)" "42.5 $TROOT/runs/default/sbx/N1/baseline.json"
+  mkdir -p "$TROOT/runs/short/sbx/N1"
+  printf '{"baseline_p95_ms": 17}\n' >"$TROOT/runs/short/sbx/N1/baseline.json"
+  check "baseline lookup: this point's baseline.json first" "$(base_at short)" "17 $TROOT/runs/short/sbx/N1/baseline.json"
+  check "baseline lookup: default point's baseline.json before its record.json" "$(base_at default)" "42.5 $TROOT/runs/default/sbx/N1/baseline.json"
+  rm -f "$TROOT/runs/default/sbx/N1/baseline.json"
+  check "baseline lookup: record.json fallback" "$(base_at default | cut -d' ' -f1)" "300"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
+fi
+
+# a re-run N=1 rung (ladder.sh) keeps baseline.sh's pooled baseline.json in N1/
+if [ -f "$RIG/rung.sh" ]; then
+  mv_block=$(sed -n '/^prev_dir=""$/,/^# baseline.sh.s pooled/{/^# baseline/!p;}; /^# baseline.sh.s pooled/,/^fi$/p' "$RIG/rung.sh")
+  rm -rf "$TMP/keep" && mkdir -p "$TMP/keep/N1"
+  echo '{"baseline_p95_ms": 1}' >"$TMP/keep/N1/baseline.json"
+  echo old >"$TMP/keep/N1/calls.jsonl"
+  (export DIR="$TMP/keep/N1" && eval "$mv_block")
+  check "rung.sh re-run of N1 keeps baseline.json" "$(cat "$TMP/keep/N1/baseline.json" 2>/dev/null)" '{"baseline_p95_ms": 1}'
+  check "rung.sh re-run of N1 moves the old run aside" "$([ -e "$TMP/keep/N1/calls.jsonl" ] && echo stale || echo fresh)/$(find "$TMP/keep" -name calls.jsonl -path '*N1.prev-*' | wc -l | tr -d ' ')" "fresh/1"
+fi
+
+# baseline.sh POINT ARM: three seeded N=1 rungs, pooled into N1/baseline.json; dies if one fails to hold
+if [ -f "$RIG/baseline.sh" ]; then
+  BRUNG="$TMP/stub-rung-b.sh"
+  # Logs "ARM N POINT seed tag"; writes a record (holds from $HOLDS_<tag>, default true) and calls.
+  cat >"$BRUNG" <<'SH'
+#!/usr/bin/env bash
+echo "$1 $2 $3 ${E15_SEED:-} ${E15_TAG:-}" >>"$B_CALLS"
+d="$E15_ROOT/runs/$3/$1/N$2${E15_TAG:+-$E15_TAG}"
+mkdir -p "$d"
+var="HOLDS_${E15_TAG}"
+printf '{"holds": %s}\n' "${!var:-true}" >"$d/record.json"
+add=$(( ${E15_SEED} * 10 ))
+printf '{"in_window": true, "status": "ok", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$add" >"$d/calls.jsonl"
+SH
+  mkdir -p "$TROOT/src/e15"
+  ln -sfn "$RIG/../analysis" "$TROOT/src/e15/analysis"
+  bl() {
+    rm -rf "$TROOT/runs"
+    : >"$TMP/bcalls"
+    env E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$BRUNG" B_CALLS="$TMP/bcalls" \
+      PATH="$SPATH" E15_MANIFEST="$TMP/m.md" "$@" bash "$RIG/baseline.sh" default sbx >"$TMP/b.out" 2>&1
+  }
+  bl
+  check "baseline.sh exits 0 when all three hold" "$?" "0"
+  check "baseline.sh ran three N=1 rungs, seeds 1-3, tags s1-s3" "$(tr '\n' '|' <"$TMP/bcalls")" "sbx 1 default 1 s1|sbx 1 default 2 s2|sbx 1 default 3 s3|"
+  bj="$TROOT/runs/default/sbx/N1/baseline.json"
+  check "baseline.sh pooled the three into N1/baseline.json" \
+    "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["baseline_p95_ms"], d["calls"], len(d["runs"]))' "$bj" 2>&1)" "30 3 3"
+  bl HOLDS_s2=false
+  check "baseline.sh dies when one run does not hold" "$?" "1"
+  check "baseline.sh names the run that did not hold" "$(grep -c 'N1-s2' "$TMP/b.out")" "1"
+  check "baseline.sh writes no baseline.json after a failed run" "$([ -f "$bj" ] && echo yes || echo no)" "no"
+  bl HOLDS_s3=null
+  check "baseline.sh dies on holds=null" "$?" "1"
+  PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/baseline.sh" default >"$TMP/b.out" 2>&1
+  check "baseline.sh bad usage exits 2" "$?" "2"
+  PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/baseline.sh" default bogus >"$TMP/b.out" 2>&1
+  check "baseline.sh unknown ARM exits 2" "$?" "2"
 fi
 
 # (2) a retry-only teardown verifies against the last PRESTATE anywhere in the manifest

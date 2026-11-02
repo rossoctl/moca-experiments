@@ -52,6 +52,7 @@ const (
 	causeUnavailable  = "unavailable"
 	causeExecError    = "exec_error"
 	causeDeadline     = "deadline"
+	causeCutAtEnd     = "cut_at_end" // cancelled at the grace deadline before its planned completion; not a failure
 	causeRPCError     = "rpc_error"
 )
 

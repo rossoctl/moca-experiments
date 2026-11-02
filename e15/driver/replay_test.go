@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,15 +34,24 @@ type fakeExec struct {
 	recv, done time.Time
 }
 
-// fake is an in-process SandboxExecServer whose behaviour is chosen by the command text:
-// "hold:<ms>" holds then ends 0; "exit1" ends 1; "inerr" sends an in-stream ExecError and returns
-// OK (what the relay does); "nolive" returns the relay's Unavailable refusal; anything else ends 0.
+// fake is an in-process SandboxExecServer. A call's Exec is a JoinPlan script; the fake walks its
+// steps and picks each step's behaviour by the step's command text: "hold:<ms>" holds then exits 0;
+// "exit1" exits 1; "inerr" sends an in-stream ExecError and returns OK (what the relay does);
+// "nolive" returns the relay's Unavailable refusal; "unavail" a plain Unavailable; anything else
+// exits 0. A step whose exit differs from the script's expected one ends the Exec with the
+// script's step code, as bash would; a trailing "sleep S" is held. Every hold ends early when the
+// client cancels. A command that is not a joined script (the end-session marker) runs as one step.
 type fake struct {
 	pb.UnimplementedSandboxExecServer
 	mu      sync.Mutex
 	execs   []fakeExec
 	failEnd bool // answer the end-session Exec with exit 1
 }
+
+var (
+	stepRE = regexp.MustCompile(`(?s)\(\n(.*?)\n\); __rc=\$\?; \[ "\$__rc" -eq (\d+) \] \|\| exit (\d+)\n`)
+	tailRE = regexp.MustCompile(`\nsleep ([0-9.]+)\nexit 0\n$`)
+)
 
 func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.ExecEvent]) error {
 	recv := time.Now()
@@ -70,22 +80,53 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 	end := func(code int32) error {
 		return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_End{End: &pb.End{ReqId: e.GetReqId(), ExitCode: code}}})
 	}
-	cmd := e.GetCommand()
-	switch {
-	case strings.HasPrefix(cmd, "hold:"):
-		ms, _ := strconv.Atoi(strings.TrimPrefix(cmd, "hold:"))
-		time.Sleep(time.Duration(ms) * time.Millisecond)
-		return end(0)
-	case cmd == "exit1":
-		return end(1)
-	case cmd == "inerr":
-		return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_Error{Error: &pb.ExecError{ReqId: e.GetReqId(), Message: "boom"}}})
-	case cmd == "nolive":
-		return status.Error(codes.Unavailable, "no live worker for sandbox 'e15'")
-	case cmd == EndSessionCommand && f.failEnd:
-		return end(1)
-	case cmd == "unavail":
-		return status.Error(codes.Unavailable, "connection reset by peer")
+	hold := func(d time.Duration) {
+		select {
+		case <-stream.Context().Done():
+		case <-time.After(d):
+		}
+	}
+	script := e.GetCommand()
+	type fstep struct {
+		cmd        string
+		want, code int32
+	}
+	var steps []fstep
+	for _, m := range stepRE.FindAllStringSubmatch(script, -1) {
+		w, _ := strconv.Atoi(m[2])
+		c, _ := strconv.Atoi(m[3])
+		steps = append(steps, fstep{m[1], int32(w), int32(c)})
+	}
+	if steps == nil {
+		steps = []fstep{{script, -1, 0}} // not joined: its own exit is the Exec's
+	}
+	for _, st := range steps {
+		var rc int32
+		switch cmd := st.cmd; {
+		case strings.HasPrefix(cmd, "hold:"):
+			ms, _ := strconv.Atoi(strings.TrimPrefix(cmd, "hold:"))
+			hold(time.Duration(ms) * time.Millisecond)
+		case cmd == "exit1":
+			rc = 1
+		case cmd == "inerr":
+			return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_Error{Error: &pb.ExecError{ReqId: e.GetReqId(), Message: "boom"}}})
+		case cmd == "nolive":
+			return status.Error(codes.Unavailable, "no live worker for sandbox 'e15'")
+		case cmd == EndSessionCommand && f.failEnd:
+			rc = 1
+		case cmd == "unavail":
+			return status.Error(codes.Unavailable, "connection reset by peer")
+		}
+		if st.want < 0 {
+			return end(rc)
+		}
+		if rc != st.want {
+			return end(st.code)
+		}
+	}
+	if m := tailRE.FindStringSubmatch(script); m != nil {
+		sec, _ := strconv.ParseFloat(m[1], 64)
+		hold(time.Duration(sec * float64(time.Second)))
 	}
 	return end(0)
 }
@@ -322,8 +363,16 @@ func TestExitMismatchIsFailure(t *testing.T) {
 			t.Fatal(res.err, len(res.calls))
 		}
 		c := res.calls[0]
-		if c.Status != tc.status || c.Cause != tc.cause || c.Exit == nil || *c.Exit != 1 || c.ExpectedExit != tc.expect {
+		// The joined Exec expects 0; a mismatched step k ends it with 90+k.
+		wantExit, wantStep := int32(90), 0
+		if tc.status == "ok" {
+			wantExit = 0
+		}
+		if c.Status != tc.status || c.Cause != tc.cause || c.Exit == nil || *c.Exit != wantExit || c.ExpectedExit != 0 || c.Execs != 1 {
 			t.Fatalf("expect %d: got %+v", tc.expect, c)
+		}
+		if (tc.status == "err") != (c.FailedStep != nil) || (c.FailedStep != nil && *c.FailedStep != wantStep) {
+			t.Fatalf("expect %d: failed_step %v, want step %d on a mismatch only", tc.expect, c.FailedStep, wantStep)
 		}
 	}
 }
@@ -492,23 +541,25 @@ func TestChainLastInWindowPaceAgrees(t *testing.T) {
 		}
 		if c.Call == 2 {
 			chain = c
-		} else if c.TailMs != 0 {
-			t.Fatalf("non-chain call has tail_ms %d", c.TailMs)
+		}
+		if c.TailMs != 0 || c.Execs != 1 {
+			t.Fatalf("call %+v, want tail_ms 0 and one Exec", c)
 		}
 	}
-	if chain == nil || chain.TailMs != 399 {
-		t.Fatalf("chain call %+v, want tail_ms 399 (dur 400 - 1 ms run)", chain)
+	// The 399 ms idle tail runs inside the chain's Exec, so observed spans it.
+	if chain == nil || chain.Status != "ok" || chain.ObservedMs < 50+390 {
+		t.Fatalf("chain call %+v, want ok and observed >= the 50 ms hold + 0.4 s tail", chain)
 	}
 	sr := firstSession(t, res, "e15-t-0-0")
-	if sr.WindowCalls != 3 || sr.PlannedMs != 10+5+10+5+400-399 {
-		t.Fatalf("session %+v, want 3 calls and planned_ms 31 (tail excluded)", sr)
+	if sr.WindowCalls != 3 || sr.PlannedMs != 10+5+10+5+400 {
+		t.Fatalf("session %+v, want 3 calls and planned_ms 430 (the tail is in the last call's End)", sr)
 	}
 	if d := sr.ObservedMs - float64(sr.PlannedMs); d < 0 || d > 50+40 {
 		t.Fatalf("observed %.1f vs planned %d: differ by %.1f ms, want within the 50 ms hold (+slack)", sr.ObservedMs, sr.PlannedMs, d)
 	}
 }
 
-func TestChainTailSleptBetweenCalls(t *testing.T) {
+func TestChainTailInsideExec(t *testing.T) {
 	client, f := newFake(t)
 	cfg := baseCfg()
 	cfg.Window = 800 * time.Millisecond
@@ -525,18 +576,23 @@ func TestChainTailSleptBetweenCalls(t *testing.T) {
 	if len(ex) != 3 {
 		t.Fatalf("%d execs", len(ex))
 	}
-	if d := ex[1].recv.Sub(ex[0].done); d < 290*time.Millisecond {
-		t.Fatalf("call 1 sent %v after the chain call ended, want its 299 ms idle tail first", d)
+	// The 299 ms tail is the chain Exec's final sleep (0.3 s): the sandbox is held for the
+	// chain's lifetime, and the driver does not sleep it again before the next call.
+	if d := ex[0].done.Sub(ex[0].recv); d < 290*time.Millisecond || !strings.HasSuffix(ex[0].cmd, "\nsleep 0.3\nexit 0\n") {
+		t.Fatalf("chain Exec lasted %v (script %q), want its 0.3 s tail inside it", d, ex[0].cmd)
+	}
+	if d := ex[1].recv.Sub(ex[0].done); d > 60*time.Millisecond {
+		t.Fatalf("call 1 sent %v after the chain Exec ended, want at once (its offset is long past)", d)
 	}
 	if d := ex[2].recv.Sub(ex[1].recv); d > 60*time.Millisecond {
 		t.Fatalf("call 2 waited %v, want its 10 ms offset", d)
 	}
 }
 
-func TestChainTailCutAtEndCallRecorded(t *testing.T) {
+func TestChainTailCutAtEnd(t *testing.T) {
 	client, _ := newFake(t)
 	cfg := baseCfg()
-	cfg.Window = 200 * time.Millisecond
+	cfg.Window, cfg.Grace = 200*time.Millisecond, 100*time.Millisecond
 	s := Session{ID: "s", User: "u", Calls: []Call{
 		{I: 0, Class: "q", DurMs: 60000, WorkMs: 1, Chain: true},
 		{I: 1, Class: "q", DurMs: 10, WorkMs: 1, OffsetMs: 10},
@@ -545,13 +601,19 @@ func TestChainTailCutAtEndCallRecorded(t *testing.T) {
 	t0 := time.Now()
 	res := run(t, cfg, []Session{s}, testLib(nil, "q"), client)
 	if el := time.Since(t0); res.err != nil || el > time.Second {
-		t.Fatalf("%v after %v: the 60 s tail was not cut at the run's end", res.err, el)
+		t.Fatalf("%v after %v: the 60 s tail was not cut at the grace deadline", res.err, el)
 	}
-	if len(res.calls) != 1 || res.calls[0].Status != "ok" || res.calls[0].TailMs != 59999 || !res.calls[0].InWindow {
-		t.Fatalf("calls %+v, want the one chain call recorded ok with tail_ms 59999", res.calls)
+	// Planned to complete 60 s after its send, long after the grace end: cut, not a failure.
+	if len(res.calls) != 1 || res.calls[0].Status != "err" || res.calls[0].Cause != "cut_at_end" ||
+		res.calls[0].TailMs != 0 || res.calls[0].Execs != 1 || !res.calls[0].InWindow || res.calls[0].Exit != nil {
+		t.Fatalf("calls %+v, want the one chain call recorded err/cut_at_end, execs 1, tail_ms 0", res.calls)
 	}
-	if sr := firstSession(t, res, "e15-t-0-0"); sr.WindowCalls != 1 {
-		t.Fatalf("session %+v", sr)
+	// A cut call never completed: it is not pace (SPEC §8 condition 3), so the session has no
+	// completed window call and no sessions.jsonl line.
+	for _, sr := range res.sessions {
+		if sr.Session == "e15-t-0-0" {
+			t.Fatalf("session %+v counts the cut call", sr)
+		}
 	}
 }
 
@@ -559,7 +621,8 @@ func TestGraceDeadlineCancelsInFlight(t *testing.T) {
 	client, _ := newFake(t)
 	cfg := baseCfg()
 	cfg.Window, cfg.Grace = 100*time.Millisecond, 100*time.Millisecond
-	// Two Execs per call: fill picks the 50 ms invocation twice for 100 ms of work.
+	// Two steps per call (fill picks the 50 ms invocation twice for 100 ms of work), joined into
+	// one Exec that holds 300 ms. Planned to complete at send+100 ms, before the grace end.
 	lib := &Library{Classes: map[string][]Invocation{"hold:150": {{ID: "h", Cmd: "hold:150", NominalMs: 50}}}}
 	lib.Standin.InterpreterClass = "hold:150"
 	s := Session{ID: "s", User: "u", Calls: []Call{
@@ -577,8 +640,8 @@ func TestGraceDeadlineCancelsInFlight(t *testing.T) {
 		t.Fatalf("calls %+v", res.calls)
 	}
 	c := res.calls[0]
-	if c.Status != "err" || c.Cause != "deadline" || c.Execs != 2 || c.Exit != nil {
-		t.Fatalf("call %+v, want its second Exec cancelled at the grace deadline as cause deadline", c)
+	if c.Status != "err" || c.Cause != "deadline" || c.Execs != 1 || c.Exit != nil {
+		t.Fatalf("call %+v, want its one Exec cancelled at the grace deadline as cause deadline", c)
 	}
 }
 
@@ -720,5 +783,95 @@ func TestEndSessionExecAfterGraceDeadline(t *testing.T) {
 	}
 	if last := res.cpuRaw[len(res.cpuRaw)-1]; last["end_sessions_ok"].(float64) != 1 {
 		t.Fatalf("footer %v", last)
+	}
+}
+
+func TestOneExecPerRecordedCall(t *testing.T) {
+	client, f := newFake(t)
+	cfg := baseCfg()
+	cfg.Window = 400 * time.Millisecond
+	// fill picks the 60 ms invocation 5 times for 300 ms of work: five steps, one Exec.
+	lib := &Library{Classes: map[string][]Invocation{"q": {{ID: "q", Cmd: "q", NominalMs: 60}}}}
+	lib.Standin.InterpreterClass = "q"
+	s := Session{ID: "s", User: "u", Calls: []Call{
+		{I: 0, Class: "q", DurMs: 300, WorkMs: 300},
+		{I: 1, Class: "q", DurMs: 300, WorkMs: 300, OffsetMs: 20},
+		{I: 2, Class: "q", DurMs: 400, WorkMs: 300, OffsetMs: 20, Chain: true},
+	}}
+	res := run(t, cfg, []Session{s}, lib, client)
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	ex := f.byKey()["e15-t-0-0"]
+	var mine []callRecord
+	for _, c := range res.calls {
+		if c.Session == "e15-t-0-0" {
+			mine = append(mine, c)
+		}
+	}
+	if len(ex) != len(mine) || len(ex) != 3 {
+		t.Fatalf("%d Execs for %d recorded calls, want one each (3)", len(ex), len(mine))
+	}
+	for i, e := range ex {
+		if n := strings.Count(e.cmd, "__rc=$?"); n != 5 {
+			t.Fatalf("Exec %d joins %d steps, want 5:\n%s", i, n, e.cmd)
+		}
+	}
+	for _, c := range res.calls {
+		if c.Execs != 1 || c.TailMs != 0 || c.Status != "ok" || c.ExpectedExit != 0 || c.FailedStep != nil {
+			t.Fatalf("call %+v, want execs 1, tail_ms 0, ok", c)
+		}
+	}
+}
+
+func TestFailedStepRecorded(t *testing.T) {
+	client, _ := newFake(t)
+	cfg := baseCfg()
+	cfg.Window = 100 * time.Millisecond
+	// fill for 160 ms: "q" (100 ms), then 60 ms remain -> "exit1" (60 ms). Both expect 0; the
+	// fake's exit1 exits 1, so step 1 fails and the joined Exec ends 91.
+	lib := &Library{Classes: map[string][]Invocation{"mix": {
+		{ID: "q", Cmd: "q", NominalMs: 100}, {ID: "x", Cmd: "exit1", NominalMs: 60}}}}
+	lib.Standin.InterpreterClass = "mix"
+	var calls []Call
+	for i := 0; i < 3; i++ {
+		calls = append(calls, Call{I: i, Class: "mix", DurMs: 160, WorkMs: 160, OffsetMs: 20})
+	}
+	res := run(t, cfg, []Session{{ID: "s", User: "u", Calls: calls}}, lib, client)
+	if res.err != nil || len(res.calls) == 0 {
+		t.Fatal(res.err, len(res.calls))
+	}
+	c := res.calls[0]
+	if c.Status != "err" || c.Cause != "exit_mismatch" || c.Exit == nil || *c.Exit != 91 || c.ExpectedExit != 0 || c.FailedStep == nil || *c.FailedStep != 1 {
+		t.Fatalf("call %+v (failed_step %v), want exit_mismatch, exit 91, failed_step 1", c, c.FailedStep)
+	}
+	if !strings.Contains(c.Msg, "step 1") || !strings.Contains(c.Msg, "exit1") {
+		t.Fatalf("msg %q does not name the failing step", c.Msg)
+	}
+}
+
+func TestGraceCutAtEndVsDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		durMs int64
+		cause string
+	}{{150, "deadline"}, {5000, "cut_at_end"}} {
+		client, _ := newFake(t)
+		cfg := baseCfg()
+		cfg.Window, cfg.Grace = 100*time.Millisecond, 200*time.Millisecond
+		// One 1 s hold per call: in flight at the grace end (300 ms) either way. Planned to
+		// complete at send+150 ms (before the grace end) or send+5 s (after it).
+		lib := testLib(nil, "hold:1000")
+		s := Session{ID: "s", User: "u", Calls: []Call{
+			{I: 0, Class: "hold:1000", DurMs: tc.durMs, WorkMs: 1},
+			{I: 1, Class: "hold:1000", DurMs: tc.durMs, WorkMs: 1},
+			{I: 2, Class: "hold:1000", DurMs: tc.durMs, WorkMs: 1},
+		}}
+		res := run(t, cfg, []Session{s}, lib, client)
+		if res.err != nil || len(res.calls) != 1 {
+			t.Fatalf("dur %d: %v %+v", tc.durMs, res.err, res.calls)
+		}
+		if c := res.calls[0]; c.Status != "err" || c.Cause != tc.cause || c.Execs != 1 {
+			t.Fatalf("dur %d: call %+v, want err/%s", tc.durMs, c, tc.cause)
+		}
 	}
 }

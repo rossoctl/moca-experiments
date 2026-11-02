@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -174,8 +175,9 @@ func (r *Replayer) Run(ctx context.Context) error {
 	r.warmEnd = r.t0.Add(r.cfg.Warmup)
 	r.end = r.warmEnd.Add(r.cfg.Window)
 	r.graceEnd = r.end.Add(r.cfg.Grace)
-	// Every Exec runs under execCtx: one still in flight at end+Grace is cancelled, and one that
-	// would start after it fails at once, both recorded as cause "deadline".
+	// Every Exec runs under execCtx: one still in flight at end+Grace is cancelled, recorded as
+	// cause "cut_at_end" when its planned completion is after end+Grace, else "deadline"; one that
+	// would start after it fails at once as "deadline" with execs 0.
 	execCtx, cancelExec := context.WithDeadline(ctx, r.graceEnd)
 	defer cancelExec()
 	// End-session Execs outlive the grace deadline and a SIGINT: a session live at the end still
@@ -268,19 +270,20 @@ func (r *Replayer) endSession(key string) {
 // runSession replays s from call index start to the end of its trace (or the run's end).
 func (r *Replayer) runSession(ctx context.Context, key string, s Session, start int) error {
 	var (
-		prevEmit          time.Time
-		wCalls            int
-		wPlanned          int64
-		wLastGap, wLastTl int64
-		wFirst, wLastEnd  time.Time
+		prevEmit         time.Time
+		wCalls           int
+		wPlanned         int64
+		wLastGap         int64
+		wFirst, wLastEnd time.Time
 	)
 	defer func() {
 		if wCalls > 0 {
 			r.rec.Session(sessionRecord{
 				Session: key, Trace: s.ID, Provider: s.Provider, WindowCalls: wCalls,
-				// The last call's gap and chain idle tail are both after its End, where
-				// observed_ms stops, so neither is planned time for the window.
-				PlannedMs:  wPlanned - wLastGap - wLastTl,
+				// The last call's gap is after its End, where observed_ms stops, so it is not
+				// planned time for the window. A chain's idle tail runs inside its Exec, before
+				// End, so it is.
+				PlannedMs:  wPlanned - wLastGap,
 				ObservedMs: ms(wLastEnd.Sub(wFirst)),
 			})
 		}
@@ -291,7 +294,6 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 		if err != nil { // validatePlans makes this unreachable for a corpus it checked
 			return fmt.Errorf("planning %s call %d: %w", s.ID, c.I, err)
 		}
-		tail := plan[len(plan)-1].SleepAfterMs
 		if !prevEmit.IsZero() {
 			// max(0, offset - elapsed since the previous emit), via sleepUntil.
 			if !r.sleepUntil(ctx, prevEmit.Add(time.Duration(c.OffsetMs)*time.Millisecond)) {
@@ -304,33 +306,29 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 		}
 		prevEmit = send
 		rec, last := r.runCall(ctx, key, s, c, plan, send)
-		rec.TailMs = tail
 		r.rec.Call(rec)
-		if rec.InWindow {
+		// A call cut at the end of the run never completed, so it is not part of the session's
+		// pace (SPEC §8 condition 3: first to last completed call).
+		if rec.InWindow && rec.Cause != causeCutAtEnd {
 			if wCalls == 0 {
 				wFirst = send
 			}
 			wCalls++
 			wPlanned += c.DurMs + c.GapMs
-			wLastGap, wLastTl = c.GapMs, tail
+			wLastGap = c.GapMs
 			wLastEnd = last
 		}
 		if ctx.Err() != nil {
 			return nil
 		}
-		// A chain call's idle tail is part of its recorded lifetime; slept whatever the outcome so
-		// a failing backend does not also compress the session's timeline.
-		if tail > 0 {
-			if !r.sleepUntil(ctx, last.Add(time.Duration(tail)*time.Millisecond)) {
-				return nil
-			}
-		}
 	}
 	return nil
 }
 
-// runCall sends one recorded call's planned Execs in order on key and returns its record and the
-// time its last Exec ended. The call stops at its first failing Exec.
+// runCall sends one recorded call as ONE Exec on key: its planned invocations joined into one
+// guest script (JoinPlan), the chain idle tail as the script's final sleep, so the sandbox is held
+// for the call's whole recorded lifetime (SPEC §5.3) and SBX pays one VM per recorded call, as the
+// real agent did. It returns the call's record and the time its Exec ended.
 func (r *Replayer) runCall(ctx context.Context, key string, s Session, c Call, plan []Planned, send time.Time) (callRecord, time.Time) {
 	timeoutS := uint32((c.DurMs+999)/1000) + 120
 	rec := callRecord{
@@ -340,27 +338,37 @@ func (r *Replayer) runCall(ctx context.Context, key string, s Session, c Call, p
 		Status: "ok", Cause: causeOK,
 		InWindow: !send.Before(r.warmEnd) && send.Before(r.end),
 	}
-	var last time.Time
-	for _, p := range plan {
-		if !time.Now().Before(r.graceEnd) {
-			// Past the grace deadline: do not start the rest of this call.
-			last = time.Now()
-			rec.Exit, rec.ExpectedExit = nil, p.Exit
-			rec.Status, rec.Cause, rec.Msg = "err", causeDeadline, "not started: past the end-of-run grace deadline"
-			break
+	script, err := JoinPlan(plan, plan[len(plan)-1].SleepAfterMs)
+	if err != nil { // validatePlans makes this unreachable for a corpus it checked
+		rec.Status, rec.Cause, rec.Msg = "err", causeExecError, err.Error()
+		return rec, time.Now()
+	}
+	if !time.Now().Before(r.graceEnd) {
+		rec.Status, rec.Cause, rec.Msg = "err", causeDeadline, "not started: past the end-of-run grace deadline"
+		return rec, time.Now()
+	}
+	res := execOne(ctx, r.client, r.cfg.SandboxID, r.reqID.Add(1), script, timeoutS, key)
+	last := time.Now()
+	rec.Execs = 1
+	rec.Exit = res.exit
+	switch {
+	case res.cause == "" && *res.exit != 0:
+		res.cause = causeExitMismatch
+		if k, ok := FailedStep(*res.exit); ok && k < len(plan) {
+			rec.FailedStep = &k
+			res.msg = fmt.Sprintf("exit %d: step %d exited other than %d: %s", *res.exit, k, plan[k].Exit, plan[k].Cmd)
+		} else {
+			res.msg = fmt.Sprintf("exit %d, expected 0 from the joined script", *res.exit)
 		}
-		res := execOne(ctx, r.client, r.cfg.SandboxID, r.reqID.Add(1), p.Cmd, timeoutS, key)
-		last = time.Now()
-		rec.Execs++
-		rec.Exit, rec.ExpectedExit = res.exit, p.Exit
-		if res.cause == "" && *res.exit != p.Exit {
-			res.cause = causeExitMismatch
-			res.msg = fmt.Sprintf("exit %d, expected %d: %s", *res.exit, p.Exit, p.Cmd)
-		}
-		if res.cause != "" {
-			rec.Status, rec.Cause, rec.Msg = "err", res.cause, res.msg
-			break
-		}
+	case res.cause == causeDeadline && errors.Is(ctx.Err(), context.DeadlineExceeded) &&
+		send.Add(time.Duration(c.DurMs)*time.Millisecond).After(r.graceEnd):
+		// Cancelled at the grace deadline while it was still within its planned lifetime: the
+		// run's end cut it, the backend did not fail it.
+		res.cause = causeCutAtEnd
+		res.msg = "cut at the end-of-run grace deadline before its planned completion"
+	}
+	if res.cause != "" {
+		rec.Status, rec.Cause, rec.Msg = "err", res.cause, res.msg
 	}
 	rec.ObservedMs = ms(last.Sub(send))
 	return rec, last

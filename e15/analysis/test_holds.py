@@ -288,3 +288,60 @@ def test_holds_abs_forced_false_with_holds(tmp_path):
     (tmp_path / "driver-cpu.jsonl").write_text(json.dumps(dict(header=True, num_cpu=1, t0_epoch=1000.0)))
     r = _rung(tmp_path, [S(1)], rung_start_ts=1010.0)
     assert r["time_origin_mismatch"] and not r["holds_abs"]
+
+
+# --- Task 8a: one Exec per recorded call --------------------------------------------------
+
+def test_cut_at_end_not_failure_and_excluded_from_latency():
+    c = good_calls() + [call(status="err", cause="cut_at_end", added=99999)]
+    r = H.evaluate(c, [sess(0.05)], 100)
+    assert r["holds"] and r["failed_calls"] == 0 and r["cut_at_end"] == 1
+    assert r["p95_added_ms"] == 150 and r["causes"] == {"cut_at_end": 1}
+    assert r["by_class"]["x"]["failed"] == 0 and r["by_class"]["x"]["p95_added_ms"] == 150
+    # a cut call outside the window is not counted
+    out = dict(call(status="err", cause="cut_at_end"), in_window=False)
+    assert H.evaluate(good_calls() + [out], [sess(0)], 100)["cut_at_end"] == 0
+
+
+def test_window_added_ms_ok_in_window_only():
+    out = dict(call(added=7), in_window=False)
+    cs = [call(added=10), call(added=20, status="err", cause="rpc_error"),
+          call(added=30, status="err", cause="cut_at_end"), out, call(added=40)]
+    assert H.window_added_ms(cs) == [10, 40]
+
+
+import baseline as B  # noqa: E402
+
+
+def _rung_dir(tmp_path, name, added):
+    d = tmp_path / name
+    d.mkdir()
+    rows = [call(added=a) for a in added]
+    rows.append(call(added=5000, status="err", cause="cut_at_end"))
+    rows.append(dict(call(added=9000), in_window=False))
+    (d / "calls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return str(d)
+
+
+def test_baseline_pools_three_dirs(tmp_path):
+    # 3 x 10 in-window ok calls: added 1..30 ms. Nearest-rank p95 of 30 values is the
+    # ceil(0.95 * 30) = 29th smallest = 29. Each run alone would give 10, 20, 30.
+    dirs = [_rung_dir(tmp_path, "N1-s%d" % k, range(10 * k - 9, 10 * k + 1)) for k in (1, 2, 3)]
+    out = tmp_path / "baseline.json"
+    B.main([str(out)] + dirs)
+    got = json.loads(out.read_text())
+    assert got["baseline_p95_ms"] == 29 and got["calls"] == 30
+    assert [r["dir"] for r in got["runs"]] == dirs
+    assert [r["calls"] for r in got["runs"]] == [10, 10, 10]
+    assert [r["p95_added_ms"] for r in got["runs"]] == [10, 20, 30]
+
+
+def test_baseline_needs_a_dir_and_calls(tmp_path):
+    with pytest.raises(SystemExit):
+        B.main([str(tmp_path / "b.json")])
+    empty = tmp_path / "e"
+    empty.mkdir()
+    (empty / "calls.jsonl").write_text("")
+    with pytest.raises(SystemExit):
+        B.main([str(tmp_path / "b.json"), str(empty)])
+    assert not (tmp_path / "b.json").exists()

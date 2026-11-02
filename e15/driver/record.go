@@ -11,7 +11,8 @@ import (
 	"sync"
 )
 
-// callRecord is one calls.jsonl line: one recorded Call (which may be several Execs).
+// callRecord is one calls.jsonl line: one recorded Call, sent as ONE Exec (its planned invocations
+// joined into one guest script by JoinPlan; execs is 1 once sent, 0 when never started).
 // session is the replay instance (its workspace_key); trace and provider name the corpus session.
 // t_ms is the monotonic offset of the call's first send from the start of the run.
 type callRecord struct {
@@ -25,12 +26,13 @@ type callRecord struct {
 	Execs        int     `json:"execs"`
 	PlannedDurMs int64   `json:"planned_dur_ms"`
 	PlannedGapMs int64   `json:"planned_gap_ms"`
-	TailMs       int64   `json:"tail_ms"` // chain idle tail slept after the call's End (part of planned_dur_ms)
+	TailMs       int64   `json:"tail_ms"` // always 0: a chain's idle tail runs inside its Exec, before End (kept for the analysis formulas)
 	ObservedMs   float64 `json:"observed_ms"`
 	Status       string  `json:"status"`
 	Cause        string  `json:"cause"`
 	Exit         *int32  `json:"exit"`
 	ExpectedExit int32   `json:"expected_exit"`
+	FailedStep   *int    `json:"failed_step,omitempty"` // exit_mismatch: the joined script's failing step (from 0)
 	InWindow     bool    `json:"in_window"`
 	Msg          string  `json:"msg,omitempty"`
 }

@@ -25,15 +25,29 @@ def median(values):
 
 
 def added_ms(call):
-    # observed ends at the last Exec's End, before the chain's idle tail
+    # tail_ms is 0 since one recorded call became one Exec (Task 8a): the chain's idle tail runs
+    # inside the Exec, before End. Older runs slept it after End, so it is still subtracted.
     return call["observed_ms"] - (call["planned_dur_ms"] - call.get("tail_ms", 0))
+
+
+def window_added_ms(calls):
+    """Added latency of the in-window ok calls: the population condition 4's p95 is over, and
+    the N=1 baseline pools (baseline.py)."""
+    return [added_ms(c) for c in calls if c.get("in_window") and c.get("status") == "ok"]
+
+
+def _not_failure_cause(call):
+    """Causes that end a call without the backend failing it: a call never started at the grace
+    deadline, and one the run's end cut before its planned completion (cut_at_end)."""
+    cause = call.get("cause", "")
+    return (cause == "deadline" and call.get("execs", 0) == 0) or cause == "cut_at_end"
 
 
 def _is_failure(call, arm):
     if call.get("status") != "err":
         return False
     cause = call.get("cause", "")
-    if cause == "deadline" and call.get("execs", 0) == 0:
+    if _not_failure_cause(call):
         return False
     if arm == "control" and cause == "exit_mismatch":
         return False
@@ -59,12 +73,13 @@ def evaluate(calls, sessions, baseline_p95_ms, arm="sbx", refusals=0):
     failed = [c for c in win if _is_failure(c, arm)]
     not_started = [c for c in win if c.get("status") == "err"
                    and c.get("cause") == "deadline" and c.get("execs", 0) == 0]
+    cut = [c for c in win if c.get("status") == "err" and c.get("cause") == "cut_at_end"]
     causes = {}
     for c in win:
         if c.get("status") == "err":
             causes[c.get("cause", "")] = causes.get(c.get("cause", ""), 0) + 1
 
-    added = [added_ms(c) for c in win if c.get("status") == "ok"]
+    added = window_added_ms(win)
     p95 = percentile(added, 95)
 
     paces, excluded = [], 0
@@ -96,6 +111,7 @@ def evaluate(calls, sessions, baseline_p95_ms, arm="sbx", refusals=0):
         "window_calls": len(win),
         "failed_calls": len(failed),
         "not_started": len(not_started),
+        "cut_at_end": len(cut),
         "refusals": refusals,
         "median_pace": med,
         "p95_added_ms": p95,

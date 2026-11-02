@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"strings"
 )
 
 // Call is one recorded tool call (corpus.jsonl).
@@ -67,7 +68,7 @@ type Library struct {
 type Planned struct {
 	Cmd          string
 	Exit         int32
-	SleepAfterMs int64 // chain idle tail; only ever non-zero on the last command of a chain call
+	SleepAfterMs int64 // chain idle tail; only ever non-zero on the last command of a chain call. JoinPlan runs it as the Exec's final sleep; the driver never sleeps it
 }
 
 // LoadCorpus reads corpus.jsonl (one session per line).
@@ -277,4 +278,46 @@ func (l *Library) Plan(c Call, seed int64, sessionID string) ([]Planned, error) 
 		}
 	}
 	return out, nil
+}
+
+// A joined script exits stepExitBase+k when its step k (from 0) exits other than the library
+// expects, capped at maxStepExit so the code stays below the shell's 126+ range (not executable,
+// not found, killed by a signal). Steps from 35 on all report maxStepExit.
+const (
+	stepExitBase = 90
+	maxStepExit  = 125
+)
+
+// JoinPlan builds the ONE guest shell script that replays a recorded call (SPEC §5.3, §5.6: one
+// recorded call is one command). Each step runs in its own subshell, so a step's cd, exit or
+// trailing comment cannot leak into the next; the step's exit code is checked against the
+// library's and the script exits stepExitBase+k at the first mismatch. A chain's idle tail
+// (tailMs > 0) is the script's final sleep, so the replayed process holds its sandbox for the
+// chain's whole lifetime. The script exits 0 when every step matched. host_infra's stand-in sleep
+// is an ordinary step.
+func JoinPlan(steps []Planned, tailMs int64) (string, error) {
+	if len(steps) == 0 {
+		return "", errors.New("join: no steps")
+	}
+	var b strings.Builder
+	for k, p := range steps {
+		code := stepExitBase + k
+		if code > maxStepExit {
+			code = maxStepExit
+		}
+		fmt.Fprintf(&b, "(\n%s\n); __rc=$?; [ \"$__rc\" -eq %d ] || exit %d\n", p.Cmd, p.Exit, code)
+	}
+	if tailMs > 0 {
+		fmt.Fprintf(&b, "sleep %.1f\n", float64(tailMs)/1000)
+	}
+	b.WriteString("exit 0\n")
+	return b.String(), nil
+}
+
+// FailedStep maps a joined script's exit code back to the step that failed.
+func FailedStep(exit int32) (int, bool) {
+	if exit < stepExitBase || exit > maxStepExit {
+		return 0, false
+	}
+	return int(exit - stepExitBase), true
 }

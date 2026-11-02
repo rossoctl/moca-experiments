@@ -9,8 +9,9 @@
 # Environment (defaults are SPEC §10.2's):
 #   E15_WARMUP_S 600   E15_WINDOW_S 900   E15_SPREAD_S 60   E15_GRACE_S 300   E15_SEED 1
 #   E15_TAG            suffix for the rung directory (ladder.sh uses "repeat")
-#   E15_BASELINE_P95_MS  override the N=1 baseline (otherwise read from the N1 rung's record.json:
-#                      this point's, else the default point's)
+#   E15_BASELINE_P95_MS  override the N=1 baseline (otherwise the pooled N1/baseline.json that
+#                      baseline.sh writes, this point's then the default point's; else the N1
+#                      rung's record.json, this point's then the default point's)
 #
 # Steps:
 #   1. stop any rung units left over; wipe /srv/e15/workspaces and /srv/e15/jail (E15's own)
@@ -69,8 +70,10 @@ K_MULT=${E15_K_MULT:-1}
 }
 
 # The N=1 baseline (SPEC §8 condition 4) is a prerequisite for N > 1, resolved before anything
-# runs: E15_BASELINE_P95_MS, else this point's N1 record, else the default point's. A rung
-# without one is a rig error, not a rung that "holds" with condition 4 unevaluated.
+# runs: E15_BASELINE_P95_MS, else the pooled N1/baseline.json (baseline.sh: three seeded N=1
+# runs; this point's, else the default point's), else an N1 record (this point's, else the
+# default point's). A rung without one is a rig error, not a rung that "holds" with condition 4
+# unevaluated.
 baseline=${E15_BASELINE_P95_MS:-}
 baseline_src="env"
 if [ "$N" = 1 ]; then
@@ -79,9 +82,12 @@ if [ "$N" = 1 ]; then
 elif [ -z "$baseline" ]; then
   # Most recent valid run first: ladder.sh's tags do not compose (a repeat after a K-doubled
   # re-run is still N1-repeat), so N1-repeat, then N1-k2, then N1.
-  for cand in "$E15_RUNS/$POINT/$ARM"/N1{-repeat,-k2,}/record.json "$E15_RUNS/default/$ARM"/N1{-repeat,-k2,}/record.json; do
+  for cand in "$E15_RUNS/$POINT/$ARM/N1/baseline.json" "$E15_RUNS/default/$ARM/N1/baseline.json" \
+    "$E15_RUNS/$POINT/$ARM"/N1{-repeat,-k2,}/record.json "$E15_RUNS/default/$ARM"/N1{-repeat,-k2,}/record.json; do
     if [ -f "$cand" ]; then
-      baseline=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get("p95_added_ms"); print("" if v is None else v)' "$cand")
+      key=p95_added_ms
+      [ "${cand##*/}" = baseline.json ] && key=baseline_p95_ms
+      baseline=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$cand" "$key")
       baseline_src=$cand
       break
     fi
@@ -107,10 +113,16 @@ if [ "$ARM" != control ]; then
 fi
 
 DIR=$E15_RUNS/$POINT/$ARM/N$N${TAG:+-$TAG}
+prev_dir=""
 if [ -e "$DIR" ]; then
-  mv "$DIR" "$DIR.prev-$(date -u +%Y%m%dT%H%M%SZ)"
+  prev_dir="$DIR.prev-$(date -u +%Y%m%dT%H%M%SZ)"
+  mv "$DIR" "$prev_dir"
 fi
 mkdir -p "$DIR"
+# baseline.sh's pooled N1/baseline.json is not this rung's output: it stays where rung.sh reads it.
+if [ -n "$prev_dir" ] && [ -f "$prev_dir/baseline.json" ]; then
+  cp -p "$prev_dir/baseline.json" "$DIR/baseline.json"
+fi
 RUN_ID="$POINT-$ARM-n$N${TAG:+-$TAG}-$(date -u +%s)"
 log "rung $ARM N=$N point=$POINT warmup=${WARMUP}s window=${WINDOW}s -> $DIR"
 
