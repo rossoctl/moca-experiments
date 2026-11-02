@@ -2,7 +2,9 @@
 
 Pools the in-window ok calls of the given N=1 rung directories (each with calls.jsonl) and writes
 {"baseline_p95_ms", "calls", "runs": [{"dir", "calls", "p95_added_ms"}], "library_sha256",
-"driver_bin_sha256", "corpus_sha256"} to OUT_JSON. The three hashes come from each run's
+"driver_bin_sha256", "corpus_sha256", "evaluable": [{"seed", "dir"}], "skipped": [{"seed", "tag",
+"reason"}]} to OUT_JSON (only evaluable runs are given and pooled; the seed lists come from
+baseline.sh via E15_BASELINE_SEEDS / E15_BASELINE_SKIPPED). The three hashes come from each run's
 record.json and must agree across the runs (else it dies, writing nothing): rung.sh refuses a
 baseline whose library or driver differs from the rung's own. Added latency
 is holds.py's (window_added_ms); the p95 is its nearest-rank percentile over the pooled calls, so
@@ -59,6 +61,14 @@ def main(argv=None):
     hashes = run_hashes(dirs)
     b = pool(dirs)
     b.update(hashes)
+    # baseline.sh passes which seeds were pooled and which were skipped as not evaluable
+    seeds = os.environ.get("E15_BASELINE_SEEDS", "").split()
+    b["evaluable"] = [{"seed": int(s), "dir": d} for s, d in zip(seeds, dirs)] if len(seeds) == len(dirs) \
+        else [{"seed": None, "dir": d} for d in dirs]
+    b["skipped"] = []
+    for item in os.environ.get("E15_BASELINE_SKIPPED", "").split():
+        seed, tag, reason = item.split(":", 2)
+        b["skipped"].append({"seed": int(seed), "tag": tag, "reason": reason})
     if not b["calls"]:
         sys.exit("baseline.py: no in-window ok calls in %s" % " ".join(dirs))
     with open(out, "w") as f:

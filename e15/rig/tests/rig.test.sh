@@ -421,9 +421,19 @@ echo "$1 $2 $3 ${E15_SEED:-} ${E15_TAG:-}" >>"$B_CALLS"
 d="$E15_ROOT/runs/$3/$1/N$2${E15_TAG:+-$E15_TAG}"
 mkdir -p "$d"
 var="HOLDS_${E15_TAG}"
-printf '{"holds": %s}\n' "${!var:-true}" >"$d/record.json"
+rvar="REASON_${E15_TAG}"
+fvar="FAILED_${E15_TAG}"
+cvar="CALLS_${E15_TAG}"
+reason=${!rvar:-${REASON_ALL:-}}
+holds=${!var:-true}
+[ -n "$reason" ] && holds=false
+printf '{"holds": %s, "seed": %s, "failed_calls": %s, "refusals": 0%s}\n' "$holds" "$E15_SEED" "${!fvar:-0}" \
+  "${reason:+, \"reason\": \"$reason\"}" >"$d/record.json"
 add=$(( ${E15_SEED} * 10 ))
-printf '{"in_window": true, "status": "ok", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$add" >"$d/calls.jsonl"
+: >"$d/calls.jsonl"
+for ((i = 0; i < ${!cvar:-${CALLS_ALL:-10}}; i++)); do
+  printf '{"in_window": true, "status": "ok", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$add" >>"$d/calls.jsonl"
+done
 SH
   mkdir -p "$TROOT/src/e15"
   ln -sfn "$RIG/../analysis" "$TROOT/src/e15/analysis"
@@ -438,7 +448,30 @@ SH
   check "baseline.sh ran three N=1 rungs, seeds 1-3, tags s1-s3" "$(tr '\n' '|' <"$TMP/bcalls")" "sbx 1 default 1 s1|sbx 1 default 2 s2|sbx 1 default 3 s3|"
   bj="$TROOT/runs/default/sbx/N1/baseline.json"
   check "baseline.sh pooled the three into N1/baseline.json" \
-    "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["baseline_p95_ms"], d["calls"], len(d["runs"]))' "$bj" 2>&1)" "30 3 3"
+    "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["baseline_p95_ms"], d["calls"], len(d["runs"]))' "$bj" 2>&1)" "30 30 3"
+  bjf() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(*[eval(e, {"d": d}) for e in sys.argv[2:]])' "$bj" "$@" 2>&1; }
+  # Task 8 ruling: an empty_window run is not evaluable -- skipped, recorded, not a failure
+  bl REASON_s2=empty_window
+  check "baseline.sh: an empty_window seed is skipped, not a failure" "$?" "0"
+  check "baseline.sh: after a skip it draws the next seed" "$(tr '\n' '|' <"$TMP/bcalls")" "sbx 1 default 1 s1|sbx 1 default 2 s2|sbx 1 default 3 s3|sbx 1 default 4 s4|"
+  check "baseline.json lists evaluable and skipped seeds" \
+    "$(bjf '[e["seed"] for e in d["evaluable"]]' '[(k["seed"], k["tag"], k["reason"]) for k in d["skipped"]]')" "[1, 3, 4] [(2, 's2', 'empty_window')]"
+  check "baseline.json pools only the evaluable runs" "$(bjf 'd["calls"]' 'len(d["runs"])')" "30 3"
+  # the pooled-call floor: >= 30 in-window ok calls, not just >= 3 runs
+  bl CALLS_ALL=7
+  check "baseline.sh: 3 runs of 7 calls are not enough; stops once >= 30 pooled" "$(tr '\n' '|' <"$TMP/bcalls")" "sbx 1 default 1 s1|sbx 1 default 2 s2|sbx 1 default 3 s3|sbx 1 default 4 s4|sbx 1 default 5 s5|"
+  check "baseline.sh: floor run pooled 35 calls over 5 runs" "$(bjf 'd["calls"]' 'len(d["evaluable"])')" "35 5"
+  bl CALLS_ALL=40
+  check "baseline.sh: 3 runs is the minimum even when calls suffice" "$(grep -c . "$TMP/bcalls")" "3"
+  # at most 12 seeds
+  bl REASON_ALL=empty_window
+  check "baseline.sh dies after 12 seeds without enough" "$?" "1"
+  check "baseline.sh drew exactly 12 seeds" "$(grep -c . "$TMP/bcalls")" "12"
+  check "baseline.sh writes no baseline.json after 12 seeds" "$([ -f "$bj" ] && echo yes || echo no)" "no"
+  # an empty window that still saw a failed call is a failure, not a skip
+  bl REASON_s1=empty_window FAILED_s1=1
+  check "baseline.sh dies on an empty_window run with a failed call" "$?" "1"
+  check "baseline.sh drew no seed after that run" "$(grep -c . "$TMP/bcalls")" "1"
   bl HOLDS_s2=false
   check "baseline.sh dies when one run does not hold" "$?" "1"
   check "baseline.sh names the run that did not hold" "$(grep -c 'N1-s2' "$TMP/b.out")" "1"

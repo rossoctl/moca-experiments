@@ -388,3 +388,18 @@ def test_baseline_dies_on_missing_record(tmp_path):
     os.remove(os.path.join(d, "record.json"))
     with pytest.raises(SystemExit):
         B.main([str(tmp_path / "b.json"), d])
+
+
+# --- Task 8: empty-window seeds skipped ----------------------------------------------------
+
+def test_baseline_records_evaluable_and_skipped(tmp_path, monkeypatch):
+    dirs = [_rung_dir(tmp_path, "N1-s%d" % k, range(1, 11)) for k in (1, 3, 4)]
+    monkeypatch.setenv("E15_BASELINE_SEEDS", "1 3 4")
+    monkeypatch.setenv("E15_BASELINE_SKIPPED", "2:s2:empty_window")
+    out = tmp_path / "baseline.json"
+    B.main([str(out)] + dirs)
+    got = json.loads(out.read_text())
+    assert [e["seed"] for e in got["evaluable"]] == [1, 3, 4]
+    assert [e["dir"] for e in got["evaluable"]] == dirs
+    assert got["skipped"] == [{"seed": 2, "tag": "s2", "reason": "empty_window"}]
+    assert got["calls"] == 30
