@@ -259,7 +259,7 @@ except (OSError, ValueError):
 arm = "$ARM"
 wbin = {"sbx": "$E15_BIN/microvm-worker", "resident-inf": "$E15_BIN/microvm-worker-resident",
         "resident-300": "$E15_BIN/microvm-worker-resident"}.get(arm)
-baseline = $baseline
+baseline = json.loads("$baseline")
 p = {
     "arm": arm, "n": $N, "point": "$POINT", "seed": $SEED, "run_id": run,
     "warmup_s": $WARMUP, "window_s": $WINDOW, "spread_s": $SPREAD, "grace_s": $GRACE,

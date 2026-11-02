@@ -51,7 +51,12 @@ if [ "$already_up" = 0 ]; then
   for unit in "$E15_UNIT_RELAY" "$E15_UNIT_WORKER" "$E15_UNIT_NULL"; do
     unit_active "$unit" && die "$unit is running without the full stack; run teardown.sh first"
   done
-  refuse_ports "${E15_PORTS[@]}"
+  # A partial setup may have left E15's own Redis up; its port is then ours, not a conflict.
+  ports=("${E15_PORTS[@]}")
+  if sudo -n podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
+    ports=("$E15_PORT_ATTACH" "$E15_PORT_EXEC" "$E15_PORT_NULL" "$E15_PORT_STATS")
+  fi
+  refuse_ports "${ports[@]}"
 fi
 m_section Setup
 log "setup: manifest $E15_MANIFEST (already_up=$already_up)"
@@ -221,14 +226,20 @@ fi
 
 # --- 9. Redis and the relay ------------------------------------------------------------------
 if ! sudo -n podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
-  sudo -n podman run -d --name "$E15_REDIS_CTR" -p "127.0.0.1:$E15_PORT_REDIS:6379" \
-    "$E15_REDIS_IMAGE" redis-server --save '' --appendonly no >/dev/null
-  m_change "podman run $E15_REDIS_CTR on 127.0.0.1:$E15_PORT_REDIS (--save '')" \
+  # Host network, bound to loopback: no port-forward NAT rules, and the relay's systemd IP fence
+  # (IPAddressAllow=localhost) admits it, which a DNAT to the podman bridge would not.
+  sudo -n podman run -d --name "$E15_REDIS_CTR" --network host \
+    "$E15_REDIS_IMAGE" redis-server --bind 127.0.0.1 --port "$E15_PORT_REDIS" --save '' --appendonly no >/dev/null
+  m_change "podman run $E15_REDIS_CTR (host network, 127.0.0.1:$E15_PORT_REDIS, --save '')" \
     "sudo -n podman rm -f $E15_REDIS_CTR"
   wait_for 30 port_listening "$E15_PORT_REDIS" || die "Redis did not listen on 127.0.0.1:$E15_PORT_REDIS"
 fi
 if ! unit_active "$E15_UNIT_RELAY"; then
   start_relay
+  sleep 3
+  if grep -q 'redis client error' "$E15_LOGS/relay.log"; then
+    die "the relay cannot reach Redis on 127.0.0.1:$E15_PORT_REDIS; see $E15_LOGS/relay.log"
+  fi
   m_change "started $E15_UNIT_RELAY (127.0.0.1:$E15_PORT_ATTACH attach, 127.0.0.1:$E15_PORT_EXEC exec)" \
     "sudo -n systemctl stop $E15_UNIT_RELAY; sudo -n systemctl reset-failed $E15_UNIT_RELAY 2>/dev/null || true"
 fi

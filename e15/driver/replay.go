@@ -71,13 +71,15 @@ func NewReplayer(cfg Config, sessions []Session, lib *Library, client pb.Sandbox
 		return nil, err
 	}
 	r := &Replayer{cfg: cfg, lib: lib, client: client, rec: rec, sampler: s, liveUsers: map[string]int{}}
-	// req_id is the relay's correlation key: a random 32-bit salt in the high half keeps two
-	// driver processes (or a restarted one) from colliding, a counter makes ids unique within one.
+	// req_id is the relay's correlation key: a random salt in the high bits keeps two driver
+	// processes (or a restarted one) from colliding, a counter makes ids unique within one. The
+	// relay decodes req_id into a JS number and refuses anything above 2^53-1, so the id is a
+	// 21-bit salt over a 32-bit counter (moca's harness scheme, session/cache.go): 53 bits.
 	var salt [4]byte
 	if _, err := rand.Read(salt[:]); err != nil {
 		return nil, err
 	}
-	r.reqID.Store(uint64(binary.BigEndian.Uint32(salt[:])) << 32)
+	r.reqID.Store(uint64(binary.BigEndian.Uint32(salt[:])&reqIDSaltMask) << 32)
 	return r, nil
 }
 
@@ -238,6 +240,9 @@ func (r *Replayer) runSlot(ctx context.Context, slot int, startAt time.Time) err
 		}
 	}
 }
+
+// reqIDSaltMask keeps req_id within 2^53-1 (21 salt bits over a 32-bit counter).
+const reqIDSaltMask = 1<<21 - 1
 
 // EndSessionCommand is the resident worker's end-of-session marker (Task 5).
 const (

@@ -348,6 +348,8 @@ E15_RELAY_PRELOAD="data:text/javascript,import{createRequire}from'node:module';c
 start_relay() {
   refuse_ports "$E15_PORT_ATTACH" "$E15_PORT_EXEC"
   mkdir -p "$E15_LOGS"
+  # systemd creates the file as root; rotate it so this start's lines are the only ones checked.
+  [ -f "$E15_LOGS/relay.log" ] && sudo -n mv -f "$E15_LOGS/relay.log" "$E15_LOGS/relay.log.1"
   sudo -n systemd-run --quiet --unit="$E15_UNIT_RELAY" --slice="$E15_SLICE" \
     -p User="$(id -un)" -p WorkingDirectory="$E15_MOCA/packages/sandbox-relay" \
     -p EnvironmentFile="$E15_SECRETS/relay.env" \

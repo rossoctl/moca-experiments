@@ -57,6 +57,11 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 	if req.GetSandboxId() != "e15" || e.GetWorkspaceKey() == "" || e.GetTimeoutS() < minT || e.GetTimeoutS() > maxT {
 		return status.Error(codes.InvalidArgument, "bad request")
 	}
+	// The relay decodes req_id into a JS number and refuses one above 2^53-1 with
+	// "Internal: Error deserializing request" (k8s-sandbox gen longToNumber).
+	if e.GetReqId() > 1<<53-1 {
+		return status.Error(codes.Internal, "Error deserializing request")
+	}
 	defer func() {
 		f.mu.Lock()
 		f.execs = append(f.execs, fakeExec{e.GetWorkspaceKey(), e.GetCommand(), recv, time.Now()})
