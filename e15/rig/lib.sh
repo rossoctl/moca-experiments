@@ -18,6 +18,19 @@
 # Sections: "## Setup <utc>", "## Teardown <utc>", "## Purge <utc>".
 
 E15_ROOT=${E15_ROOT:-/srv/e15}
+# Rig rule: E15's files live under /srv/e15. A root elsewhere is refused at source time.
+case "$E15_ROOT" in
+/srv/e15 | /srv/e15/*) ;;
+# rig.test.sh only: a scratch root it made itself, named so nothing real can match by accident.
+*/e15-rig-test.*) [ "${E15_TEST_ROOT:-}" = "$E15_ROOT" ] || {
+  printf 'lib.sh: E15_ROOT=%s is a test root but E15_TEST_ROOT does not name it\n' "$E15_ROOT" >&2
+  exit 3
+} ;;
+*)
+  printf 'lib.sh: E15_ROOT=%s is not under /srv/e15 (rig rule)\n' "$E15_ROOT" >&2
+  exit 3
+  ;;
+esac
 E15_MANIFEST=${E15_MANIFEST:-$HOME/e15-manifest.md}
 E15_SHARED=/opt/serverless-harness
 
@@ -358,10 +371,13 @@ start_relay() {
     -p StandardOutput="append:$E15_LOGS/relay.log" \
     /usr/bin/node --import tsx --import "$E15_RELAY_PRELOAD" src/main.ts >/dev/null ||
     die "systemd-run $E15_UNIT_RELAY failed"
-  wait_for 60 port_listening "$E15_PORT_ATTACH" || die "relay attach port $E15_PORT_ATTACH not on 127.0.0.1; see $E15_LOGS/relay.log"
-  wait_for 30 port_listening "$E15_PORT_EXEC" || die "relay exec port $E15_PORT_EXEC not on 127.0.0.1"
+  if ! wait_for 60 port_listening "$E15_PORT_ATTACH" || ! wait_for 30 port_listening "$E15_PORT_EXEC"; then
+    stop_e15_unit "$E15_UNIT_RELAY"
+    die "relay ports $E15_PORT_ATTACH/$E15_PORT_EXEC not on 127.0.0.1 (relay stopped); see $E15_LOGS/relay.log"
+  fi
   if ss -ltnH | awk '{print $4}' | grep -Eq "^(0\.0\.0\.0|\*|\[::\]):($E15_PORT_ATTACH|$E15_PORT_EXEC)\$"; then
-    die "relay listens on a wildcard address; refusing (rig rule)"
+    stop_e15_unit "$E15_UNIT_RELAY"
+    die "relay listens on a wildcard address; relay stopped (rig rule)"
   fi
 }
 

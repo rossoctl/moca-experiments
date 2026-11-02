@@ -62,6 +62,32 @@ case " $arms " in *" $ARM "*) ;; *)
 esac
 
 WARMUP=${E15_WARMUP_S:-600}
+K_MULT=${E15_K_MULT:-1}
+[[ "$K_MULT" =~ ^[1-9][0-9]*$ ]] || {
+  echo "rung.sh: E15_K_MULT must be a positive integer" >&2
+  exit 2
+}
+
+# The N=1 baseline (SPEC §8 condition 4) is a prerequisite for N > 1, resolved before anything
+# runs: E15_BASELINE_P95_MS, else this point's N1 record, else the default point's. A rung
+# without one is a rig error, not a rung that "holds" with condition 4 unevaluated.
+baseline=${E15_BASELINE_P95_MS:-}
+baseline_src="env"
+if [ "$N" = 1 ]; then
+  baseline=null
+  baseline_src=none
+elif [ -z "$baseline" ]; then
+  for cand in "$E15_RUNS/$POINT/$ARM"/N1{-repeat,}/record.json "$E15_RUNS/default/$ARM"/N1{-repeat,}/record.json; do
+    if [ -f "$cand" ]; then
+      baseline=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get("p95_added_ms"); print("" if v is None else v)' "$cand")
+      baseline_src=$cand
+      break
+    fi
+  done
+  [ -n "$baseline" ] || die "no N=1 baseline p95 for $ARM (point $POINT or default; or E15_BASELINE_P95_MS): run N=1 first"
+fi
+[ "$baseline" = null ] || python3 -c 'import sys; float(sys.argv[1])' "$baseline" 2>/dev/null ||
+  die "baseline p95 '$baseline' is not a number"
 WINDOW=${E15_WINDOW_S:-900}
 SPREAD=${E15_SPREAD_S:-60}
 GRACE=${E15_GRACE_S:-300}
@@ -98,7 +124,7 @@ stop_rung_units
 refuse_shared_paths "$E15_WORKSPACES" "$E15_JAIL"
 sudo -n find "$E15_WORKSPACES" "$E15_JAIL" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 span_min=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["table"]["mean_span_min"])' "$CORPUS_DIR/corpus-report.json")
-K=$(python3 -c 'import math,sys; w,s=float(sys.argv[1]),float(sys.argv[2])*60; print(int(math.ceil(w/s))+3)' "$((WARMUP + WINDOW))" "$span_min")
+K=$(python3 -c 'import math,sys; w,s=float(sys.argv[1]),float(sys.argv[2])*60; print((int(math.ceil(w/s))+3)*int(sys.argv[3]))' "$((WARMUP + WINDOW))" "$span_min" "$K_MULT")
 log "pre-creating $((N * K)) reflink workspaces (K=$K, mean span ${span_min} min)"
 sudo -n bash -c '
   set -e
@@ -111,6 +137,10 @@ sudo -n bash -c '
       chmod 0600 "$d/workspace.img"
     done
   done' _ "$E15_WORKSPACES" "$E15_TEMPLATE" "$RUN_ID" "$N" "$K"
+
+# OOM kills anywhere in e15.slice over the rung (SPEC §7.2: an OOM kill fails the rung).
+oom_count() { awk '$1=="oom_kill"{print $2; f=1} END{if(!f) print 0}' "$E15_CG/memory.events" 2>/dev/null || echo 0; }
+oom_before=$(oom_count)
 
 # --- 3. the arm's backend --------------------------------------------------------------------
 if [ "$ARM" = control ]; then
@@ -181,6 +211,7 @@ PY
 log "driver exit $driver_exit"
 
 # --- 5. stop the backend, normalise the log --------------------------------------------------
+oom_after=$(oom_count)
 stop_rung_units
 trap - EXIT
 if [ -f "$DIR/worker.log" ]; then
@@ -192,25 +223,6 @@ if [ -f "$DIR/worker.log" ]; then
 fi
 
 # --- 6. params + record ----------------------------------------------------------------------
-baseline=${E15_BASELINE_P95_MS:-}
-baseline_src="env"
-if [ "$N" = 1 ]; then
-  baseline=null
-  baseline_src=none
-elif [ -z "$baseline" ]; then
-  for cand in "$E15_RUNS/$POINT/$ARM"/N1{-repeat,}/record.json "$E15_RUNS/default/$ARM"/N1{-repeat,}/record.json; do
-    if [ -f "$cand" ]; then
-      baseline=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get("p95_added_ms"); print("null" if v is None else v)' "$cand")
-      baseline_src=$cand
-      break
-    fi
-  done
-  [ -n "$baseline" ] || {
-    baseline=null
-    baseline_src=missing
-    log "WARNING: no N=1 baseline for $ARM; condition 4 is not evaluated (baseline_p95_ms=null)"
-  }
-fi
 
 commit_file=$E15_ROOT/src/COMMIT
 python3 - "$DIR" <<PY
@@ -267,7 +279,8 @@ p = {
     "rung_start_ts": float("$rung_start_ts"), "launch_ts": float("$launch_ts"),
     "driver_load_s": float("$rung_start_ts") - float("$launch_ts"),
     "baseline_p95_ms": baseline, "baseline_source": "$baseline_src",
-    "workspaces_per_slot": $K, "workspaces_precreated": len(pre),
+    "workspaces_per_slot": $K, "workspaces_k_mult": $K_MULT, "workspaces_precreated": len(pre),
+    "oom_kills": $oom_after - $oom_before,
     "unseeded_sessions": len(keys - pre), "sessions_started": len(keys),
     "workspace_seeding": "cp --reflink=always of the template per key before t0",
     "corpus": "$CORPUS", "corpus_sha256": sha("$CORPUS"), "H_s": report.get("H_s"),

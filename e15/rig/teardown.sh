@@ -30,6 +30,8 @@ esac
 last=$(grep -n '^## Teardown' "$E15_MANIFEST" | tail -1 | cut -d: -f1)
 start=$((${last:-0} + 1))
 mapfile -t undo < <(tail -n +"$start" "$E15_MANIFEST" | sed -n 's/^- .* | UNDO: //p')
+# The host's state before this cycle's first setup (setup.sh PRESTATE note); verify restores it.
+prestate=$(tail -n +"$start" "$E15_MANIFEST" | sed -n 's/^- .* PRESTATE: //p' | head -1)
 purges=()
 if [ "$purge" = 1 ]; then
   # PURGE lines from the whole manifest: built artifacts outlive teardown/setup cycles.
@@ -38,6 +40,7 @@ fi
 
 rc=0
 results=()
+failed=()
 replay() {
   local cmd=$1 r
   log "replay: $cmd"
@@ -46,6 +49,7 @@ replay() {
   results+=("- $(utc) replayed (exit $r): $cmd")
   [ "$r" -eq 0 ] || {
     log "FAILED (exit $r): $cmd"
+    failed+=("$cmd")
     rc=1
   }
 }
@@ -58,18 +62,35 @@ if [ -f "$E15_MANIFEST" ] || [ -d "$(dirname "$E15_MANIFEST")" ]; then
     printf '\n## Teardown %s\n' "$(utc)"
     [ ${#results[@]} -gt 0 ] && printf '%s\n' "${results[@]}"
     [ "$purge" = 1 ] && printf -- '- %s purge: built artifacts removed\n' "$(utc)"
+    # A failed undo is carried past this Teardown section, in the original order (failed[] is
+    # in replay order, i.e. reversed), so the next teardown retries it.
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '\n## Retry %s\n' "$(utc)"
+      for ((i = ${#failed[@]} - 1; i >= 0; i--)); do
+        printf -- '- %s retry after failed teardown | UNDO: %s\n' "$(utc)" "${failed[i]}"
+      done
+    fi
   } >>"$E15_MANIFEST"
 fi
 
 if [ "${E15_TEARDOWN_VERIFY:-1}" = 1 ]; then
   ok=1
-  if ! systemctl is-active --quiet "$E15_HOST_WORKER"; then
-    log "VERIFY: $E15_HOST_WORKER is not active"
+  # Expected state: what setup recorded before it changed anything; without a PRESTATE line
+  # (a manifest from before fix round 1), SPEC §4's normal state: worker active, bench running.
+  want_hw=active
+  case " $prestate " in *" $E15_HOST_WORKER=inactive "*) want_hw=inactive ;; esac
+  if systemctl is-active --quiet "$E15_HOST_WORKER"; then have_hw=active; else have_hw=inactive; fi
+  if [ "$have_hw" != "$want_hw" ]; then
+    log "VERIFY: $E15_HOST_WORKER is $have_hw, was $want_hw before setup"
     ok=0
   fi
   for c in "${E15_BENCH_CTRS[@]}"; do
-    if [ "$(sudo -n docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" != true ]; then
-      log "VERIFY: container $c is not running"
+    want=true
+    case " $prestate " in *" $c=false "* | *" $c=absent "*) want=false ;; esac
+    have=$(sudo -n docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null || echo false)
+    [ "$have" = true ] || have=false
+    if [ "$have" != "$want" ]; then
+      log "VERIFY: container $c running=$have, was running=$want before setup"
       ok=0
     fi
   done
@@ -90,8 +111,8 @@ if [ "${E15_TEARDOWN_VERIFY:-1}" = 1 ]; then
     fi
   done
   if [ "$ok" = 1 ]; then
-    printf -- '- %s verified: %s active, %s running, E15 units/ports gone\n' "$(utc)" \
-      "$E15_HOST_WORKER" "${E15_BENCH_CTRS[*]}" >>"$E15_MANIFEST"
+    printf -- '- %s verified: %s %s, bench as before setup (%s), E15 units/ports gone\n' "$(utc)" \
+      "$E15_HOST_WORKER" "$want_hw" "${prestate:-no PRESTATE: expected all running}" >>"$E15_MANIFEST"
     log "teardown: verified"
   else
     printf -- '- %s VERIFY FAILED (see teardown output)\n' "$(utc)" >>"$E15_MANIFEST"

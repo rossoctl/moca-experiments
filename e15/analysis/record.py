@@ -146,6 +146,12 @@ def build(rung_dir, params):
     refusals, scope, by_reason = count_refusals(
         os.path.join(rung_dir, "worker.log"),
         None if rs is None else rs + start, None if rs is None else rs + end)
+    # OOM kills in e15.slice over the rung (rung.sh: memory.events oom_kill delta). The kernel
+    # line may not reach worker.log, so this counter is the authority (SPEC §8 condition 2).
+    oom = int(p.get("oom_kills") or 0)
+    if oom > 0:
+        refusals += oom
+        by_reason["oom_kill"] = by_reason.get("oom_kill", 0) + oom
 
     ev = H.evaluate(calls, sessions, p.get("baseline_p95_ms"), arm=arm, refusals=refusals)
     ws = window_samples(samples, start, end)
@@ -165,10 +171,12 @@ def build(rung_dir, params):
     rec["time_origin_mismatch"] = bool(mismatch)
     if mismatch:
         rec["holds"] = False
+        rec["holds_abs"] = False
     aborted = p.get("driver_exit", 0) != 0
     rec["aborted"] = aborted
     if aborted:
         rec["holds"] = False
+        rec["holds_abs"] = False
     return rec
 
 

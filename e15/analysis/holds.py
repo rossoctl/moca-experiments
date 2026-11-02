@@ -3,6 +3,7 @@ import math
 
 PACE_MAX = 0.10
 P95_FACTOR = 2.0
+ABS_ADDED_MS = 250  # holds_abs: condition 4 as baseline + 250 ms (Task 7 fix round 1)
 MIN_SESSION_CALLS = 3
 
 
@@ -79,11 +80,19 @@ def evaluate(calls, sessions, baseline_p95_ms, arm="sbx", refusals=0):
     c2 = refusals == 0
     c3 = med is None or med <= PACE_MAX + 1e-9  # float slack at the inclusive boundary
     c4 = p95_limit is None or p95 is None or p95 <= p95_limit
+    # holds_abs (Task 7 fix round 1, user decision): the same conditions, but condition 4 is an
+    # absolute bound -- p95 added latency at most baseline + ABS_ADDED_MS. N=1 skips it as before.
+    p95_limit_abs = None if baseline_p95_ms is None else baseline_p95_ms + ABS_ADDED_MS
+    c4_abs = p95_limit_abs is None or p95 is None or p95 <= p95_limit_abs
     empty = len(win) == 0 or len(paces) == 0
     out = {
         "holds": bool(c1 and c2 and c3 and c4) and not empty,
+        "holds_abs": bool(c1 and c2 and c3 and c4_abs) and not empty,
         "conditions": {"no_failures": c1, "no_refusals": c2,
                        "pace": c3, "added_latency": c4},
+        "conditions_abs": {"no_failures": c1, "no_refusals": c2,
+                           "pace": c3, "added_latency": c4_abs},
+        "p95_limit_abs_ms": p95_limit_abs,
         "window_calls": len(win),
         "failed_calls": len(failed),
         "not_started": len(not_started),

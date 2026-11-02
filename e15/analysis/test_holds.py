@@ -244,3 +244,47 @@ def test_cli(tmp_path):
     pj.write_text(json.dumps(dict(arm="sbx", n=1, warmup_s=0, window_s=10)))
     R.main([str(tmp_path), "--params", str(pj)])
     assert json.load(open(tmp_path / "record.json"))["holds"] is True
+
+
+# --- fix round 1 (Task 7): OOM kills and the absolute-latency verdict -------------------------
+
+def test_oom_kills_are_refusals(tmp_path):
+    (tmp_path / "calls.jsonl").write_text("\n".join(json.dumps(c) for c in good_calls()))
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
+    r = _rung(tmp_path, [S(1)], oom_kills=0)
+    assert r["holds"] and r["refusals"] == 0
+    r = _rung(tmp_path, [S(1)], oom_kills=2)
+    assert not r["holds"] and not r["holds_abs"]
+    assert r["refusals"] == 2 and r["refusals_by_reason"]["oom_kill"] == 2
+    assert r["conditions"]["no_refusals"] is False and r["binding"] == "gate"
+
+
+def test_holds_abs_adds_250ms_not_2x():
+    # baseline 100 ms: 2x limit 200 ms, absolute limit 350 ms; p95 here is 300 ms
+    c = [call(added=a) for a in [50] * 18 + [300, 300]]
+    r = H.evaluate(c, [sess(0.05)] * 3, 100)
+    assert r["p95_added_ms"] == 300
+    assert not r["holds"] and r["holds_abs"]
+    assert r["p95_limit_abs_ms"] == 350 and r["conditions_abs"]["added_latency"]
+    c = [call(added=a) for a in [50] * 18 + [400, 400]]
+    r = H.evaluate(c, [sess(0.05)] * 3, 100)
+    assert not r["holds"] and not r["holds_abs"]
+
+
+def test_holds_abs_n1_skips_latency_and_shares_other_conditions():
+    c = [call(added=a) for a in [50] * 18 + [5000, 5000]]
+    r = H.evaluate(c, [sess(0.05)] * 3, None)
+    assert r["holds"] and r["holds_abs"] and r["p95_limit_abs_ms"] is None
+    bad = c + [call(status="err", cause="rpc_error")]
+    r = H.evaluate(bad, [sess(0.05)] * 3, None)
+    assert not r["holds"] and not r["holds_abs"]
+
+
+def test_holds_abs_forced_false_with_holds(tmp_path):
+    (tmp_path / "calls.jsonl").write_text("\n".join(json.dumps(c) for c in good_calls()))
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
+    r = _rung(tmp_path, [S(1)], driver_exit=1)
+    assert not r["holds"] and not r["holds_abs"]
+    (tmp_path / "driver-cpu.jsonl").write_text(json.dumps(dict(header=True, num_cpu=1, t0_epoch=1000.0)))
+    r = _rung(tmp_path, [S(1)], rung_start_ts=1010.0)
+    assert r["time_origin_mismatch"] and not r["holds_abs"]

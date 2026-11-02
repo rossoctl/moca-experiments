@@ -62,6 +62,14 @@ m_section Setup
 log "setup: manifest $E15_MANIFEST (already_up=$already_up)"
 
 # --- 2. pause the host's own worker and the bench containers ---------------------------------
+# The pre-setup state teardown.sh verifies against (one PRESTATE line per setup section; a
+# second setup in the same cycle sees E15's own stops, so only the first one counts).
+if unit_active "$E15_HOST_WORKER"; then hw=active; else hw=inactive; fi
+bench=()
+for c in "${E15_BENCH_CTRS[@]}"; do
+  bench+=("$c=$(sudo -n docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null || echo absent)")
+done
+m_note "PRESTATE: $E15_HOST_WORKER=$hw ${bench[*]}"
 if unit_active "$E15_HOST_WORKER"; then
   sctl stop "$E15_HOST_WORKER"
   m_change "stopped $E15_HOST_WORKER (SPEC §4: paused for the run)" "sudo -n systemctl start $E15_HOST_WORKER"
@@ -180,12 +188,15 @@ if ! stamp_ok snapshot "$snap_key" || [ ! -f "$E15_SNAPDIR/$E15_SNAPIMG/manifest
   log "rootfs: $E15_BASE_SNAPSHOT/rootfs (read-only loop mount) + pytest wheels"
   tree=$E15_ROOT/rootfs-build/tree
   mnt=$(mktemp -d "$E15_ROOT/rootfs-build.mnt.XXXXXX")
+  # A failure between mount and umount must not leave the loop device attached.
+  trap 'mountpoint -q "$mnt" && sudo -n umount -d "$mnt"; rmdir "$mnt" 2>/dev/null || true' EXIT
   sudo -n rm -rf "$E15_ROOT/rootfs-build"
   sudo -n mkdir -p "$tree"
   sudo -n mount -o loop,ro "$E15_BASE_SNAPSHOT/rootfs" "$mnt"
   sudo -n cp -a "$mnt/." "$tree/"
-  sudo -n umount "$mnt"
+  sudo -n umount -d "$mnt"
   rmdir "$mnt"
+  trap - EXIT
   # The base image's init and agent are replaced by build-snapshot.sh's own.
   sp=$(sudo -n sh -c "ls -d $tree/usr/lib/python3.*/site-packages" | head -1)
   [ -n "$sp" ] || die "no python3 site-packages in the base rootfs"
@@ -224,6 +235,12 @@ if ! stamp_ok template "$k" || [ ! -f "$E15_TEMPLATE" ]; then
   m_note "built $E15_TEMPLATE ($(tail -1 "$E15_LOGS/build_workspace.log"))"
 fi
 
+# Listed leftovers: things outside /srv/e15 E15's builds touch that no UNDO removes.
+for left in "npm cache ~/.npm (pi-fork npm ci; shared with other users of npm on this host)" \
+  "podman image $E15_REDIS_IMAGE (pre-existing on this host; E15 pulls nothing new)"; do
+  m_has "LEFTOVER: $left" || m_note "LEFTOVER: $left"
+done
+
 # --- 9. Redis and the relay ------------------------------------------------------------------
 if ! sudo -n podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
   # Host network, bound to loopback: no port-forward NAT rules, and the relay's systemd IP fence
@@ -235,13 +252,15 @@ if ! sudo -n podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
   wait_for 30 port_listening "$E15_PORT_REDIS" || die "Redis did not listen on 127.0.0.1:$E15_PORT_REDIS"
 fi
 if ! unit_active "$E15_UNIT_RELAY"; then
+  # UNDO recorded BEFORE the start: a check that fails after systemd-run leaves a recorded unit.
+  m_change "starting $E15_UNIT_RELAY (127.0.0.1:$E15_PORT_ATTACH attach, 127.0.0.1:$E15_PORT_EXEC exec)" \
+    "sudo -n systemctl stop $E15_UNIT_RELAY 2>/dev/null; sudo -n systemctl reset-failed $E15_UNIT_RELAY 2>/dev/null; true"
   start_relay
   sleep 3
   if grep -q 'redis client error' "$E15_LOGS/relay.log"; then
-    die "the relay cannot reach Redis on 127.0.0.1:$E15_PORT_REDIS; see $E15_LOGS/relay.log"
+    stop_e15_unit "$E15_UNIT_RELAY"
+    die "the relay cannot reach Redis on 127.0.0.1:$E15_PORT_REDIS (relay stopped); see $E15_LOGS/relay.log"
   fi
-  m_change "started $E15_UNIT_RELAY (127.0.0.1:$E15_PORT_ATTACH attach, 127.0.0.1:$E15_PORT_EXEC exec)" \
-    "sudo -n systemctl stop $E15_UNIT_RELAY; sudo -n systemctl reset-failed $E15_UNIT_RELAY 2>/dev/null || true"
 fi
 
 # The rung units are E15's own; a teardown stops whatever a rung left behind.
