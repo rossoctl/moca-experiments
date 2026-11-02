@@ -31,7 +31,9 @@ last=$(grep -n '^## Teardown' "$E15_MANIFEST" | tail -1 | cut -d: -f1)
 start=$((${last:-0} + 1))
 mapfile -t undo < <(tail -n +"$start" "$E15_MANIFEST" | sed -n 's/^- .* | UNDO: //p')
 # The host's state before this cycle's first setup (setup.sh PRESTATE note); verify restores it.
-prestate=$(tail -n +"$start" "$E15_MANIFEST" | sed -n 's/^- .* PRESTATE: //p' | head -1)
+# Read from the whole manifest, last line wins: a retry-only teardown has no PRESTATE after the
+# last Teardown header, but the state it must restore is still the latest setup's.
+prestate=$(sed -n 's/^- .* PRESTATE: //p' "$E15_MANIFEST" | tail -1)
 purges=()
 if [ "$purge" = 1 ]; then
   # PURGE lines from the whole manifest: built artifacts outlive teardown/setup cycles.

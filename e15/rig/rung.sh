@@ -77,7 +77,9 @@ if [ "$N" = 1 ]; then
   baseline=null
   baseline_src=none
 elif [ -z "$baseline" ]; then
-  for cand in "$E15_RUNS/$POINT/$ARM"/N1{-repeat,}/record.json "$E15_RUNS/default/$ARM"/N1{-repeat,}/record.json; do
+  # Most recent valid run first: ladder.sh's tags do not compose (a repeat after a K-doubled
+  # re-run is still N1-repeat), so N1-repeat, then N1-k2, then N1.
+  for cand in "$E15_RUNS/$POINT/$ARM"/N1{-repeat,-k2,}/record.json "$E15_RUNS/default/$ARM"/N1{-repeat,-k2,}/record.json; do
     if [ -f "$cand" ]; then
       baseline=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get("p95_added_ms"); print("" if v is None else v)' "$cand")
       baseline_src=$cand

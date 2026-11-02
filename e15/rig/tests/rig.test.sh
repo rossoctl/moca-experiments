@@ -307,6 +307,44 @@ fi
 check "rung.sh reads oom_kill from e15.slice memory.events" "$(grep -c 'oom_kill' "$RIG/rung.sh")" "2"
 check "rung.sh writes oom_kills into params" "$(grep -c '"oom_kills": \$oom_after - \$oom_before' "$RIG/rung.sh")" "1"
 
+# --- fix round 2 ------------------------------------------------------------------------------
+
+# (1) the N=1 baseline comes from the most recent valid N1 run: N1-repeat, N1-k2, N1
+if [ -f "$RIG/rung.sh" ]; then
+  printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
+  base_of() {
+    E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash -c '
+      set -e; source "$1"; E15_PROG=t
+      N=8 POINT=default ARM=sbx
+      eval "$(sed -n "/^baseline=\${E15_BASELINE_P95_MS:-}/,/^  die \"baseline p95/p" "$2")"
+      echo "$baseline"' _ "$RIG/lib.sh" "$RIG/rung.sh" 2>/dev/null
+  }
+  rm -rf "$TROOT/runs"
+  for t in "N1:100" "N1-k2:200" "N1-repeat:300"; do
+    mkdir -p "$TROOT/runs/default/sbx/${t%%:*}"
+    printf '{"p95_added_ms": %s}\n' "${t#*:}" >"$TROOT/runs/default/sbx/${t%%:*}/record.json"
+  done
+  check "baseline: N1-repeat wins" "$(base_of)" "300"
+  rm -rf "$TROOT/runs/default/sbx/N1-repeat"
+  check "baseline: N1-k2 before the invalid N1" "$(base_of)" "200"
+  rm -rf "$TROOT/runs/default/sbx/N1-k2"
+  check "baseline: N1 when it is the only run" "$(base_of)" "100"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
+fi
+
+# (2) a retry-only teardown verifies against the last PRESTATE anywhere in the manifest
+if [ -f "$RIG/teardown.sh" ]; then
+  printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && [ "$3" = microvm-worker.service ] && exit 1\nexit 1\n' >"$STUB/systemctl"
+  printf '#!/usr/bin/env bash\ncase "$*" in *"docker inspect"*) echo true; exit 0 ;; esac\nexit 1\n' >"$STUB/sudo"
+  M5="$TMP/m5.md"
+  printf -- '## Setup 1\n- t PRESTATE: microvm-worker.service=active bench-cp=true bench-redis=true\n## Teardown 1\n## Setup 2\n- t PRESTATE: microvm-worker.service=inactive bench-cp=true bench-redis=true\n## Teardown 2\n## Retry 2\n- t retry | UNDO: true\n' >"$M5"
+  PATH="$SPATH" E15_MANIFEST="$M5" bash "$RIG/teardown.sh" >"$TMP/t5.out" 2>&1
+  check "retry-only teardown uses the last PRESTATE (worker was inactive)" "$?" "0"
+  check "retry-only teardown names that PRESTATE" "$(grep -c 'microvm-worker.service=inactive' "$M5")" "2"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
+  printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s"\n' "$CALLS" >"$STUB/sudo"
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "rig.test.sh: all checks passed"
