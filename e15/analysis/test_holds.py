@@ -266,16 +266,18 @@ def test_oom_kills_are_refusals(tmp_path):
     assert r["conditions"]["no_refusals"] is False and r["binding"] == "gate"
 
 
-def test_holds_abs_excess_250ms():
-    # baseline excess 50 ms: 3x limit 150 ms, absolute limit 250 ms
-    c = [call(added=a) for a in [50] * 18 + [200, 200]]
-    r = H.evaluate(c, [sess(0.05)] * 3, BL(excess=50))
-    assert r["p95_excess_ms"] == 200 and r["p95_added_ms"] == 200
-    assert not r["holds"] and r["holds_abs"]
-    assert r["p95_limit_abs_ms"] == 250 and r["conditions_abs"]["added_latency"]
-    c = [call(added=a) for a in [50] * 18 + [300, 300]]
-    r = H.evaluate(c, [sess(0.05)] * 3, BL(excess=50))
+def test_holds_abs_excess_B_plus_250ms():
+    # B = 100: 3x limit 300, absolute limit 350 (inclusive)
+    bl = BL(excess=100)
+    c = [call(added=350)]
+    r = H.evaluate(c, [sess(0.05)], bl)
+    assert r["p95_limit_abs_ms"] == 350 and r["holds_abs"] and r["conditions_abs"]["added_latency"]
+    assert not r["holds"]            # primary limit is 300
+    r = H.evaluate([call(added=351)], [sess(0.05)], bl)
     assert not r["holds"] and not r["holds_abs"]
+    # a small B no longer makes the absolute rule tighter than B + 250
+    r = H.evaluate([call(added=260)], [sess(0.05)], BL(excess=10))
+    assert r["p95_limit_abs_ms"] == 260 and r["holds_abs"]
 
 
 def test_holds_abs_n1_skips_latency_and_shares_other_conditions():
@@ -440,7 +442,10 @@ def test_heavy_class_matches_its_median():
     slow = [call(added=a + 200, cls=k) for k, a in (("heavy", 800), ("light", 10))] * 10
     r = H.evaluate(slow, [sess(0)], bl)
     assert not r["holds"] and r["p95_excess_ms"] == 200
-    assert r["holds_abs"] is True and r["fallback_calls"] == 0
+    assert r["holds_abs"] is True and r["fallback_calls"] == 0   # limit B + 250 = 260 ms
+    worse = [call(added=a + 400, cls=k) for k, a in (("heavy", 800), ("light", 10))] * 10
+    r = H.evaluate(worse, [sess(0)], bl)
+    assert not r["holds"] and not r["holds_abs"]
 
 
 def test_record_reads_baseline_path(tmp_path):
@@ -587,3 +592,31 @@ def test_make_probe_caps_durations(tmp_path):
     MP.main([str(corpus), str(lib), str(tmp_path / "o"), "--per-class", "4"])
     for x in json.loads((tmp_path / "o" / "read" / "corpus.jsonl").read_text())["calls"]:
         assert x["dur_ms"] == 30000 and x["work_ms"] == 30000
+
+
+def test_overhead_weighted_by_corpus_share(tmp_path, monkeypatch):
+    px = _probe_dir(tmp_path, "p-x", "x", [10] * 5)
+    py = _probe_dir(tmp_path, "p-y", "y", [100] * 5)
+    pz = _probe_dir(tmp_path, "p-z", "z", [1000] * 5)
+    corpus = tmp_path / "corpus.jsonl"
+    cs = [{"class": "x"}] * 10 + [{"class": "y"}] * 60 + [{"class": "z"}] * 30
+    corpus.write_text(json.dumps({"calls": cs}) + "\n")
+    monkeypatch.setenv("E15_BASELINE_CORPUS", str(corpus))
+    out = tmp_path / "b.json"
+    B.main([str(out), _rung_dir(tmp_path, "N1-s1", [5] * 3), "--probe", px, py, pz])
+    g = json.loads(out.read_text())
+    assert g["overhead_ms"] == 100          # y holds 60% of the weight
+    assert g["class_medians"] == {"x": 10, "y": 100, "z": 1000}
+    out2 = tmp_path / "b2.json"
+    monkeypatch.delenv("E15_BASELINE_CORPUS")
+    B.main([str(out2), _rung_dir(tmp_path, "N1-s2", [5] * 3), "--probe", px])
+    assert json.loads(out2.read_text())["overhead_ms"] is None
+
+
+def test_record_copies_n1_overhead(tmp_path):
+    bp = tmp_path / "b.json"
+    bp.write_text(json.dumps(BL(excess=10, medians={"x": 100}, gmed=100, overhead_ms=42)))
+    (tmp_path / "calls.jsonl").write_text(json.dumps(call(added=100)) + "\n")
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
+    r = R.build(str(tmp_path), dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(bp)))
+    assert r["n1_overhead_ms"] == 42

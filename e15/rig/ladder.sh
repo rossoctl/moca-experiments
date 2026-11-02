@@ -10,7 +10,8 @@
 #   repeat_required=true  -> the rung is re-run ONCE with the warm-up doubled (tag repeat);
 #                            the repeat's record is the one that counts
 #   two verdicts per rung (record.json): holds (SPEC §8, condition 4 = p95 of class excess <=
-#   max(3x the N=1 excess p95, 50 ms)) and holds_abs (condition 4 = p95(class excess) <= 250 ms). Each has its own ladder: n_max (primary) is the
+#   max(3x the N=1 excess p95, 50 ms)) and holds_abs (condition 4 = p95(class excess) <= B + 250 ms,
+#   B = the arm's N=1 within-class excess p95). Each has its own ladder: n_max (primary) is the
 #   largest N holding with every rung before it holding; n_max_abs likewise for holds_abs. The
 #   ladder climbs while EITHER is still unbroken and stops at the first rung where both are. A rung below START_N is assumed held (SPEC §10.3: other points start two
 # steps below the default N_max), and ladder.json says so.
@@ -138,12 +139,18 @@ python3 - "$OUTDIR/ladder.json" "$rungs_json" "$POINT" "$ARM" "$START" "$n_max" 
 import json, sys
 out, rungs, point, arm, start, n_max, stopped, n_max_abs, stopped_abs, ladder = sys.argv[1:]
 rows = [json.loads(l) for l in open(rungs) if l.strip()]
+overhead = None
+try:
+    overhead = json.load(open(out.rsplit("/", 1)[0] + "/N1/baseline.json")).get("overhead_ms")
+except (OSError, ValueError):
+    pass
 num = lambda v: None if v == "null" else int(v)
 json.dump({"point": point, "arm": arm, "start_n": int(start), "ladder": [int(x) for x in ladder.split()],
            "rungs_below_start_assumed_held": int(start) > 1,
            "rungs": rows, "n_max": num(n_max), "stopped_at": num(stopped),
            "n_max_abs": num(n_max_abs), "stopped_at_abs": num(stopped_abs),
-           "abs_rule": "condition 4 as p95(class excess) <= 250 ms (excess = added latency minus the per-class N=1 probe median)"},
+           "abs_rule": "condition 4 as p95(class excess) <= B + 250 ms (B = the arm's N=1 within-class excess p95; excess = added latency minus the per-class N=1 probe median)",
+           "n1_overhead_ms": overhead},
           open(out, "w"), indent=2)
 PY
 rm -f "$rungs_json"

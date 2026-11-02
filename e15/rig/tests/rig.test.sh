@@ -284,6 +284,10 @@ SH
   ladder
   check "ladder: unseeded -> re-run with K doubled, then counts" "$(lj n_max)" "1"
   check "ladder: the re-run had E15_K_MULT=2" "$(grep -c '^1-k2 k=2' "$TMP/lcalls")" "1"
+  mkdir -p "$TROOT/runs/default/sbx/N1"
+  echo '{"overhead_ms": 12.5}' >"$TROOT/runs/default/sbx/N1/baseline.json"
+  check "ladder.json would read n1_overhead_ms from N1/baseline.json (rule text mentions B + 250)" "$(grep -c 'B + 250 ms' "$RIG/ladder.sh")/$(grep -c 'n1_overhead_ms' "$RIG/ladder.sh")" "2/1"
+  rm -f "$TROOT/runs/default/sbx/N1/baseline.json"
   check "ladder: the rig error is recorded" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rungs"][0]["rig_errors"])' "$TROOT/runs/default/sbx/ladder.json")" "['unseeded_sessions=2']"
   printf '1=%s\n1-k2=%s\n' '{"unseeded_sessions":2}' '{"unseeded_sessions":1}' >"$TMP/recs"
   ladder

@@ -1,7 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
 Version: 0.6 (draft for review), 2026-11-02
-2026-11-02: condition 4 class-matched (user decision before sealing): per-class N=1 medians, excess p95 ≤ max(3× baseline excess p95, 50 ms); absolute verdict excess p95 ≤ 250 ms; medians from a per-class N=1 probe, 20 calls per class drawn from the corpus distribution (each class alone on an idle worker), every class is probed; a class with fewer than 5 ok probe calls is undercovered and uses the global median.
+2026-11-02: condition 4 class-matched (user decision before sealing): per-class N=1 medians, excess p95 ≤ max(3× baseline excess p95, 50 ms); medians from a per-class N=1 probe, 20 calls per class drawn from the corpus distribution (each class alone on an idle worker), every class is probed; a class with fewer than 5 ok probe calls is undercovered and uses the global median; absolute verdict B + 250 ms (user decision 2026-11-02); per-call N=1 overhead reported per arm.
 2026-11-02: §8 condition 4 factor 2× → 3× (user decision before sealing; calibration baselines unchanged, they do not depend on the factor).
 2026-11-01: §5.3–§5.6 numbers regenerated from e15/extract after fixing a cross-session chain join
 and removing re-recorded history.
@@ -446,7 +446,7 @@ rung, all four conditions are true:
    ok probe calls uses the median of all probe calls. A call's **excess** is its added latency minus the `N = 1` median of its own class. The
    **p95 of excess is at most the larger of 3× the arm's own probe excess p95 (each probe call
    measured against its own class median) and 50 ms**. The absolute verdict asks only that the p95
-   of excess is at most 250 ms.
+   of excess is at most the arm's own `N = 1` within-class excess p95 plus 250 ms.
 
 `N_max` for an arm is the largest `N` on the ladder for which the host holds, with every smaller rung
 having held too. A failed rung ends the ladder for that arm.
@@ -474,7 +474,8 @@ One JSON record per rung, in E11's style: arm, `N`, seed, corpus hash, command l
 component commits (moca, moca-experiments, patch), every parameter in §5, §7 and §10, the driver's
 CPU, the four §8 conditions with their values, results split by provider and by command class, and
 the binding resource at the end of the window (the first of: memory floor reached, CPU ≥ 90% busy,
-disk ≥ 90% full, a moca gate refusal).
+disk ≥ 90% full, a moca gate refusal), and the arm's per-call overhead at N = 1 (corpus-weighted
+median of class medians).
 
 ## 10. Procedure
 

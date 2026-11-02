@@ -12,6 +12,10 @@ Also written: "class_counts" (ok probe calls per class), "probe_failed" ({class:
 "probe_runs", "runs", the three hashes (from the RUN_DIRs' record.json, which must agree: rung.sh
 refuses a baseline whose library or driver differs from the rung's own), and "evaluable" /
 "skipped" (seed lists from baseline.sh via E15_BASELINE_SEEDS / E15_BASELINE_SKIPPED).
+"overhead_ms" is the arm's per-call overhead at N=1: the median of the per-class probe medians
+weighted by each class's share of the point's corpus calls (E15_BASELINE_CORPUS, a corpus.jsonl;
+classes with a median only; weighted median = smallest median whose cumulative weight reaches half;
+null when no corpus is given).
 E15_BASELINE_ARM (baseline.sh) names the arm for failure counting (control tolerates exit_mismatch).
 Added latency is holds.py's added_ms; percentiles are nearest-rank.
 """
@@ -46,7 +50,30 @@ def run_hashes(dirs):
     return seen[1]
 
 
-def pool(dirs, probe_dirs=(), arm="sbx"):
+def corpus_class_counts(path):
+    """Calls per class in a corpus.jsonl (all calls, chains included): the overhead weights."""
+    counts = {}
+    if path and os.path.isfile(path):
+        for s in read_jsonl(path):
+            for c in s.get("calls", []):
+                counts[str(c.get("class"))] = counts.get(str(c.get("class")), 0) + 1
+    return counts
+
+
+def weighted_median(pairs):
+    """Median of values with weights: the smallest value whose cumulative weight reaches half."""
+    pairs = sorted((v, w) for v, w in pairs if w > 0)
+    total = sum(w for _, w in pairs)
+    if not total:
+        return None
+    acc = 0
+    for v, w in pairs:
+        acc += w
+        if acc * 2 >= total:
+            return v
+
+
+def pool(dirs, probe_dirs=(), arm="sbx", corpus_counts=None):
     pooled, runs = [], []
     for d in dirs:
         added = H.window_added_ms(read_jsonl(os.path.join(d, "calls.jsonl")))
@@ -73,6 +100,9 @@ def pool(dirs, probe_dirs=(), arm="sbx"):
     return {"baseline_p95_ms": H.percentile(pooled, 95), "calls": len(pooled), "runs": runs,
             "probe_runs": probe_runs, "class_medians": medians, "global_median_ms": gmed,
             "excess_p95_ms": H.percentile(exc, 95), "class_counts": counts,
+            "overhead_ms": weighted_median([(m, (corpus_counts or {}).get(k, 0))
+                                            for k, m in medians.items()]),
+            "corpus_class_counts": corpus_counts or {},
             "probe_failed": failed,
             "undercovered": sorted(k for k in classes if counts.get(k, 0) < H.MIN_CLASS_CALLS)}
 
@@ -91,7 +121,8 @@ def main(argv=None):
         if not os.path.isfile(os.path.join(d, "calls.jsonl")):
             sys.exit("baseline.py: no %s" % os.path.join(d, "calls.jsonl"))
     hashes = run_hashes(dirs)
-    b = pool(dirs, probes, os.environ.get("E15_BASELINE_ARM", "sbx"))
+    b = pool(dirs, probes, os.environ.get("E15_BASELINE_ARM", "sbx"),
+             corpus_class_counts(os.environ.get("E15_BASELINE_CORPUS")))
     b.update(hashes)
     # baseline.sh passes which seeds were pooled and which were skipped as not evaluable
     seeds = os.environ.get("E15_BASELINE_SEEDS", "").split()

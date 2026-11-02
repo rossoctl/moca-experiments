@@ -5,7 +5,7 @@ PACE_MAX = 0.10
 P95_FACTOR = 3.0
 EXCESS_FLOOR_MS = 50.0  # condition 4 limit never drops below this (class-matched, SPEC §8)
 MIN_CLASS_CALLS = 5
-ABS_ADDED_MS = 250  # holds_abs: condition 4 as baseline + 250 ms (Task 7 fix round 1)
+ABS_ADDED_MS = 250  # holds_abs: condition 4 is p95(excess) <= B + 250 ms, B = the arm's N=1 excess p95
 MIN_SESSION_CALLS = 3
 
 
@@ -139,9 +139,9 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0):
     c2 = refusals == 0
     c3 = med is None or med <= PACE_MAX + 1e-9  # float slack at the inclusive boundary
     c4 = exc_limit is None or p95_exc is None or p95_exc <= exc_limit
-    # holds_abs: the same conditions, but condition 4 is absolute -- p95 excess at most
-    # ABS_ADDED_MS. N=1 skips it as before.
-    p95_limit_abs = None if baseline is None else ABS_ADDED_MS
+    # holds_abs: the same conditions, but condition 4 is p95 excess at most B + ABS_ADDED_MS
+    # (B = baseline["excess_p95_ms"]). N=1 skips it as before.
+    p95_limit_abs = None if baseline is None else baseline["excess_p95_ms"] + ABS_ADDED_MS
     c4_abs = p95_limit_abs is None or p95_exc is None or p95_exc <= p95_limit_abs
     empty = len(win) == 0 or len(paces) == 0
     out = {
