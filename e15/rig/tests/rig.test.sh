@@ -309,6 +309,25 @@ check "rung.sh writes oom_kills into params" "$(grep -c '"oom_kills": \$oom_afte
 
 # --- fix round 2 ------------------------------------------------------------------------------
 
+# stub_rec FILE KEY VALUE [k=v ...]: a record/baseline JSON whose library, driver and corpus hashes
+# match the test root's (as rung.sh computes them for POINT=default), with overrides.
+sha_f() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
+stub_rec() {
+  local f=$1 key=$2 val=$3
+  shift 3
+  mkdir -p "$(dirname "$f")"
+  python3 - "$f" "$key" "$val" "$(sha_f "$TROOT/src/e15/commands/library.json")" "$(sha_f "$TROOT/bin/e15-driver")" \
+    "$(sha_f "$TROOT/corpora/${STUB_POINT:-default}/corpus.jsonl")" "$@" <<'PY2'
+import json, sys
+f, key, val, lib, drv, corpus = sys.argv[1:7]
+d = {key: float(val), "library_sha256": lib, "driver_bin_sha256": drv, "corpus_sha256": corpus}
+for kv in sys.argv[7:]:
+    k, v = kv.split("=", 1)
+    d[k] = v
+json.dump(d, open(f, "w"))
+PY2
+}
+
 # (1) the N=1 baseline comes from the most recent valid N1 run: N1-repeat, N1-k2, N1
 if [ -f "$RIG/rung.sh" ]; then
   printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
@@ -316,19 +335,18 @@ if [ -f "$RIG/rung.sh" ]; then
     E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash -c '
       set -e; source "$1"; E15_PROG=t
       N=8 POINT=default ARM=sbx
-      eval "$(sed -n "/^baseline=\${E15_BASELINE_P95_MS:-}/,/^  die \"baseline p95/p" "$2")"
+      eval "$(sed -n "/^WINDOW=\${E15_WINDOW_S:-900}/,/^  die \"baseline p95/p" "$2")"
       echo "$baseline"' _ "$RIG/lib.sh" "$RIG/rung.sh" 2>/dev/null
   }
   rm -rf "$TROOT/runs"
   for t in "N1:100" "N1-k2:200" "N1-repeat:300"; do
-    mkdir -p "$TROOT/runs/default/sbx/${t%%:*}"
-    printf '{"p95_added_ms": %s}\n' "${t#*:}" >"$TROOT/runs/default/sbx/${t%%:*}/record.json"
+    stub_rec "$TROOT/runs/default/sbx/${t%%:*}/record.json" p95_added_ms "${t#*:}"
   done
-  check "baseline: N1-repeat wins" "$(base_of)" "300"
+  check "baseline: N1-repeat wins" "$(base_of)" "300.0"
   rm -rf "$TROOT/runs/default/sbx/N1-repeat"
-  check "baseline: N1-k2 before the invalid N1" "$(base_of)" "200"
+  check "baseline: N1-k2 before the invalid N1" "$(base_of)" "200.0"
   rm -rf "$TROOT/runs/default/sbx/N1-k2"
-  check "baseline: N1 when it is the only run" "$(base_of)" "100"
+  check "baseline: N1 when it is the only run" "$(base_of)" "100.0"
   printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
 fi
 
@@ -337,27 +355,48 @@ fi
 # rung.sh's baseline lookup: pooled N1/baseline.json (this point, then default) before any record.json
 if [ -f "$RIG/rung.sh" ]; then
   printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
+  mkdir -p "$TROOT/corpora/short"
+  echo short-corpus >"$TROOT/corpora/short/corpus.jsonl"
   base_at() {
     E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash -c '
       set -e; source "$1"; E15_PROG=t
       N=8 POINT=$3 ARM=sbx
-      eval "$(sed -n "/^baseline=\${E15_BASELINE_P95_MS:-}/,/^  die \"baseline p95/p" "$2")"
-      echo "$baseline $baseline_src"' _ "$RIG/lib.sh" "$RIG/rung.sh" "$1" 2>/dev/null
+      eval "$(sed -n "/^WINDOW=\${E15_WINDOW_S:-900}/,/^  die \"baseline p95/p" "$2")"
+      echo "$baseline $baseline_src"' _ "$RIG/lib.sh" "$RIG/rung.sh" "$1" 2>"$TMP/base.err"
   }
   rm -rf "$TROOT/runs"
-  for pt in default short; do
-    mkdir -p "$TROOT/runs/$pt/sbx/N1-repeat"
-    printf '{"p95_added_ms": 300}\n' >"$TROOT/runs/$pt/sbx/N1-repeat/record.json"
-  done
-  mkdir -p "$TROOT/runs/default/sbx/N1"
-  printf '{"baseline_p95_ms": 42.5, "calls": 9, "runs": []}\n' >"$TROOT/runs/default/sbx/N1/baseline.json"
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1-repeat/record.json" p95_added_ms 300
+  STUB_POINT=short stub_rec "$TROOT/runs/short/sbx/N1-repeat/record.json" p95_added_ms 300
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 42.5
   check "baseline lookup: the default point's baseline.json before this point's record.json" "$(base_at short)" "42.5 $TROOT/runs/default/sbx/N1/baseline.json"
-  mkdir -p "$TROOT/runs/short/sbx/N1"
-  printf '{"baseline_p95_ms": 17}\n' >"$TROOT/runs/short/sbx/N1/baseline.json"
-  check "baseline lookup: this point's baseline.json first" "$(base_at short)" "17 $TROOT/runs/short/sbx/N1/baseline.json"
+  STUB_POINT=short stub_rec "$TROOT/runs/short/sbx/N1/baseline.json" baseline_p95_ms 17
+  check "baseline lookup: this point's baseline.json first" "$(base_at short)" "17.0 $TROOT/runs/short/sbx/N1/baseline.json"
   check "baseline lookup: default point's baseline.json before its record.json" "$(base_at default)" "42.5 $TROOT/runs/default/sbx/N1/baseline.json"
   rm -f "$TROOT/runs/default/sbx/N1/baseline.json"
-  check "baseline lookup: record.json fallback" "$(base_at default | cut -d' ' -f1)" "300"
+  check "baseline lookup: record.json fallback" "$(base_at default | cut -d' ' -f1)" "300.0"
+
+  # stale-baseline guard (fix round 1)
+  rm -rf "$TROOT/runs"
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 50 library_sha256=old
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1-repeat/record.json" p95_added_ms 60
+  check "stale guard: a baseline.json from another library is skipped" "$(base_at default | cut -d' ' -f1)" "60.0"
+  check "stale guard: the skip is logged with its reason" "$(grep -c "skipping $TROOT/runs/default/sbx/N1/baseline.json (library_sha256 old" "$TMP/base.err")" "1"
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1-repeat/record.json" p95_added_ms 60 driver_bin_sha256=old
+  base_at default >/dev/null
+  check "stale guard: nothing matching -> rung dies" "$?" "1"
+  check "stale guard: the death names the mismatch" "$(grep -c 'matching this library, driver and corpus' "$TMP/base.err")" "1"
+  # corpus: checked for this point's candidates, not for the default point's fallback
+  rm -rf "$TROOT/runs"
+  STUB_POINT=default stub_rec "$TROOT/runs/short/sbx/N1/baseline.json" baseline_p95_ms 11
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 22
+  check "stale guard: this point's candidate from another corpus is skipped; default's corpus is not checked" "$(base_at short)" "22.0 $TROOT/runs/default/sbx/N1/baseline.json"
+  check "stale guard: corpus skip logged" "$(grep -c 'corpus_sha256' "$TMP/base.err")" "1"
+  # a point with its own pooled runs never falls back to the default point
+  mkdir -p "$TROOT/runs/short/sbx/N1-s1"
+  base_at short >/dev/null
+  check "stale guard: N1-s* here + stale here -> no default fallback, dies" "$?" "1"
+  STUB_POINT=short stub_rec "$TROOT/runs/short/sbx/N1-repeat/record.json" p95_added_ms 33
+  check "stale guard: N1-s* here -> this point's record.json, not the default's baseline.json" "$(base_at short)" "33.0 $TROOT/runs/short/sbx/N1-repeat/record.json"
   printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
 fi
 

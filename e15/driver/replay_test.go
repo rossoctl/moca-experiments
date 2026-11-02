@@ -38,8 +38,9 @@ type fakeExec struct {
 // steps and picks each step's behaviour by the step's command text: "hold:<ms>" holds then exits 0;
 // "exit1" exits 1; "inerr" sends an in-stream ExecError and returns OK (what the relay does);
 // "nolive" returns the relay's Unavailable refusal; "unavail" a plain Unavailable; anything else
-// exits 0. A step whose exit differs from the script's expected one ends the Exec with the
-// script's step code, as bash would; a trailing "sleep S" is held. Every hold ends early when the
+// exits 0; "kill9" is killed by SIGKILL (137); "spew" writes 10 KiB of stderr. A step whose exit
+// differs from the script's expected one writes the script's E15_FAILED_STEP marker to stderr and
+// ends the Exec with the step code, as bash would; a trailing "sleep S" is held. Every hold ends early when the
 // client cancels. A command that is not a joined script (the end-session marker) runs as one step.
 type fake struct {
 	pb.UnimplementedSandboxExecServer
@@ -49,7 +50,7 @@ type fake struct {
 }
 
 var (
-	stepRE = regexp.MustCompile(`(?s)\(\n(.*?)\n\); __rc=\$\?; \[ "\$__rc" -eq (\d+) \] \|\| exit (\d+)\n`)
+	stepRE = regexp.MustCompile(`(?s)\(\n(.*?)\n\); __rc=\$\?; \[ "\$__rc" -eq (\d+) \] \|\| \{ echo "E15_FAILED_STEP=\d+ RC=\$__rc" >&2; exit (\d+); \}\n`)
 	tailRE = regexp.MustCompile(`\nsleep ([0-9.]+)\nexit 0\n$`)
 )
 
@@ -100,7 +101,10 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 	if steps == nil {
 		steps = []fstep{{script, -1, 0}} // not joined: its own exit is the Exec's
 	}
-	for _, st := range steps {
+	stderr := func(b []byte) error {
+		return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_Chunk{Chunk: &pb.Chunk{ReqId: e.GetReqId(), Stream: pb.Stream_STREAM_STDERR, Data: b}}})
+	}
+	for k, st := range steps {
 		var rc int32
 		switch cmd := st.cmd; {
 		case strings.HasPrefix(cmd, "hold:"):
@@ -116,11 +120,20 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 			rc = 1
 		case cmd == "unavail":
 			return status.Error(codes.Unavailable, "connection reset by peer")
+		case cmd == "kill9":
+			rc = 137
+		case cmd == "spew":
+			if err := stderr(bytes.Repeat([]byte("x"), 10<<10)); err != nil {
+				return err
+			}
 		}
 		if st.want < 0 {
 			return end(rc)
 		}
 		if rc != st.want {
+			if err := stderr([]byte(fmt.Sprintf("E15_FAILED_STEP=%d RC=%d\n", k, rc))); err != nil {
+				return err
+			}
 			return end(st.code)
 		}
 	}
@@ -578,8 +591,8 @@ func TestChainTailInsideExec(t *testing.T) {
 	}
 	// The 299 ms tail is the chain Exec's final sleep (0.3 s): the sandbox is held for the
 	// chain's lifetime, and the driver does not sleep it again before the next call.
-	if d := ex[0].done.Sub(ex[0].recv); d < 290*time.Millisecond || !strings.HasSuffix(ex[0].cmd, "\nsleep 0.3\nexit 0\n") {
-		t.Fatalf("chain Exec lasted %v (script %q), want its 0.3 s tail inside it", d, ex[0].cmd)
+	if d := ex[0].done.Sub(ex[0].recv); d < 290*time.Millisecond || !strings.HasSuffix(ex[0].cmd, "\nsleep 0.299\nexit 0\n") {
+		t.Fatalf("chain Exec lasted %v (script %q), want its 0.299 s tail inside it", d, ex[0].cmd)
 	}
 	if d := ex[1].recv.Sub(ex[0].done); d > 60*time.Millisecond {
 		t.Fatalf("call 1 sent %v after the chain Exec ended, want at once (its offset is long past)", d)
@@ -873,5 +886,70 @@ func TestGraceCutAtEndVsDeadline(t *testing.T) {
 		if c := res.calls[0]; c.Status != "err" || c.Cause != tc.cause || c.Execs != 1 {
 			t.Fatalf("dur %d: call %+v, want err/%s", tc.durMs, c, tc.cause)
 		}
+	}
+}
+
+// callWithPlan sends one hand-built plan through runCall (Plan's fill cannot place a chosen
+// command at step 40) and returns the record.
+func callWithPlan(t *testing.T, plan []Planned) callRecord {
+	t.Helper()
+	client, _ := newFake(t)
+	r, _ := newReplay(t, baseCfg(), []Session{sess("s", "u", 20, "q", "q", "q")}, testLib(nil, "q"), client)
+	r.t0 = time.Now()
+	r.warmEnd, r.end, r.graceEnd = r.t0, r.t0.Add(time.Minute), r.t0.Add(2*time.Minute)
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+testToken)
+	rec, _ := r.runCall(ctx, "e15-t-0-0", Session{ID: "s"}, Call{I: 0, Class: "k", DurMs: 10}, plan, time.Now())
+	return rec
+}
+
+func TestFailedStepPastTheCap(t *testing.T) {
+	plan := make([]Planned, 45)
+	for i := range plan {
+		plan[i] = Planned{Cmd: "spew"} // 10 KiB of stderr each: the marker must survive in the tail
+	}
+	plan[40] = Planned{Cmd: "exit1"}
+	c := callWithPlan(t, plan)
+	if c.Cause != "exit_mismatch" || c.Exit == nil || *c.Exit != maxStepExit || c.FailedStep == nil || *c.FailedStep != 40 ||
+		c.FailedRC == nil || *c.FailedRC != 1 {
+		t.Fatalf("call %+v (failed_step %v failed_rc %v), want exit 125, failed_step 40, failed_rc 1", c, c.FailedStep, c.FailedRC)
+	}
+	if !strings.Contains(c.Msg, "step 40") || !strings.Contains(c.Msg, ": exit1") {
+		t.Fatalf("msg %q does not name step 40's command", c.Msg)
+	}
+}
+
+func TestFailedStepSignal(t *testing.T) {
+	c := callWithPlan(t, []Planned{{Cmd: "q"}, {Cmd: "kill9"}})
+	if c.Cause != "exit_mismatch" || c.FailedStep == nil || *c.FailedStep != 1 || c.FailedRC == nil || *c.FailedRC != 137 {
+		t.Fatalf("call %+v (failed_step %v failed_rc %v), want step 1 killed: failed_rc 137", c, c.FailedStep, c.FailedRC)
+	}
+}
+
+func TestFailedStepFallbackWithoutMarker(t *testing.T) {
+	// No marker on stderr (a wrapper that drops stderr): the capped exit code still names step k.
+	if k, rc, ok := failedFromExit(92, nil); !ok || k != 2 || rc != nil {
+		t.Fatalf("got %d %v %v", k, rc, ok)
+	}
+	tail := []byte("E15_FAILED_STEP=41 RC=2\n")
+	if k, rc, ok := failedFromExit(125, tail); !ok || k != 41 || rc == nil || *rc != 2 {
+		t.Fatalf("got %d %v %v", k, rc, ok)
+	}
+}
+
+func TestAppendTailBounded(t *testing.T) {
+	var tail []byte
+	tail = appendTail(tail, []byte("E15_FAILED_STEP=3 "))
+	tail = appendTail(tail, []byte("RC=2\n")) // a marker split across two chunks
+	if k, rc, ok := ParseFailedMarker(tail); !ok || k != 3 || rc != 2 {
+		t.Fatalf("split marker lost: %q", tail)
+	}
+	tail = appendTail(tail, bytes.Repeat([]byte("y"), 3000))
+	tail = appendTail(tail, bytes.Repeat([]byte("z"), 3000))
+	if len(tail) != stderrTailMax || tail[len(tail)-1] != 'z' || tail[0] != 'y' {
+		t.Fatalf("tail len %d, want the last %d bytes", len(tail), stderrTailMax)
+	}
+	tail = appendTail(tail, bytes.Repeat([]byte("w"), 10000))
+	if len(tail) != stderrTailMax || bytes.ContainsAny(tail, "yz") {
+		t.Fatalf("an over-size chunk did not replace the tail")
 	}
 }

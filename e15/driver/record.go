@@ -33,6 +33,7 @@ type callRecord struct {
 	Exit         *int32  `json:"exit"`
 	ExpectedExit int32   `json:"expected_exit"`
 	FailedStep   *int    `json:"failed_step,omitempty"` // exit_mismatch: the joined script's failing step (from 0)
+	FailedRC     *int    `json:"failed_rc,omitempty"`   // that step's own exit status (128+sig when killed), from the script's stderr marker
 	InWindow     bool    `json:"in_window"`
 	Msg          string  `json:"msg,omitempty"`
 }

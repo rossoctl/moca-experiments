@@ -354,9 +354,13 @@ func (r *Replayer) runCall(ctx context.Context, key string, s Session, c Call, p
 	switch {
 	case res.cause == "" && *res.exit != 0:
 		res.cause = causeExitMismatch
-		if k, ok := FailedStep(*res.exit); ok && k < len(plan) {
-			rec.FailedStep = &k
-			res.msg = fmt.Sprintf("exit %d: step %d exited other than %d: %s", *res.exit, k, plan[k].Exit, plan[k].Cmd)
+		if k, rc, ok := failedFromExit(*res.exit, res.stderr); ok && k < len(plan) {
+			rec.FailedStep, rec.FailedRC = &k, rc
+			got := "?"
+			if rc != nil {
+				got = strconv.Itoa(*rc)
+			}
+			res.msg = fmt.Sprintf("exit %d: step %d exited %s, expected %d: %s", *res.exit, k, got, plan[k].Exit, plan[k].Cmd)
 		} else {
 			res.msg = fmt.Sprintf("exit %d, expected 0 from the joined script", *res.exit)
 		}

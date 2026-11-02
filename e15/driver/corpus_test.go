@@ -272,8 +272,23 @@ func TestPlanZeroWork(t *testing.T) {
 // runJoined runs a JoinPlan script under bash in a scratch dir and returns its exit code.
 func runJoined(t *testing.T, script string) int {
 	t.Helper()
+	rc, _ := runJoinedErr(t, script)
+	return rc
+}
+
+// runJoinedErr is runJoined plus the script's stderr.
+func runJoinedErr(t *testing.T, script string) (int, string) {
+	t.Helper()
 	cmd := exec.Command("bash", "-c", script)
 	cmd.Dir = t.TempDir()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	rc := runCmd(t, cmd)
+	return rc, stderr.String()
+}
+
+func runCmd(t *testing.T, cmd *exec.Cmd) int {
+	t.Helper()
 	err := cmd.Run()
 	var ee *exec.ExitError
 	switch {
@@ -358,13 +373,17 @@ func TestJoinPlanStepCodeCapped(t *testing.T) {
 
 func TestJoinPlanChainTailIsFinalSleep(t *testing.T) {
 	l := lib(t)
-	ps := plan(t, l, Call{I: 1, Class: "test", WorkMs: 3000, DurMs: 60000, Chain: true}, 1, "s")
+	ps := plan(t, l, Call{I: 1, Class: "test", WorkMs: 3000, DurMs: 60123, Chain: true}, 1, "s")
 	tail := ps[len(ps)-1].SleepAfterMs
 	script, err := JoinPlan(ps, tail)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("\nsleep %.1f\nexit 0\n", float64(tail)/1000)
+	// ms precision: a 57.123 s tail is slept as 57.123, not rounded to a tenth.
+	want := "\nsleep 57.123\nexit 0\n"
+	if tail != 57123 {
+		t.Fatalf("tail %d, want 57123", tail)
+	}
 	if !strings.HasSuffix(script, want) {
 		t.Fatalf("script does not end with %q:\n%s", want, script)
 	}
@@ -386,7 +405,7 @@ func TestJoinPlanHostInfraSleepInside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(script, "(\nsleep 2.0\n); __rc=$?; [ \"$__rc\" -eq 0 ] || exit 90\n") {
+	if !strings.HasPrefix(script, "(\nsleep 2.0\n); __rc=$?; [ \"$__rc\" -eq 0 ] || { echo \"E15_FAILED_STEP=0 RC=$__rc\" >&2; exit 90; }\n") {
 		t.Fatalf("host_infra stand-in sleep is not the script's first step:\n%s", script)
 	}
 	if n := strings.Count(script, "__rc=$?"); n != len(ps) {
@@ -405,5 +424,49 @@ func TestJoinPlanDeterministic(t *testing.T) {
 	}
 	if _, err := JoinPlan(nil, 0); err == nil {
 		t.Fatal("empty plan joined")
+	}
+}
+
+func TestJoinPlanMarkerPastTheCap(t *testing.T) {
+	steps := make([]Planned, 45)
+	for i := range steps {
+		steps[i] = Planned{Cmd: "true"}
+	}
+	steps[40] = Planned{Cmd: "sh -c 'exit 3'"}
+	script, _ := JoinPlan(steps, 0)
+	rc, stderr := runJoinedErr(t, script)
+	if rc != maxStepExit {
+		t.Fatalf("exit %d, want the capped %d", rc, maxStepExit)
+	}
+	k, frc, ok := ParseFailedMarker([]byte(stderr))
+	if !ok || k != 40 || frc != 3 {
+		t.Fatalf("marker step %d rc %d ok %v from stderr %q, want step 40 rc 3", k, frc, ok, stderr)
+	}
+}
+
+func TestJoinPlanMarkerSignal(t *testing.T) {
+	script, _ := JoinPlan([]Planned{{Cmd: "true"}, {Cmd: "kill -9 $BASHPID"}}, 0)
+	rc, stderr := runJoinedErr(t, script)
+	k, frc, ok := ParseFailedMarker([]byte(stderr))
+	if rc != 91 || !ok || k != 1 || frc != 137 {
+		t.Fatalf("exit %d, marker step %d rc %d ok %v (%q), want 91 and step 1 rc 137 (128+SIGKILL)", rc, k, frc, ok, stderr)
+	}
+}
+
+func TestParseFailedMarker(t *testing.T) {
+	for _, tc := range []struct {
+		in    string
+		k, rc int
+		ok    bool
+	}{
+		{"noise\nE15_FAILED_STEP=7 RC=2\n", 7, 2, true},
+		{"E15_FAILED_STEP=1 RC=1\nE15_FAILED_STEP=9 RC=143\n", 9, 143, true}, // the last wins
+		{"some command's own stderr\n", 0, 0, false},
+		{"", 0, 0, false},
+	} {
+		k, rc, ok := ParseFailedMarker([]byte(tc.in))
+		if k != tc.k || rc != tc.rc || ok != tc.ok {
+			t.Fatalf("%q: got %d %d %v", tc.in, k, rc, ok)
+		}
 	}
 }

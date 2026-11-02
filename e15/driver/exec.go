@@ -58,9 +58,25 @@ const (
 
 // execResult is one Exec's outcome. exit is nil when no End arrived.
 type execResult struct {
-	exit  *int32
-	cause string // "" when the Exec reached End; else one of the failure causes above
-	msg   string
+	exit   *int32
+	cause  string // "" when the Exec reached End; else one of the failure causes above
+	msg    string
+	stderr []byte // the last stderrTailMax bytes of the Exec's stderr (the joined script's marker)
+}
+
+// stderrTailMax bounds the stderr kept per Exec: enough for the failure marker after any noise.
+const stderrTailMax = 4 << 10
+
+// appendTail appends b to tail and keeps only the last stderrTailMax bytes.
+func appendTail(tail, b []byte) []byte {
+	if len(b) >= stderrTailMax {
+		return append(tail[:0], b[len(b)-stderrTailMax:]...)
+	}
+	tail = append(tail, b...)
+	if over := len(tail) - stderrTailMax; over > 0 {
+		tail = append(tail[:0], tail[over:]...)
+	}
+	return tail
 }
 
 // rpcCause classifies a gRPC error returned by Exec or by the stream.
@@ -108,7 +124,10 @@ func execOne(ctx context.Context, client pb.SandboxExecClient, sandboxID string,
 			break
 		}
 		if err != nil {
-			return execResult{exit: res.exit, cause: rpcCause(err), msg: err.Error()}
+			return execResult{exit: res.exit, cause: rpcCause(err), msg: err.Error(), stderr: res.stderr}
+		}
+		if ch := ev.GetChunk(); ch != nil && ch.GetStream() == pb.Stream_STREAM_STDERR {
+			res.stderr = appendTail(res.stderr, ch.GetData())
 		}
 		if e := ev.GetError(); e != nil && !sawErr {
 			sawErr = true

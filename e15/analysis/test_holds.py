@@ -320,6 +320,8 @@ def _rung_dir(tmp_path, name, added):
     rows.append(call(added=5000, status="err", cause="cut_at_end"))
     rows.append(dict(call(added=9000), in_window=False))
     (d / "calls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (d / "record.json").write_text(json.dumps(
+        dict(library_sha256="L", driver_bin_sha256="D", corpus_sha256="C")))
     return str(d)
 
 
@@ -345,3 +347,44 @@ def test_baseline_needs_a_dir_and_calls(tmp_path):
     with pytest.raises(SystemExit):
         B.main([str(tmp_path / "b.json"), str(empty)])
     assert not (tmp_path / "b.json").exists()
+
+
+# --- Task 8a fix round 1 ------------------------------------------------------------------
+
+def test_cut_at_end_needs_an_exec():
+    # cut_at_end with no Exec sent is not a run-end cut the driver can produce: a failure
+    c = good_calls() + [call(status="err", cause="cut_at_end", execs=0)]
+    r = H.evaluate(c, [sess(0)], 100)
+    assert not r["holds"] and r["failed_calls"] == 1 and r["cut_at_end"] == 0
+
+
+def _n1(tmp_path, name, added, **hashes):
+    d = _rung_dir(tmp_path, name, added)
+    rec = dict(library_sha256="L", driver_bin_sha256="D", corpus_sha256="C")
+    rec.update(hashes)
+    (tmp_path / name / "record.json").write_text(json.dumps(rec))
+    return d
+
+
+def test_baseline_records_hashes(tmp_path):
+    dirs = [_n1(tmp_path, "N1-s%d" % k, [k]) for k in (1, 2, 3)]
+    out = tmp_path / "baseline.json"
+    B.main([str(out)] + dirs)
+    got = json.loads(out.read_text())
+    assert (got["library_sha256"], got["driver_bin_sha256"], got["corpus_sha256"]) == ("L", "D", "C")
+
+
+@pytest.mark.parametrize("key", ["library_sha256", "driver_bin_sha256", "corpus_sha256"])
+def test_baseline_dies_on_hash_disagreement(tmp_path, key):
+    dirs = [_n1(tmp_path, "N1-s1", [1]), _n1(tmp_path, "N1-s2", [2], **{key: "other"})]
+    out = tmp_path / "baseline.json"
+    with pytest.raises(SystemExit):
+        B.main([str(out)] + dirs)
+    assert not out.exists()
+
+
+def test_baseline_dies_on_missing_record(tmp_path):
+    d = _rung_dir(tmp_path, "N1-s1", [1])
+    os.remove(os.path.join(d, "record.json"))
+    with pytest.raises(SystemExit):
+        B.main([str(tmp_path / "b.json"), d])

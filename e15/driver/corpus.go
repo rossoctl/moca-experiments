@@ -12,6 +12,8 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -282,7 +284,10 @@ func (l *Library) Plan(c Call, seed int64, sessionID string) ([]Planned, error) 
 
 // A joined script exits stepExitBase+k when its step k (from 0) exits other than the library
 // expects, capped at maxStepExit so the code stays below the shell's 126+ range (not executable,
-// not found, killed by a signal). Steps from 35 on all report maxStepExit.
+// not found, killed by a signal). Steps from 35 on all report maxStepExit, so the script also
+// writes failedMarker ("E15_FAILED_STEP=<k> RC=<rc>") to stderr first: the exact step and its own
+// status (128+sig when a signal killed it). The capped code is the fallback when no marker
+// arrives.
 const (
 	stepExitBase = 90
 	maxStepExit  = 125
@@ -305,16 +310,52 @@ func JoinPlan(steps []Planned, tailMs int64) (string, error) {
 		if code > maxStepExit {
 			code = maxStepExit
 		}
-		fmt.Fprintf(&b, "(\n%s\n); __rc=$?; [ \"$__rc\" -eq %d ] || exit %d\n", p.Cmd, p.Exit, code)
+		fmt.Fprintf(&b, "(\n%s\n); __rc=$?; [ \"$__rc\" -eq %d ] || { echo \"%s%d RC=$__rc\" >&2; exit %d; }\n",
+			p.Cmd, p.Exit, failedMarker, k, code)
 	}
 	if tailMs > 0 {
-		fmt.Fprintf(&b, "sleep %.1f\n", float64(tailMs)/1000)
+		fmt.Fprintf(&b, "sleep %.3f\n", float64(tailMs)/1000)
 	}
 	b.WriteString("exit 0\n")
 	return b.String(), nil
 }
 
-// FailedStep maps a joined script's exit code back to the step that failed.
+const failedMarker = "E15_FAILED_STEP="
+
+var markerRE = regexp.MustCompile(`E15_FAILED_STEP=(\d+) RC=(\d+)`)
+
+// ParseFailedMarker returns the step and status from the LAST failure marker in a stderr tail
+// (a step's own stderr may precede it; the script writes the marker just before it exits).
+func ParseFailedMarker(tail []byte) (step, rc int, ok bool) {
+	all := markerRE.FindAllSubmatch(tail, -1)
+	if len(all) == 0 {
+		return 0, 0, false
+	}
+	m := all[len(all)-1]
+	k, err1 := strconv.Atoi(string(m[1]))
+	r, err2 := strconv.Atoi(string(m[2]))
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return k, r, true
+}
+
+// failedFromExit identifies a joined script's failing step: from the stderr marker when present
+// (and consistent with the exit code's capped step), else from the capped exit code alone, in
+// which case rc is nil.
+func failedFromExit(exit int32, stderrTail []byte) (int, *int, bool) {
+	ck, cok := FailedStep(exit)
+	if !cok {
+		return 0, nil, false
+	}
+	if k, rc, ok := ParseFailedMarker(stderrTail); ok && min(k, maxStepExit-stepExitBase) == ck {
+		return k, &rc, true
+	}
+	return ck, nil, true
+}
+
+// FailedStep maps a joined script's exit code back to the step that failed (capped: every step
+// from maxStepExit-stepExitBase on maps to that step).
 func FailedStep(exit int32) (int, bool) {
 	if exit < stepExitBase || exit > maxStepExit {
 		return 0, false

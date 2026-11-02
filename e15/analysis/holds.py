@@ -38,9 +38,14 @@ def window_added_ms(calls):
 
 def _not_failure_cause(call):
     """Causes that end a call without the backend failing it: a call never started at the grace
-    deadline, and one the run's end cut before its planned completion (cut_at_end)."""
+    deadline, and one the run's end cut before its planned completion (cut_at_end). The driver
+    records cut_at_end only for an Exec it sent, so one with no Exec is malformed: a failure."""
     cause = call.get("cause", "")
-    return (cause == "deadline" and call.get("execs", 0) == 0) or cause == "cut_at_end"
+    return (cause == "deadline" and call.get("execs", 0) == 0) or _is_cut(call)
+
+
+def _is_cut(call):
+    return call.get("cause") == "cut_at_end" and call.get("execs", 0) >= 1
 
 
 def _is_failure(call, arm):
@@ -73,7 +78,7 @@ def evaluate(calls, sessions, baseline_p95_ms, arm="sbx", refusals=0):
     failed = [c for c in win if _is_failure(c, arm)]
     not_started = [c for c in win if c.get("status") == "err"
                    and c.get("cause") == "deadline" and c.get("execs", 0) == 0]
-    cut = [c for c in win if c.get("status") == "err" and c.get("cause") == "cut_at_end"]
+    cut = [c for c in win if c.get("status") == "err" and _is_cut(c)]
     causes = {}
     for c in win:
         if c.get("status") == "err":

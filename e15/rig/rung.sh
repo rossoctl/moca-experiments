@@ -11,7 +11,8 @@
 #   E15_TAG            suffix for the rung directory (ladder.sh uses "repeat")
 #   E15_BASELINE_P95_MS  override the N=1 baseline (otherwise the pooled N1/baseline.json that
 #                      baseline.sh writes, this point's then the default point's; else the N1
-#                      rung's record.json, this point's then the default point's)
+#                      rung's record.json, this point's then the default point's; candidates from
+#                      another library or driver binary are skipped, see "the N=1 baseline")
 #
 # Steps:
 #   1. stop any rung units left over; wipe /srv/e15/workspaces and /srv/e15/jail (E15's own)
@@ -69,33 +70,6 @@ K_MULT=${E15_K_MULT:-1}
   exit 2
 }
 
-# The N=1 baseline (SPEC §8 condition 4) is a prerequisite for N > 1, resolved before anything
-# runs: E15_BASELINE_P95_MS, else the pooled N1/baseline.json (baseline.sh: three seeded N=1
-# runs; this point's, else the default point's), else an N1 record (this point's, else the
-# default point's). A rung without one is a rig error, not a rung that "holds" with condition 4
-# unevaluated.
-baseline=${E15_BASELINE_P95_MS:-}
-baseline_src="env"
-if [ "$N" = 1 ]; then
-  baseline=null
-  baseline_src=none
-elif [ -z "$baseline" ]; then
-  # Most recent valid run first: ladder.sh's tags do not compose (a repeat after a K-doubled
-  # re-run is still N1-repeat), so N1-repeat, then N1-k2, then N1.
-  for cand in "$E15_RUNS/$POINT/$ARM/N1/baseline.json" "$E15_RUNS/default/$ARM/N1/baseline.json" \
-    "$E15_RUNS/$POINT/$ARM"/N1{-repeat,-k2,}/record.json "$E15_RUNS/default/$ARM"/N1{-repeat,-k2,}/record.json; do
-    if [ -f "$cand" ]; then
-      key=p95_added_ms
-      [ "${cand##*/}" = baseline.json ] && key=baseline_p95_ms
-      baseline=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$cand" "$key")
-      baseline_src=$cand
-      break
-    fi
-  done
-  [ -n "$baseline" ] || die "no N=1 baseline p95 for $ARM (point $POINT or default; or E15_BASELINE_P95_MS): run N=1 first"
-fi
-[ "$baseline" = null ] || python3 -c 'import sys; float(sys.argv[1])' "$baseline" 2>/dev/null ||
-  die "baseline p95 '$baseline' is not a number"
 WINDOW=${E15_WINDOW_S:-900}
 SPREAD=${E15_SPREAD_S:-60}
 GRACE=${E15_GRACE_S:-300}
@@ -104,9 +78,67 @@ TAG=${E15_TAG:-}
 CORPUS_DIR=$E15_CORPORA/$POINT
 CORPUS=$CORPUS_DIR/corpus.jsonl
 LIBRARY=$E15_SRC/commands/library.json
+DRIVER=$E15_BIN/e15-driver
 [ -f "$CORPUS" ] || die "no corpus $CORPUS"
 [ -f "$LIBRARY" ] || die "no library $LIBRARY"
-[ -x "$E15_BIN/e15-driver" ] || die "no $E15_BIN/e15-driver (run setup.sh)"
+[ -x "$DRIVER" ] || die "no $DRIVER (run setup.sh)"
+
+# --- the N=1 baseline (SPEC §8 condition 4) ----------------------------------------------------
+# A prerequisite for N > 1, resolved before anything runs: E15_BASELINE_P95_MS, else the pooled
+# N1/baseline.json (baseline.sh: three seeded N=1 runs; this point's, else the default point's),
+# else an N1 record (this point's, else the default point's). A candidate measured with another
+# library or driver binary is stale and skipped (logged); this point's candidates must also match
+# its corpus, the default point's fallback is a different corpus on purpose. A point with its own
+# pooled runs (N1-s*) never falls back to the default point. A rung without a baseline is a rig
+# error, not a rung that "holds" with condition 4 unevaluated.
+baseline=${E15_BASELINE_P95_MS:-}
+baseline_src="env"
+if [ "$N" = 1 ]; then
+  baseline=null
+  baseline_src=none
+elif [ -z "$baseline" ]; then
+  sha_of() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
+  lib_sha=$(sha_of "$LIBRARY")
+  drv_sha=$(sha_of "$DRIVER")
+  corpus_sha=$(sha_of "$CORPUS")
+  # Most recent valid run first: ladder.sh's tags do not compose (a repeat after a K-doubled
+  # re-run is still N1-repeat), so N1-repeat, then N1-k2, then N1.
+  cands=("$E15_RUNS/$POINT/$ARM/N1/baseline.json")
+  here_pooled=$(compgen -G "$E15_RUNS/$POINT/$ARM/N1-s*" || true)
+  fallback=0
+  if [ "$POINT" != default ] && [ -z "$here_pooled" ]; then
+    cands+=("$E15_RUNS/default/$ARM/N1/baseline.json")
+    fallback=1
+  fi
+  cands+=("$E15_RUNS/$POINT/$ARM"/N1{-repeat,-k2,}/record.json)
+  [ "$fallback" = 1 ] && cands+=("$E15_RUNS/default/$ARM"/N1{-repeat,-k2,}/record.json)
+  for cand in "${cands[@]}"; do
+    [ -f "$cand" ] || continue
+    want_corpus=$corpus_sha
+    case "$cand" in "$E15_RUNS/$POINT/"*) ;; *) want_corpus="" ;; esac
+    got=$(python3 -c '
+import json, sys
+cand, lib, drv, corpus = sys.argv[1:5]
+d = json.load(open(cand))
+key = "baseline_p95_ms" if cand.endswith("/baseline.json") else "p95_added_ms"
+for k, want in (("library_sha256", lib), ("driver_bin_sha256", drv), ("corpus_sha256", corpus)):
+    if want and d.get(k) != want:
+        print("SKIP %s %s, this rung has %s" % (k, d.get(k), want))
+        sys.exit(0)
+v = d.get(key)
+print("SKIP no %s" % key if v is None else v)' "$cand" "$lib_sha" "$drv_sha" "$want_corpus")
+    if [ "${got%% *}" = SKIP ]; then
+      log "baseline: skipping $cand (${got#SKIP })"
+      continue
+    fi
+    baseline=$got
+    baseline_src=$cand
+    break
+  done
+  [ -n "$baseline" ] || die "no N=1 baseline p95 for $ARM matching this library, driver and corpus (point $POINT$([ "$fallback" = 1 ] && echo " or default"); or E15_BASELINE_P95_MS): run N=1 first"
+fi
+[ "$baseline" = null ] || python3 -c 'import sys; float(sys.argv[1])' "$baseline" 2>/dev/null ||
+  die "baseline p95 '$baseline' is not a number"
 [ -f "$E15_TEMPLATE" ] || die "no workspace template $E15_TEMPLATE (run setup.sh)"
 if [ "$ARM" != control ]; then
   unit_active "$E15_UNIT_RELAY" || die "$E15_UNIT_RELAY is not running (run setup.sh)"
