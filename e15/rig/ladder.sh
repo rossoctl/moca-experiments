@@ -9,8 +9,8 @@
 #                              die if still unseeded
 #   repeat_required=true  -> the rung is re-run ONCE with the warm-up doubled (tag repeat);
 #                            the repeat's record is the one that counts
-#   two verdicts per rung (record.json): holds (SPEC §8, condition 4 = 3x the N=1 p95) and
-#   holds_abs (condition 4 = N=1 p95 + 250 ms). Each has its own ladder: n_max (primary) is the
+#   two verdicts per rung (record.json): holds (SPEC §8, condition 4 = p95 of class excess <=
+#   max(3x the N=1 excess p95, 50 ms)) and holds_abs (condition 4 = p95(class excess) <= 250 ms). Each has its own ladder: n_max (primary) is the
 #   largest N holding with every rung before it holding; n_max_abs likewise for holds_abs. The
 #   ladder climbs while EITHER is still unbroken and stops at the first rung where both are. A rung below START_N is assumed held (SPEC §10.3: other points start two
 # steps below the default N_max), and ladder.json says so.
@@ -140,7 +140,7 @@ json.dump({"point": point, "arm": arm, "start_n": int(start), "ladder": [int(x) 
            "rungs_below_start_assumed_held": int(start) > 1,
            "rungs": rows, "n_max": num(n_max), "stopped_at": num(stopped),
            "n_max_abs": num(n_max_abs), "stopped_at_abs": num(stopped_abs),
-           "abs_rule": "condition 4 as p95_added <= baseline_p95_ms + 250 ms"},
+           "abs_rule": "condition 4 as p95(class excess) <= 250 ms (excess = added latency minus the per-class N=1 probe median)"},
           open(out, "w"), indent=2)
 PY
 rm -f "$rungs_json"

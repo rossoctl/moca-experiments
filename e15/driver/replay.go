@@ -29,9 +29,12 @@ type Config struct {
 	// EndSessionExec sends one EndSessionCommand Exec on a session's workspace_key when the session
 	// ends (its trace is done, or the run ended with it live), so the resident worker frees its VM.
 	EndSessionExec bool
-	SandboxID      string
-	RunID          string
-	Token          string
+	// StartAtZero makes every session start at its first call instead of a seeded random index
+	// (the class probe replays a synthetic session end to end).
+	StartAtZero bool
+	SandboxID   string
+	RunID       string
+	Token       string
 }
 
 // Replayer holds a population of N sessions, closed-loop inside each session (SPEC §3).
@@ -146,6 +149,9 @@ func (r *Replayer) swap(prev *Session) (Session, int, error) {
 	s, start, err := r.sampler.Next(r.liveUsers, r.cfg.N)
 	if err != nil {
 		return Session{}, 0, err
+	}
+	if r.cfg.StartAtZero {
+		start = 0
 	}
 	r.liveUsers[s.User]++
 	r.liveCount++

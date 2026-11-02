@@ -9,10 +9,9 @@
 # Environment (defaults are SPEC §10.2's):
 #   E15_WARMUP_S 600   E15_WINDOW_S 900   E15_SPREAD_S 60   E15_GRACE_S 300   E15_SEED 1
 #   E15_TAG            suffix for the rung directory (ladder.sh uses "repeat")
-#   E15_BASELINE_P95_MS  override the N=1 baseline (otherwise the pooled N1/baseline.json that
-#                      baseline.sh writes, this point's then the default point's; else the N1
-#                      rung's record.json, this point's then the default point's; candidates from
-#                      another library or driver binary are skipped, see "the N=1 baseline")
+#   E15_CORPUS_OVERRIDE  a probe corpus.jsonl to replay instead of POINT's (classprobe.sh)
+#   E15_START_ZERO     1: every session starts at its first call (probe runs)
+# The N=1 baseline is the pooled N1/baseline.json that baseline.sh writes (see "the N=1 baseline").
 #
 # Steps:
 #   1. stop any rung units left over; wipe /srv/e15/workspaces and /srv/e15/jail (E15's own)
@@ -77,6 +76,14 @@ SEED=${E15_SEED:-1}
 TAG=${E15_TAG:-}
 CORPUS_DIR=$E15_CORPORA/$POINT
 CORPUS=$CORPUS_DIR/corpus.jsonl
+# E15_CORPUS_OVERRIDE: a probe corpus.jsonl (classprobe.sh); its directory holds the matching
+# corpus-report.json. E15_START_ZERO=1 makes every session start at call 0 (driver --start-at-zero).
+if [ -n "${E15_CORPUS_OVERRIDE:-}" ]; then
+  CORPUS=$E15_CORPUS_OVERRIDE
+  CORPUS_DIR=$(dirname "$CORPUS")
+fi
+start_flag=()
+[ "${E15_START_ZERO:-0}" = 1 ] && start_flag=(--start-at-zero)
 LIBRARY=$E15_SRC/commands/library.json
 DRIVER=$E15_BIN/e15-driver
 [ -f "$CORPUS" ] || die "no corpus $CORPUS"
@@ -84,69 +91,45 @@ DRIVER=$E15_BIN/e15-driver
 [ -x "$DRIVER" ] || die "no $DRIVER (run setup.sh)"
 
 # --- the N=1 baseline (SPEC §8 condition 4) ----------------------------------------------------
-# A prerequisite for N > 1, resolved before anything runs: E15_BASELINE_P95_MS, else the pooled
-# N1/baseline.json (baseline.sh: three seeded N=1 runs; this point's, else the default point's),
-# else an N1 record (this point's, else the default point's). A candidate measured with another
-# library or driver binary is stale and skipped (logged); this point's candidates must also match
-# its corpus, the default point's fallback is a different corpus on purpose. A point with its own
-# pooled runs (N1-s*) never falls back to the default point. A rung without a baseline is a rig
-# error, not a rung that "holds" with condition 4 unevaluated.
-baseline=${E15_BASELINE_P95_MS:-}
-baseline_src="env"
-if [ "$N" = 1 ]; then
-  baseline=null
-  baseline_src=none
-elif [ -z "$baseline" ]; then
+# Condition 4 is class-matched: N > 1 needs the pooled N1/baseline.json that baseline.sh writes
+# (per-class medians from the class probe). It is this point's, or -- only when this point has no
+# pooled runs of its own -- the default point's. A baseline.json measured with another library or
+# driver binary (or, for this point's own, another corpus) is stale: the rung dies with the reason.
+# A rung without a baseline is a rig error, not a rung that "holds" with condition 4 unevaluated.
+# The control arm (null responder) is exempt at every N: it checks A2 and transport only.
+baseline_path=null
+baseline_src=none
+if [ "$ARM" = control ]; then
+  baseline_src="none (control: A2 and transport only)"
+elif [ "$N" != 1 ]; then
   sha_of() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
   lib_sha=$(sha_of "$LIBRARY")
   drv_sha=$(sha_of "$DRIVER")
   corpus_sha=$(sha_of "$CORPUS")
-  # Most recent valid run first: ladder.sh's tags do not compose (a repeat after a K-doubled
-  # re-run is still N1-repeat), so N1-repeat, then N1-k2, then N1.
-  cands=("$E15_RUNS/$POINT/$ARM/N1/baseline.json")
-  here_pooled=$(compgen -G "$E15_RUNS/$POINT/$ARM/N1-s*" || true)
-  fallback=0
-  if [ "$POINT" != default ] && [ -z "$here_pooled" ]; then
-    cands+=("$E15_RUNS/default/$ARM/N1/baseline.json")
-    fallback=1
+  cand="$E15_RUNS/$POINT/$ARM/N1/baseline.json"
+  want_corpus=$corpus_sha
+  if [ ! -f "$cand" ] && [ "$POINT" != default ] && [ -z "$(compgen -G "$E15_RUNS/$POINT/$ARM/N1-s*" || true)" ]; then
+    cand="$E15_RUNS/default/$ARM/N1/baseline.json"
+    want_corpus="" # the default point's baseline is a different corpus on purpose
   fi
-  cands+=("$E15_RUNS/$POINT/$ARM"/N1{-repeat,-k2,}/record.json)
-  [ "$fallback" = 1 ] && cands+=("$E15_RUNS/default/$ARM"/N1{-repeat,-k2,}/record.json)
-  for cand in "${cands[@]}"; do
-    [ -f "$cand" ] || continue
-    want_corpus=$corpus_sha
-    case "$cand" in "$E15_RUNS/$POINT/"*) ;; *) want_corpus="" ;; esac
-    got=$(python3 -c '
+  [ -f "$cand" ] || die "no N=1 baseline.json for $ARM matching point $POINT (run baseline.sh $POINT $ARM first)"
+  stale=$(python3 -c '
 import json, sys
 cand, lib, drv, corpus = sys.argv[1:5]
 d = json.load(open(cand))
-key = "baseline_p95_ms" if cand.endswith("/baseline.json") else "p95_added_ms"
 for k, want in (("library_sha256", lib), ("driver_bin_sha256", drv), ("corpus_sha256", corpus)):
     if want and d.get(k) != want:
-        print("SKIP %s %s, this rung has %s" % (k, d.get(k), want))
+        print("%s %s, this rung has %s" % (k, d.get(k), want))
         sys.exit(0)
-v = d.get(key)
-print("SKIP no %s" % key if v is None else v)' "$cand" "$lib_sha" "$drv_sha" "$want_corpus")
-    if [ "${got%% *}" = SKIP ]; then
-      log "baseline: skipping $cand (${got#SKIP })"
-      continue
-    fi
-    baseline=$got
-    baseline_src=$cand
-    break
-  done
-  [ -n "$baseline" ] || die "no N=1 baseline p95 for $ARM matching this library, driver and corpus (point $POINT$([ "$fallback" = 1 ] && echo " or default"); or E15_BASELINE_P95_MS): run N=1 first"
+for k in ("class_medians", "global_median_ms", "excess_p95_ms"):
+    if k not in d:
+        print("no %s (not a class-matched baseline)" % k)
+        sys.exit(0)' "$cand" "$lib_sha" "$drv_sha" "$want_corpus")
+  [ -z "$stale" ] || die "stale N=1 baseline $cand: $stale; re-run baseline.sh $POINT $ARM"
+  baseline_path=\"$cand\"
+  baseline_src=$cand
 fi
-[ "$baseline" = null ] || python3 -c 'import sys; float(sys.argv[1])' "$baseline" 2>/dev/null ||
-  die "baseline p95 '$baseline' is not a number"
-# Condition 4 is class-matched (SPEC §8): N>1 needs the pooled baseline.json with class medians.
-baseline_path=null
-if [ "$N" != 1 ]; then
-  case "$baseline_src" in
-  */baseline.json) baseline_path=\"$baseline_src\" ;;
-  *) die "condition 4 needs a pooled class-matched baseline.json (run baseline.sh $POINT $ARM); got source '$baseline_src'" ;;
-  esac
-fi
+# end baseline resolution
 [ -f "$E15_TEMPLATE" ] || die "no workspace template $E15_TEMPLATE (run setup.sh)"
 if [ "$ARM" != control ]; then
   unit_active "$E15_UNIT_RELAY" || die "$E15_UNIT_RELAY is not running (run setup.sh)"
@@ -216,7 +199,7 @@ sampler_pid=$!
 MOCA_RELAY_EXEC_TOKEN=$(cat "$E15_SECRETS/exec.token") "$E15_BIN/e15-driver" \
   --corpus "$CORPUS" --library "$LIBRARY" --seed "$SEED" --n "$N" \
   --warmup-s "$WARMUP" --window-s "$WINDOW" --spread-s "$SPREAD" --grace-s "$GRACE" \
-  --target "$TARGET" --sandbox-id e15 --run-id "$RUN_ID" --out "$DIR" "${end_flag[@]}" \
+  --target "$TARGET" --sandbox-id e15 --run-id "$RUN_ID" --out "$DIR" "${end_flag[@]}" "${start_flag[@]}" \
   >"$DIR/driver.log" 2>&1 &
 driver_pid=$!
 driver_exit=0
@@ -325,7 +308,6 @@ except (OSError, ValueError):
 arm = "$ARM"
 wbin = {"sbx": "$E15_BIN/microvm-worker", "resident-inf": "$E15_BIN/microvm-worker-resident",
         "resident-300": "$E15_BIN/microvm-worker-resident"}.get(arm)
-baseline = json.loads("$baseline")
 baseline_path = json.loads('$baseline_path')
 p = {
     "arm": arm, "n": $N, "point": "$POINT", "seed": $SEED, "run_id": run,
@@ -333,7 +315,7 @@ p = {
     "floor_mb": $E15_FLOOR_MB, "driver_exit": $driver_exit,
     "rung_start_ts": float("$rung_start_ts"), "launch_ts": float("$launch_ts"),
     "driver_load_s": float("$rung_start_ts") - float("$launch_ts"),
-    "baseline_p95_ms": baseline, "baseline_path": baseline_path, "baseline_source": "$baseline_src",
+    "baseline_path": baseline_path, "baseline_source": "$baseline_src",
     "workspaces_per_slot": $K, "workspaces_k_mult": $K_MULT, "workspaces_precreated": len(pre),
     "oom_kills": $oom_after - $oom_before,
     "unseeded_sessions": len(keys - pre), "sessions_started": len(keys),

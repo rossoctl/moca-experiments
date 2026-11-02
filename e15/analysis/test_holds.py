@@ -452,17 +452,97 @@ def test_record_reads_baseline_path(tmp_path):
     assert r["holds"] and r["p95_excess_ms"] == 30 and r["excess_limit_ms"] == 50.0
 
 
-def test_baseline_writes_class_fields(tmp_path, monkeypatch):
-    d = tmp_path / "r"
+def _probe_dir(tmp_path, name, cls, added, status="ok"):
+    d = tmp_path / name
     d.mkdir()
-    rows = [call(added=a, cls="x") for a in (10, 20, 30, 40, 50)] + [call(added=7, cls="y")] * 2
+    rows = [call(added=a, cls=cls) for a in added]
+    if status != "ok":
+        rows.append(call(cls=cls, status="err", cause="rpc_error"))
     (d / "calls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    (d / "record.json").write_text(json.dumps(dict(library_sha256="L", driver_bin_sha256="D", corpus_sha256="C")))
-    monkeypatch.setenv("E15_BASELINE_COVERED", "x y z")
+    return str(d)
+
+
+def test_baseline_medians_from_probe_only(tmp_path):
+    seeded = _rung_dir(tmp_path, "N1-s1", [500] * 10)   # class "x", added 500: must NOT set medians
+    px = _probe_dir(tmp_path, "p-x", "x", [10, 20, 30, 40, 50])
+    py = _probe_dir(tmp_path, "p-y", "y", [7, 8], status="err")
     out = tmp_path / "b.json"
-    B.main([str(out), str(d)])
+    B.main([str(out), seeded, "--probe", px, py])
     g = json.loads(out.read_text())
     assert g["class_medians"] == {"x": 30} and g["class_counts"] == {"x": 5, "y": 2}
-    assert g["undercovered"] == ["y", "z"] and g["global_median_ms"] == 20
-    # excess over own medians: x: -20,-10,0,10,20 ; y falls back to global 20: -13,-13
-    assert g["excess_p95_ms"] == 20 and g["baseline_p95_ms"] is not None
+    assert g["undercovered"] == ["y"] and g["probe_failed"] == {"y": 1}
+    assert g["baseline_p95_ms"] == 500 and g["global_median_ms"] == 20
+    # excess over own medians: x -20,-10,0,10,20 ; y falls back to global 20: -13,-12
+    assert g["excess_p95_ms"] == 20
+
+
+def test_fallback_share_and_undercovered_in_record(tmp_path):
+    bp = tmp_path / "b.json"
+    bp.write_text(json.dumps(BL(excess=10, medians={"x": 100}, gmed=100, undercovered=["z"])))
+    rows = [call(added=100, cls="x"), call(added=100, cls="z"), call(added=100, cls="x"), call(added=100, cls="z")]
+    (tmp_path / "calls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
+    r = R.build(str(tmp_path), dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(bp)))
+    assert r["fallback_calls"] == 2 and r["fallback_share"] == 0.5 and r["undercovered"] == ["z"]
+
+
+def test_control_without_baseline_skips_condition_4(tmp_path):
+    (tmp_path / "calls.jsonl").write_text(json.dumps(call(added=99999)) + "\n")
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
+    r = R.build(str(tmp_path), dict(arm="control", n=128, warmup_s=0, window_s=10, baseline_path=None))
+    assert r["holds"] and r["excess_limit_ms"] is None
+
+
+# --- make_probe.py -------------------------------------------------------------------------
+
+import make_probe as MP  # noqa: E402
+
+
+def _probe_fixture(tmp_path):
+    corpus = tmp_path / "corpus.jsonl"
+    calls = [{"i": i, "class": "read", "work_ms": 10 * (i + 1), "dur_ms": 20 * (i + 1), "chain": False}
+             for i in range(6)]
+    calls.append({"i": 6, "class": "read", "work_ms": 99999, "dur_ms": 99999, "chain": True})
+    corpus.write_text(json.dumps({"session": "s", "user": "u", "provider": "claude", "calls": calls}) + "\n")
+    lib = tmp_path / "lib.json"
+    lib.write_text(json.dumps({"version": 1, "classes": {
+        "read": [{"id": "r", "cmd": "x", "exit": 0, "nominal_ms": 30, "run_ms": 3}],
+        "test": [{"id": "t", "cmd": "y", "exit": 0, "nominal_ms": 900, "run_ms": None}]}, "standin": {}}))
+    return str(corpus), str(lib)
+
+
+def test_make_probe_one_session_per_class(tmp_path):
+    c, lib = _probe_fixture(tmp_path)
+    out = tmp_path / "probe"
+    MP.main([c, lib, str(out), "--per-class", "20", "--seed", "3"])
+    classes = (out / "classes.txt").read_text().split()
+    assert classes == ["build", "host_infra", "opaque", "read", "test"]
+    for cls in classes:
+        lines = (out / cls / "corpus.jsonl").read_text().splitlines()
+        assert len(lines) == 1
+        s = json.loads(lines[0])
+        assert (s["session"], s["user"], s["provider"]) == ("probe-" + cls, "probe", "probe")
+        assert len(s["calls"]) == 20 and {x["class"] for x in s["calls"]} == {cls}
+        assert all(not x["chain"] and x["gap_ms"] == 2000 for x in s["calls"])
+        assert s["calls"][0]["offset_ms"] == 0
+        for prev, x in zip(s["calls"], s["calls"][1:]):
+            assert x["offset_ms"] == prev["dur_ms"] + 2000
+        rep = json.loads((out / cls / "corpus-report.json").read_text())
+        assert rep["span_ms"] == sum(x["offset_ms"] for x in s["calls"]) + s["calls"][-1]["dur_ms"]
+    # durations come from the class distribution, chains excluded; classes absent from the
+    # corpus use the library's invocation times
+    r = json.loads((out / "read" / "corpus.jsonl").read_text())["calls"]
+    assert {(x["work_ms"], x["dur_ms"]) for x in r} <= {(10 * k, 20 * k) for k in range(1, 7)}
+    t = json.loads((out / "test" / "corpus.jsonl").read_text())["calls"]
+    assert {x["dur_ms"] for x in t} == {900}
+
+
+def test_make_probe_deterministic(tmp_path):
+    c, lib = _probe_fixture(tmp_path)
+    MP.main([c, lib, str(tmp_path / "a"), "--seed", "5"])
+    MP.main([c, lib, str(tmp_path / "b"), "--seed", "5"])
+    MP.main([c, lib, str(tmp_path / "c"), "--seed", "6"])
+    rd = lambda d: (tmp_path / d / "read" / "corpus.jsonl").read_text()  # noqa: E731
+    assert rd("a") == rd("b") and rd("a") != rd("c")
+    # validatePlans needs >= 3 calls and a class in the library or the stand-ins; both hold
+    # (the Go side is covered by the driver's own tests; no Go in this suite).

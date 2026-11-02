@@ -163,6 +163,9 @@ def build(rung_dir, params):
     ws = window_samples(samples, start, end)
     rec = dict(p)
     rec.update(ev)
+    n_ok = len(H.window_ok_calls(calls))
+    rec["fallback_share"] = (ev["fallback_calls"] / float(n_ok)) if n_ok else None
+    rec["undercovered"] = baseline.get("undercovered") if baseline else None
     rec["refusal_scope"] = scope
     rec["refusals_by_reason"] = by_reason
     rec["binding"] = binding_resource(ws, p.get("floor_mb", 1536), end, refusals)

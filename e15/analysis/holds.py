@@ -88,6 +88,10 @@ def _is_failure(call, arm):
     return True
 
 
+def counts_as_failure(call, arm="sbx"):
+    return _is_failure(call, arm)
+
+
 def _split(calls, key, arm):
     out = {}
     for c in calls:

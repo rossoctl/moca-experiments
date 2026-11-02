@@ -1010,3 +1010,15 @@ func TestValidatePlansChecksEncodedFrame(t *testing.T) {
 		t.Fatal("execs were sent")
 	}
 }
+
+func TestStartAtZero(t *testing.T) {
+	for seed := int64(1); seed <= 8; seed++ {
+		client, _ := newFake(t)
+		cfg := baseCfg()
+		cfg.Seed, cfg.StartAtZero, cfg.Window = seed, true, 300*time.Millisecond
+		res := run(t, cfg, []Session{sess("s", "u", 20, "q", "q", "q", "q", "q", "q", "q", "q")}, testLib(nil, "q"), client)
+		if res.err != nil || len(res.calls) == 0 || res.calls[0].Call != 0 {
+			t.Fatalf("seed %d: %v first call %+v, want call 0", seed, res.err, res.calls)
+		}
+	}
+}

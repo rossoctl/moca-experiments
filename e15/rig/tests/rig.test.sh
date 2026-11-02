@@ -16,7 +16,7 @@
 set -uo pipefail
 
 RIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPTS=(lib.sh setup.sh teardown.sh rung.sh ladder.sh sample.sh baseline.sh tests/rig.test.sh)
+SCRIPTS=(lib.sh setup.sh teardown.sh rung.sh ladder.sh sample.sh baseline.sh classprobe.sh tests/rig.test.sh)
 fails=0
 check() {
   if [ "$2" = "$3" ]; then
@@ -285,6 +285,26 @@ SH
   check "ladder: repeat_required re-runs with warm-up doubled and the repeat counts" "$(lj n_max)/$(grep -c '^1-repeat k=1 w=60' "$TMP/lcalls")" "1/1"
 fi
 
+# classprobe.sh: one sequential rung per class, override corpus, tag probe-<class>, warm-up 0
+if [ -f "$RIG/classprobe.sh" ]; then
+  PRUNG="$TMP/stub-rung-p.sh"
+  cat >"$PRUNG" <<'SH'
+#!/usr/bin/env bash
+echo "$1 $2 $3 tag=$E15_TAG warm=$E15_WARMUP_S win=$E15_WINDOW_S zero=$E15_START_ZERO sessions=$(grep -c . "$E15_CORPUS_OVERRIDE")" >>"$P_CALLS"
+SH
+  mkdir -p "$TROOT/src/e15/commands" "$TROOT/corpora/default" "$TROOT/src/e15"
+  ln -sfn "$RIG/../analysis" "$TROOT/src/e15/analysis"
+  printf '%s\n' '{"session":"s","user":"u","provider":"claude","calls":[{"i":0,"class":"read","work_ms":5,"dur_ms":50,"chain":false}]}' >"$TROOT/corpora/default/corpus.jsonl"
+  printf '%s\n' '{"version":1,"classes":{"read":[{"id":"r","cmd":"x","exit":0,"nominal_ms":30,"run_ms":3}],"test":[{"id":"t","cmd":"y","exit":0,"nominal_ms":900,"run_ms":None}]},"standin":{}}' | sed 's/None/null/' >"$TROOT/src/e15/commands/library.json"
+  : >"$TMP/pcalls"
+  out=$(env E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$PRUNG" P_CALLS="$TMP/pcalls" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/classprobe.sh" default sbx 2>"$TMP/p.err")
+  check "classprobe.sh exits 0" "$?" "0"
+  check "classprobe.sh: one sequential rung per class (library + stand-ins)" "$(cut -d' ' -f1-4 "$TMP/pcalls" | tr '\n' '|')" "sbx 1 default tag=probe-build|sbx 1 default tag=probe-host_infra|sbx 1 default tag=probe-opaque|sbx 1 default tag=probe-read|sbx 1 default tag=probe-test|"
+  check "classprobe.sh: warm-up 0, start at zero, one session each, window >= span + 60" "$(awk '{print $5,$7,$8}' "$TMP/pcalls" | sort -u | tr '\n' '|')" "warm=0 zero=1 sessions=1|"
+  check "classprobe.sh: prints the probe run dirs" "$(echo "$out" | wc -l | tr -d ' ')/$(echo "$out" | head -1)" "5/$TROOT/runs/default/sbx/N1-probe-build"
+  check "classprobe.sh: window covers 19 gaps + durations + 60 s" "$(grep 'probe-read' "$TMP/pcalls" | sed 's/.*win=\([0-9]*\).*/\1/' | awk '{print ($1 >= 19*2+60) ? "ok" : "short"}')" "ok"
+fi
+
 # rung.sh: K has a floor of 16 workspaces per slot
 if [ -f "$RIG/rung.sh" ]; then
   check "rung.sh K floor: max(16, formula)" "$(grep -c 'print(max(16, (int(math.ceil' "$RIG/rung.sh")" "1"
@@ -336,75 +356,72 @@ json.dump(d, open(f, "w"))
 PY2
 }
 
-# (1) the N=1 baseline comes from the most recent valid N1 run: N1-repeat, N1-k2, N1
-if [ -f "$RIG/rung.sh" ]; then
-  printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
-  base_of() {
-    E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash -c '
-      set -e; source "$1"; E15_PROG=t
-      N=8 POINT=default ARM=sbx
-      eval "$(sed -n "/^WINDOW=\${E15_WINDOW_S:-900}/,/^  die \"baseline p95/p" "$2")"
-      echo "$baseline"' _ "$RIG/lib.sh" "$RIG/rung.sh" 2>/dev/null
-  }
-  rm -rf "$TROOT/runs"
-  for t in "N1:100" "N1-k2:200" "N1-repeat:300"; do
-    stub_rec "$TROOT/runs/default/sbx/${t%%:*}/record.json" p95_added_ms "${t#*:}"
-  done
-  check "baseline: N1-repeat wins" "$(base_of)" "300.0"
-  rm -rf "$TROOT/runs/default/sbx/N1-repeat"
-  check "baseline: N1-k2 before the invalid N1" "$(base_of)" "200.0"
-  rm -rf "$TROOT/runs/default/sbx/N1-k2"
-  check "baseline: N1 when it is the only run" "$(base_of)" "100.0"
-  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
-fi
-
 # --- Task 8a ---------------------------------------------------------------------------------
 
-# rung.sh's baseline lookup: pooled N1/baseline.json (this point, then default) before any record.json
+# rung.sh's baseline lookup: pooled N1/baseline.json (this point, then default), no other source
 if [ -f "$RIG/rung.sh" ]; then
   printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
   mkdir -p "$TROOT/corpora/short"
   echo short-corpus >"$TROOT/corpora/short/corpus.jsonl"
-  base_at() {
+  base_at() { # POINT [ARM] [N]
     E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash -c '
       set -e; source "$1"; E15_PROG=t
-      N=8 POINT=$3 ARM=sbx
-      eval "$(sed -n "/^WINDOW=\${E15_WINDOW_S:-900}/,/^  die \"baseline p95/p" "$2")"
-      echo "$baseline $baseline_src"' _ "$RIG/lib.sh" "$RIG/rung.sh" "$1" 2>"$TMP/base.err"
+      N=${4:-8} POINT=$3 ARM=${5:-sbx}
+      eval "$(sed -n "/^WINDOW=\${E15_WINDOW_S:-900}/,/^# end baseline resolution/p" "$2")"
+      echo "$baseline_path|$baseline_src"' _ "$RIG/lib.sh" "$RIG/rung.sh" "$1" "${2:-8}" "${3:-sbx}" 2>"$TMP/base.err"
   }
   rm -rf "$TROOT/runs"
-  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1-repeat/record.json" p95_added_ms 300
-  STUB_POINT=short stub_rec "$TROOT/runs/short/sbx/N1-repeat/record.json" p95_added_ms 300
-  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 42.5
-  check "baseline lookup: the default point's baseline.json before this point's record.json" "$(base_at short)" "42.5 $TROOT/runs/default/sbx/N1/baseline.json"
-  STUB_POINT=short stub_rec "$TROOT/runs/short/sbx/N1/baseline.json" baseline_p95_ms 17
-  check "baseline lookup: this point's baseline.json first" "$(base_at short)" "17.0 $TROOT/runs/short/sbx/N1/baseline.json"
-  check "baseline lookup: default point's baseline.json before its record.json" "$(base_at default)" "42.5 $TROOT/runs/default/sbx/N1/baseline.json"
-  rm -f "$TROOT/runs/default/sbx/N1/baseline.json"
-  check "baseline lookup: record.json fallback" "$(base_at default | cut -d' ' -f1)" "300.0"
-
-  # stale-baseline guard (fix round 1)
-  rm -rf "$TROOT/runs"
-  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 50 library_sha256=old
-  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1-repeat/record.json" p95_added_ms 60
-  check "stale guard: a baseline.json from another library is skipped" "$(base_at default | cut -d' ' -f1)" "60.0"
-  check "stale guard: the skip is logged with its reason" "$(grep -c "skipping $TROOT/runs/default/sbx/N1/baseline.json (library_sha256 old" "$TMP/base.err")" "1"
-  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1-repeat/record.json" p95_added_ms 60 driver_bin_sha256=old
   base_at default >/dev/null
-  check "stale guard: nothing matching -> rung dies" "$?" "1"
-  check "stale guard: the death names the mismatch" "$(grep -c 'matching this library, driver and corpus' "$TMP/base.err")" "1"
-  # corpus: checked for this point's candidates, not for the default point's fallback
+  check "baseline lookup: none present -> rung dies" "$?" "1"
+  check "baseline lookup: the death says run baseline.sh" "$(grep -c 'run baseline.sh default sbx' "$TMP/base.err")" "1"
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1-repeat/record.json" p95_added_ms 300
+  base_at default >/dev/null
+  check "baseline lookup: an N1 record.json is no longer a baseline" "$?" "1"
+  GOOD='class_medians={} global_median_ms=1 excess_p95_ms=2'
+  # stub_rec stores string values; rung.sh only checks the keys
+  # shellcheck disable=SC2086
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 42.5 $GOOD
+  check "baseline lookup: the default point's baseline.json" "$(base_at default)" "\"$TROOT/runs/default/sbx/N1/baseline.json\"|$TROOT/runs/default/sbx/N1/baseline.json"
+  check "baseline lookup: short falls back to default's when it has no pooled runs" "$(base_at short | cut -d'|' -f2)" "$TROOT/runs/default/sbx/N1/baseline.json"
+  # shellcheck disable=SC2086
+  STUB_POINT=short stub_rec "$TROOT/runs/short/sbx/N1/baseline.json" baseline_p95_ms 17 $GOOD
+  check "baseline lookup: this point's baseline.json first" "$(base_at short | cut -d'|' -f2)" "$TROOT/runs/short/sbx/N1/baseline.json"
+  check "baseline lookup: N=1 needs none" "$(base_at default 1 | cut -d'|' -f2)" "none"
+
+  # stale-baseline guard: die with the reason
   rm -rf "$TROOT/runs"
-  STUB_POINT=default stub_rec "$TROOT/runs/short/sbx/N1/baseline.json" baseline_p95_ms 11
-  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 22
-  check "stale guard: this point's candidate from another corpus is skipped; default's corpus is not checked" "$(base_at short)" "22.0 $TROOT/runs/default/sbx/N1/baseline.json"
-  check "stale guard: corpus skip logged" "$(grep -c 'corpus_sha256' "$TMP/base.err")" "1"
+  # shellcheck disable=SC2086
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 50 library_sha256=old $GOOD
+  base_at default >/dev/null
+  check "stale guard: a baseline.json from another library -> rung dies" "$?" "1"
+  check "stale guard: the death names the reason" "$(grep -c 'stale N=1 baseline .*library_sha256 old' "$TMP/base.err")" "1"
+  # shellcheck disable=SC2086
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 50 driver_bin_sha256=old $GOOD
+  base_at default >/dev/null
+  check "stale guard: another driver binary -> dies" "$?" "1"
+  # a baseline without class medians (an old pooled-p95 one) is stale too
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 50
+  base_at default >/dev/null
+  check "stale guard: a baseline.json without class medians -> dies" "$?" "1"
+  check "stale guard: names the missing key" "$(grep -c 'no class_medians' "$TMP/base.err")" "1"
+  # corpus: checked for this point's own baseline, not for the default point's fallback
+  rm -rf "$TROOT/runs"
+  # shellcheck disable=SC2086
+  STUB_POINT=default stub_rec "$TROOT/runs/short/sbx/N1/baseline.json" baseline_p95_ms 11 $GOOD
+  base_at short >/dev/null
+  check "stale guard: this point's baseline from another corpus -> dies" "$?" "1"
+  check "stale guard: corpus named" "$(grep -c 'corpus_sha256' "$TMP/base.err")" "1"
+  rm -rf "$TROOT/runs"
+  # shellcheck disable=SC2086
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 22 $GOOD
+  check "stale guard: default's corpus is not checked" "$(base_at short | cut -d'|' -f2)" "$TROOT/runs/default/sbx/N1/baseline.json"
   # a point with its own pooled runs never falls back to the default point
   mkdir -p "$TROOT/runs/short/sbx/N1-s1"
   base_at short >/dev/null
-  check "stale guard: N1-s* here + stale here -> no default fallback, dies" "$?" "1"
-  STUB_POINT=short stub_rec "$TROOT/runs/short/sbx/N1-repeat/record.json" p95_added_ms 33
-  check "stale guard: N1-s* here -> this point's record.json, not the default's baseline.json" "$(base_at short)" "33.0 $TROOT/runs/short/sbx/N1-repeat/record.json"
+  check "no default fallback once this point has pooled runs" "$?" "1"
+  # control is exempt at every N, with no baseline present
+  rm -rf "$TROOT/runs"
+  check "control N=128 needs no baseline" "$(base_at default 128 control)" "null|none (control: A2 and transport only)"
   printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
 fi
 
@@ -442,26 +459,33 @@ add=$(( ${E15_SEED} * 10 ))
 for ((i = 0; i < ${!cvar:-${CALLS_ALL:-10}}; i++)); do
   printf '{"in_window": true, "status": "ok", "class": "a", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$add" >>"$d/calls.jsonl"
 done
-bvar="NB_${E15_TAG}"
-for ((i = 0; i < ${!bvar:-0}; i++)); do
-  printf '{"in_window": true, "status": "ok", "class": "b", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$add" >>"$d/calls.jsonl"
+SH
+  BPROBE="$TMP/stub-probe-b.sh"
+  # Prints two probe run dirs: class a (20 calls, added 10 ms) and b (20 calls, added 100 ms; 3 when PROBE_B_FEW)
+  cat >"$BPROBE" <<'SH'
+#!/usr/bin/env bash
+echo "classprobe $1 $2" >>"$B_CALLS.probe"
+for c in a b; do
+  d="$E15_ROOT/runs/$1/$2/N1-probe-$c"
+  mkdir -p "$d"
+  add=10; n=20
+  [ "$c" = b ] && add=100 && n=${PROBE_B_N:-20}
+  : >"$d/calls.jsonl"
+  for ((i = 0; i < n; i++)); do
+    printf '{"in_window": true, "status": "ok", "class": "%s", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$c" "$add" >>"$d/calls.jsonl"
+  done
+  echo "$d"
 done
 SH
   mkdir -p "$TROOT/src/e15"
   ln -sfn "$RIG/../analysis" "$TROOT/src/e15/analysis"
-  # corpus: 50 calls of class a, 50 of b (both covered) unless CORPUS_B=0 (a only)
-  mkcorpus() {
-    python3 -c 'import json,sys
-n = int(sys.argv[1])
-print(json.dumps({"calls": [{"class": "a"}] * 50 + [{"class": "b"}] * n}))' "$1" >"$TROOT/corpora/default/corpus.jsonl"
-  }
   bl() {
     rm -rf "$TROOT/runs"
     : >"$TMP/bcalls"
-    env E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$BRUNG" B_CALLS="$TMP/bcalls" \
+    : >"$TMP/bcalls.probe"
+    env E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$BRUNG" E15_CLASSPROBE="$BPROBE" B_CALLS="$TMP/bcalls" \
       PATH="$SPATH" E15_MANIFEST="$TMP/m.md" "$@" bash "$RIG/baseline.sh" default sbx >"$TMP/b.out" 2>&1
   }
-  mkcorpus 0
   bl
   check "baseline.sh exits 0 when all three hold" "$?" "0"
   check "baseline.sh ran three N=1 rungs, seeds 1-3, tags s1-s3" "$(tr '\n' '|' <"$TMP/bcalls")" "sbx 1 default 1 s1|sbx 1 default 2 s2|sbx 1 default 3 s3|"
@@ -475,6 +499,11 @@ print(json.dumps({"calls": [{"class": "a"}] * 50 + [{"class": "b"}] * n}))' "$1"
   check "baseline.sh: after a skip it draws the next seed" "$(tr '\n' '|' <"$TMP/bcalls")" "sbx 1 default 1 s1|sbx 1 default 2 s2|sbx 1 default 3 s3|sbx 1 default 4 s4|"
   check "baseline.json lists evaluable and skipped seeds" \
     "$(bjf '[e["seed"] for e in d["evaluable"]]' '[(k["seed"], k["tag"], k["reason"]) for k in d["skipped"]]')" "[1, 3, 4] [(2, 's2', 'empty_window')]"
+  check "baseline.sh ran the class probe after the seeds" "$(cat "$TMP/bcalls.probe")" "classprobe default sbx"
+  check "baseline.json: medians and B come from the probe" "$(bjf 'd["class_medians"]' 'd["excess_p95_ms"]' 'd["undercovered"]' 'len(d["probe_runs"])')" "{'a': 10.0, 'b': 100.0} 0.0 [] 2"
+  bl PROBE_B_N=3
+  check "baseline.json: a class with < 5 ok probe calls is undercovered" "$(bjf 'd["undercovered"]' 'd["class_medians"]')" "['b'] {'a': 10.0}"
+  bl
   check "baseline.json pools only the evaluable runs" "$(bjf 'd["calls"]' 'len(d["runs"])')" "30 3"
   # the pooled-call floor: >= 30 in-window ok calls, not just >= 3 runs
   bl CALLS_ALL=7
@@ -487,20 +516,6 @@ print(json.dumps({"calls": [{"class": "a"}] * 50 + [{"class": "b"}] * n}))' "$1"
   check "baseline.sh dies after 12 seeds without enough" "$?" "1"
   check "baseline.sh drew exactly 12 seeds" "$(grep -c . "$TMP/bcalls")" "12"
   check "baseline.sh writes no baseline.json after 12 seeds" "$([ -f "$bj" ] && echo yes || echo no)" "no"
-  # class coverage: b is a covered class (50% of corpus calls); draw seeds until it has >= 5 calls
-  mkcorpus 50
-  bl NB_s4=5
-  check "baseline.sh: stops only once every covered class has >= 5 calls" "$(grep -c . "$TMP/bcalls")" "4"
-  check "baseline.sh: covered classes recorded, none undercovered" "$(bjf 'd["covered_classes"]' 'd["undercovered"]' 'd["class_counts"]["b"]')" "['a', 'b'] [] 5"
-  bl E15_BASELINE_MAX_SEEDS=6
-  check "baseline.sh: at the cap undercovered classes are recorded, not a failure" "$?" "0"
-  check "baseline.sh: cap run drew 6 seeds" "$(grep -c . "$TMP/bcalls")" "6"
-  check "baseline.json lists the undercovered class" "$(bjf 'd["undercovered"]')" "['b']"
-  mkcorpus 0
-  # a class under 1% of corpus calls is not covered
-  python3 -c 'import json; print(json.dumps({"calls": [{"class": "a"}] * 200 + [{"class": "b"}]}))' >"$TROOT/corpora/default/corpus.jsonl"
-  bl
-  check "baseline.sh: a <1% class does not extend the draw" "$(grep -c . "$TMP/bcalls")" "3"
   # an empty window that still saw a failed call is a failure, not a skip
   bl REASON_s1=empty_window FAILED_s1=1
   check "baseline.sh dies on an empty_window run with a failed call" "$?" "1"
