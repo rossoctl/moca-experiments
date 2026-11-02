@@ -22,6 +22,9 @@
 # rung command (tests only).
 set -euo pipefail
 E15_PROG=ladder.sh
+# Probe-only knobs (classprobe.sh) must never reach a measured rung: rung.sh would start every
+# session at call 0 or end the run after one session.
+unset E15_MAX_SESSIONS E15_START_ZERO
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"

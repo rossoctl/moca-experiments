@@ -229,7 +229,7 @@ if [ -f "$RIG/ladder.sh" ]; then
 #!/usr/bin/env bash
 n=$2 tag=${E15_TAG:-}
 key="$n${tag:+-$tag}"
-echo "$key k=${E15_K_MULT:-1} w=${E15_WARMUP_S:-}" >>"$LADDER_CALLS"
+echo "$key k=${E15_K_MULT:-1} w=${E15_WARMUP_S:-} ms=${E15_MAX_SESSIONS:-unset} sz=${E15_START_ZERO:-unset}" >>"$LADDER_CALLS"
 rec=$(grep "^$key=" "$RECS" | head -1 | cut -d= -f2-)
 [ -n "$rec" ] || exit 1
 d="$E15_ROOT/runs/$3/$1/N$key"
@@ -255,6 +255,15 @@ SH
   check "ladder: n_max_abs keeps climbing" "$(lj n_max_abs)" "24"
   check "ladder: stops where both are false" "$(lj stopped_at_abs)" "32"
   check "ladder: ran 5 rungs" "$(wc -l <"$TMP/lcalls" | tr -d ' ')" "5"
+
+  # probe-only knobs exported in the caller's shell never reach a measured rung
+  printf '1=%s\n8=%s\n' "$ok" "$both_bad" >"$TMP/recs"
+  rm -rf "$TROOT/runs"
+  : >"$TMP/lcalls"
+  E15_MAX_SESSIONS=1 E15_START_ZERO=1 E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$STUBRUNG" RECS="$TMP/recs" \
+    LADDER_CALLS="$TMP/lcalls" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/ladder.sh" default sbx >"$TMP/l.out" 2>&1
+  check "ladder: exported E15_MAX_SESSIONS/E15_START_ZERO never reach rung.sh" \
+    "$(grep -c 'ms=unset sz=unset' "$TMP/lcalls")/$(wc -l <"$TMP/lcalls" | tr -d ' ')" "2/2"
 
   printf '1=%s\n8=%s\n' "$ok" "$both_bad" >"$TMP/recs"
   ladder
