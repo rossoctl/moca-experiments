@@ -763,6 +763,279 @@ if [ -f "$RIG/teardown.sh" ]; then
   printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s"\n' "$CALLS" >"$STUB/sudo"
 fi
 
+# --- fresh-metal host profile (SPEC §13) ------------------------------------------------------
+
+for s in pins.sh bootstrap.sh; do
+  if [ ! -f "$RIG/$s" ]; then
+    check "$s exists" "missing" "present"
+    continue
+  fi
+  bash -n "$RIG/$s" 2>"$TMP/n.out"
+  check "bash -n $s" "$([ -s "$TMP/n.out" ] && echo FAIL || echo clean)" "clean"
+  if [ -n "$SC" ]; then
+    "$SC" -x -P "$RIG" "$RIG/$s" >"$TMP/sc.out" 2>&1
+    check "shellcheck $s" "$([ -s "$TMP/sc.out" ] && echo FAIL || echo clean)" "clean"
+    [ -s "$TMP/sc.out" ] && sed 's/^/    /' "$TMP/sc.out" | head -20
+  fi
+done
+
+# Profile selection: aws-prelim is the default and keeps its paths, guards and measurement.
+prof() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; eval "$2"' _ "$RIG/lib.sh" "$1" 2>&1; }
+rm -rf "$TROOT/state"
+check "profile: default is aws-prelim" "$(prof 'echo $E15_HOST_PROFILE')" "aws-prelim"
+check "profile: aws-prelim Firecracker in /usr/local/bin, base snapshot, Redis by tag" \
+  "$(prof 'echo $E15_FIRECRACKER $E15_JAILER $E15_BASE_SNAPSHOT $E15_REDIS_IMAGE')" \
+  "/usr/local/bin/firecracker /usr/local/bin/jailer /srv/snapshots/default docker.io/library/redis:7-alpine"
+check "profile: aws-prelim relay node and PATH unchanged" "$(prof 'e15_node; e15_path' | tr '\n' ' ')" "/usr/bin/node /usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin "
+check "profile: aws-prelim goenv has no PATH" "$(prof 'e15_goenv user | grep -c ^PATH=')" "0"
+check "profile: aws-prelim podman is plain sudo podman" "$(prof 'e15_podman_str')" "sudo -n podman"
+check "profile: fresh-metal Firecracker, jailer from /srv/e15/bin; no base snapshot; Redis by digest" \
+  "$(E15_HOST_PROFILE=fresh-metal prof 'echo ${E15_FIRECRACKER#$E15_ROOT/} ${E15_JAILER#$E15_ROOT/} base=$E15_BASE_SNAPSHOT ${E15_REDIS_IMAGE%%@*}')" \
+  "bin/firecracker bin/jailer base= docker.io/library/redis"
+check "profile: fresh-metal node, PATH and goenv are bootstrap.sh's" \
+  "$(E15_HOST_PROFILE=fresh-metal prof 'e15_node | sed "s#^$E15_ROOT/##"; e15_path | cut -d: -f1-3 | sed "s#$E15_ROOT/##g"; e15_goenv user | grep -c "^PATH=$E15_ROOT/bin:"' | tr '\n' ' ')" \
+  "node/bin/node bin:go-toolchain/bin:node/bin 1 "
+check "profile: fresh-metal keeps npm/corepack/XDG caches under the root" \
+  "$(E15_HOST_PROFILE=fresh-metal prof 'e15_userenv user | grep -E "^(npm_config_cache|COREPACK_HOME|XDG_CACHE_HOME)=" | grep -c "=$E15_ROOT/"')" "3"
+check "profile: fresh-metal podman uses storage under the root" \
+  "$(E15_HOST_PROFILE=fresh-metal prof 'e15_podman_str; e15_podman_conf_body | grep -c "root = \"$E15_ROOT/containers/"' | tr '\n' ' ')" \
+  "sudo -n env CONTAINERS_STORAGE_CONF=$TROOT/containers/storage.conf podman 2 "
+check "profile: an unknown profile is refused (exit 3)" "$(E15_HOST_PROFILE=bogus prof 'echo x' >/dev/null; echo $?)" "3"
+mkdir -p "$TROOT/state" && echo fresh-metal >"$TROOT/state/host_profile"
+check "profile: the recorded profile is the default" "$(prof 'echo $E15_HOST_PROFILE')" "fresh-metal"
+check "profile: a different explicit profile than the recorded one is refused" \
+  "$(E15_HOST_PROFILE=aws-prelim prof 'echo x' >/dev/null; echo $?)" "3"
+rm -f "$TROOT/state/host_profile"
+
+# fresh-metal guards: no shared-host rules; nothing outside the root but the manifest
+mguard() { (E15_HOST_PROFILE=fresh-metal E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash -c "source '$RIG/lib.sh'; $1" >"$TMP/g.out" 2>&1) && echo pass || echo refused; }
+check "fresh-metal: a path under the root passes" "$(mguard "refuse_shared_paths '$TROOT/x' '$TROOT/workspaces'")" "pass"
+check "fresh-metal: the manifest passes" "$(mguard "refuse_shared_paths '$TMP/m.md'")" "pass"
+check "fresh-metal: /usr/local/bin is refused" "$(mguard 'refuse_shared_paths /usr/local/bin/firecracker')" "refused"
+check "fresh-metal: dot-dot out of the root is refused" "$(mguard "refuse_shared_paths '$TROOT/../elsewhere'")" "refused"
+mkdir -p "$TROOT/sub" && ln -sfn /etc "$TROOT/sub/out"
+check "fresh-metal: a symlink out of the root is refused" "$(mguard "refuse_shared_paths '$TROOT/sub/out'")" "refused"
+rm -f "$TROOT/sub/out"
+check "fresh-metal: sctl on an E15 unit passes" "$(mguard 'sctl stop e15-worker.service')" "pass"
+check "fresh-metal: sctl daemon-reload passes" "$(mguard 'sctl daemon-reload')" "pass"
+check "fresh-metal: sctl on a host unit is refused" "$(mguard 'sctl stop ssh.service')" "refused"
+check "fresh-metal: sctl on microvm-worker (not E15's) is refused" "$(mguard 'sctl stop microvm-worker.service')" "refused"
+check "aws-prelim: sctl on microvm-worker still passes" "$(guard 'sctl stop microvm-worker.service')" "pass"
+
+# Ubuntu path selection: package manager from os-release, unit dir, no /etc/serverless-harness
+printf 'ID=ubuntu\nVERSION_ID="24.04"\n' >"$TMP/os-ubuntu"
+printf 'ID="amzn"\nVERSION_ID="2023"\n' >"$TMP/os-amzn"
+osq() { E15_OS_RELEASE="$1" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; e15_os_id; e15_pkg_mgr; e15_pkg_remove_cmd podman' _ "$RIG/lib.sh" | tr '\n' '|'; }
+check "ubuntu: apt" "$(osq "$TMP/os-ubuntu")" "ubuntu|apt|sudo -n env DEBIAN_FRONTEND=noninteractive apt-get remove -y podman|"
+check "al2023: dnf" "$(osq "$TMP/os-amzn")" "amzn|dnf|sudo -n dnf remove -y podman|"
+check "unit files go to /etc/systemd/system on both" "$(prof 'echo $E15_UNIT_DIR')/$(E15_HOST_PROFILE=fresh-metal prof 'echo $E15_UNIT_DIR')" "/etc/systemd/system//etc/systemd/system"
+check "no rig script writes /etc/serverless-harness" "$(cat "$RIG"/*.sh | grep -v '^ *#' | grep -c '/etc/serverless-harness')" "0"
+check "setup.sh writes its unit files to \$E15_UNIT_DIR" "$(grep -c 'f=\$E15_UNIT_DIR/\$unit' "$RIG/setup.sh")" "1"
+check "pins.sh: no pin is empty" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; for n in "${E15_PINS[@]}"; do [ -n "${!n}" ] || echo "$n"; done' _ "$RIG/lib.sh" | grep -c .)" "0"
+check "pins.sh: every sha256 pin is 64 hex" "$(grep -E '^E15_[A-Z_]*SHA256=' "$RIG/pins.sh" | grep -cvE '=[0-9a-f]{64}$')" "0"
+check "pins.sh: the sandbox image is pinned by digest" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; echo "$E15_SANDBOX_IMAGE"' _ "$RIG/lib.sh" | grep -cE '^ghcr.io/rossoctl/moca-remote-worker@sha256:[0-9a-f]{64}$')" "1"
+
+# bootstrap.sh: stubbed downloads, idempotent, refuses empty pins
+if [ -f "$RIG/bootstrap.sh" ]; then
+  BR="$TMP/e15-rig-test.boot"
+  BS="$TMP/bstub"
+  FIX="$TMP/bfix"
+  rm -rf "$BR" "$BS" "$FIX"
+  mkdir -p "$BR/src/e15" "$BS" "$FIX"
+  cp -R "$RIG" "$BR/src/e15/rig"
+  # Fixture tarballs, laid out like the real ones; each fake binary prints its version.
+  mk() { mkdir -p "$FIX/$1/$2" && printf '#!/bin/sh\n%s\n' "$4" >"$FIX/$1/$2/$3" && chmod +x "$FIX/$1/$2/$3"; }
+  mk go go/bin go 'echo "go version go1.26.0 linux/amd64"'
+  mk node node-v22/bin node 'echo v22.23.4'
+  mk node node-v22/bin corepack 'case "$1" in enable) shift; [ "$1" = --install-directory ] && printf "#!/bin/sh\necho 9.15.9\n" >"$2/pnpm" && chmod +x "$2/pnpm" ;; esac; echo "corepack $*" >>"$CP_LOG"'
+  mk fc release-v1.17.0-x86_64 firecracker-v1.17.0-x86_64 'echo "Firecracker v1.17.0"'
+  mk fc release-v1.17.0-x86_64 jailer-v1.17.0-x86_64 'echo "Jailer v1.17.0"'
+  mk grpcurl . grpcurl 'echo "grpcurl 1.9.4"'
+  tar -czf "$FIX/go.tgz" -C "$FIX/go" go
+  tar -czf "$FIX/node.tgz" -C "$FIX/node" node-v22
+  tar -czf "$FIX/fc.tgz" -C "$FIX/fc" release-v1.17.0-x86_64
+  tar -czf "$FIX/grpcurl.tgz" -C "$FIX/grpcurl" grpcurl
+  sh_() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
+  cat >"$TMP/test-pins.sh" <<EOF
+E15_GO_URL=https://fixture.invalid/go.tgz
+E15_GO_SHA256=$(sh_ "$FIX/go.tgz")
+E15_NODE_URL=https://fixture.invalid/node.tgz
+E15_NODE_SHA256=$(sh_ "$FIX/node.tgz")
+E15_FC_URL=https://fixture.invalid/fc.tgz
+E15_FC_SHA256=$(sh_ "$FIX/fc.tgz")
+E15_GRPCURL_URL=https://fixture.invalid/grpcurl.tgz
+E15_GRPCURL_SHA256=$(sh_ "$FIX/grpcurl.tgz")
+EOF
+  # The downloader stub: copies the fixture named by the URL's basename, logs the call.
+  printf '#!/usr/bin/env bash\necho "fetch $1" >>"%s"\ncp "%s/$(basename "$1")" "$2"\n' "$TMP/fetch.log" "$FIX" >"$TMP/fetch.sh"
+  chmod +x "$TMP/fetch.sh"
+  # sudo runs the command (no root needed for the test root); apt/dpkg/usermod/getent are stubs.
+  printf '#!/usr/bin/env bash\n[ "$1" = -n ] && shift\necho "sudo $*" >>"%s"\n[ $# -eq 0 ] || [ "$1" = true ] && exit 0\nexec "$@"\n' "$TMP/bsudo.log" >"$BS/sudo"
+  printf '#!/usr/bin/env bash\necho "apt-get $*" >>"%s"\n[ "$1" = install ] && for a; do case "$a" in -*|install) ;; *) echo "$a" >>"%s" ;; esac; done\nexit 0\n' "$TMP/apt.log" "$TMP/dpkg.db" >"$BS/apt-get"
+  printf '#!/usr/bin/env bash\nif [ "$1" = -W ] && [ "$2" = -f ] && [ "$3" = "\\${Status}" ]; then grep -qx "$4" "%s" 2>/dev/null && printf "install ok installed"; exit 0; fi\ncat "%s" 2>/dev/null; exit 0\n' "$TMP/dpkg.db" "$TMP/dpkg.db" >"$BS/dpkg-query"
+  printf '#!/usr/bin/env bash\necho "usermod $*" >>"%s"\necho "$3" >"%s"\n' "$TMP/usermod.log" "$TMP/kvm.members" >"$BS/usermod"
+  printf '#!/usr/bin/env bash\n[ "$2" = kvm ] && echo "kvm:x:992:$(cat "%s" 2>/dev/null)"\n' "$TMP/kvm.members" >"$BS/getent"
+  printf '#!/bin/sh\necho x86_64\n' >"$BS/uname"
+  chmod +x "$BS"/*
+  : >"$TMP/kvm-dev"
+  boot() {
+    env E15_HOST_PROFILE=fresh-metal E15_ROOT="$BR" E15_TEST_ROOT="$BR" E15_TEST_PINS="$TMP/test-pins.sh" \
+      E15_FETCH="$TMP/fetch.sh" E15_OS_RELEASE="$TMP/os-ubuntu" E15_KVM_DEV="$TMP/kvm-dev" CP_LOG="$TMP/cp.log" \
+      E15_MANIFEST="$TMP/boot-m.md" PATH="$BS:$PATH" "$@" bash "$BR/src/e15/rig/bootstrap.sh" >"$TMP/boot.out" 2>&1
+  }
+  : >"$TMP/fetch.log"
+  printf 'git\ncurl\npython3\niproute2\n' >"$TMP/dpkg.db"
+  : >"$TMP/kvm.members"
+  rm -f "$TMP/boot-m.md"
+  boot
+  check "bootstrap: first run exits 0" "$?" "0"
+  [ -s "$TMP/boot.out" ] && grep -q 'bootstrap.sh:' "$TMP/boot.out" && sed 's/^/    /' "$TMP/boot.out" | tail -5
+  check "bootstrap: downloads go, node, firecracker, grpcurl once each" "$(sort "$TMP/fetch.log" | uniq -c | awk '{print $1}' | tr -d '\n')/$(grep -c . "$TMP/fetch.log")" "1111/4"
+  check "bootstrap: go into go-toolchain, node into node, firecracker+jailer+grpcurl+pnpm into bin" \
+    "$(cd "$BR" && for f in go-toolchain/bin/go node/bin/node bin/firecracker bin/jailer bin/grpcurl bin/pnpm; do [ -x "$f" ] && printf y || printf n; done)" "yyyyyy"
+  check "bootstrap: installs only the missing apt packages" "$(grep '^apt-get install' "$TMP/apt.log" | sed 's/.* -q //')" "podman unzip e2fsprogs"
+  check "bootstrap: apt packages listed as LEFTOVER with their remove command" "$(grep -c 'LEFTOVER: apt packages podman unzip e2fsprogs .*remove with: sudo -n env DEBIAN_FRONTEND=noninteractive apt-get remove -y podman unzip e2fsprogs' "$TMP/boot-m.md")" "1"
+  check "bootstrap: adds the user to kvm, with a PURGE that undoes it" "$(grep -c '^usermod -aG kvm' "$TMP/usermod.log")/$(grep -c "PURGE: sudo -n gpasswd -d $(id -un) kvm" "$TMP/boot-m.md")" "1/1"
+  check "bootstrap: pnpm via corepack, pinned by version and sha512" "$(grep -c 'corepack install -g pnpm@9.15.9+sha512.68046141' "$TMP/cp.log")" "1"
+  check "bootstrap: records each artifact's sha256 in state/artifacts" "$(awk '{print $1}' "$BR/state/artifacts" | sort | tr '\n' ' ')" "firecracker go grpcurl node pnpm "
+  check "bootstrap: go's recorded sha256 is the tarball's" "$(awk '$1=="go"{print $2}' "$BR/state/artifacts")" "$(sh_ "$FIX/go.tgz")"
+  check "bootstrap: records the host profile" "$(cat "$BR/state/host_profile")" "fresh-metal"
+  check "bootstrap: PURGE of the root and podman storage" "$(grep -c "PURGE: sudo -n rm -rf $BR\$" "$TMP/boot-m.md")/$(grep -c 'PURGE: .*podman system reset' "$TMP/boot-m.md")" "1/1"
+  cp "$TMP/boot-m.md" "$TMP/boot-m.1"
+  : >"$TMP/fetch.log"
+  : >"$TMP/apt.log"
+  : >"$TMP/usermod.log"
+  boot
+  check "bootstrap: second run exits 0" "$?" "0"
+  check "bootstrap: second run downloads, installs and adds nothing" "$(grep -c . "$TMP/fetch.log")/$(grep -c . "$TMP/apt.log")/$(grep -c . "$TMP/usermod.log")" "0/0/0"
+  check "bootstrap: second run leaves the manifest unchanged" "$(cmp -s "$TMP/boot-m.md" "$TMP/boot-m.1" && echo same || echo changed)" "same"
+  check "bootstrap: second run says nothing to change" "$(grep -c 'nothing to change' "$TMP/boot.out")" "1"
+  # a tarball that does not match its pin is refused and not installed
+  printf 'E15_GRPCURL_SHA256=%064d\n' 0 >>"$TMP/test-pins.sh"
+  rm -f "$BR/bin/grpcurl" "$BR/state/bootstrap-grpcurl" "$BR/downloads/grpcurl.tgz"
+  boot
+  check "bootstrap: a checksum mismatch fails" "$?/$(grep -c 'checksum mismatch for https://fixture.invalid/grpcurl.tgz' "$TMP/boot.out")" "1/1"
+  check "bootstrap: the mismatched download is not kept" "$(find "$BR/downloads" -name 'grpcurl*' | grep -c .)/$([ -e "$BR/bin/grpcurl" ] && echo installed || echo absent)" "0/absent"
+  # refusal on an empty checksum constant, before touching anything
+  printf 'E15_FC_SHA256=\nE15_KERNEL_SHA256=\n' >>"$TMP/test-pins.sh"
+  : >"$TMP/fetch.log"
+  : >"$TMP/bsudo.log"
+  cp "$TMP/boot-m.md" "$TMP/boot-m.2"
+  boot
+  check "bootstrap: an empty pin refuses the run (exit 1)" "$?" "1"
+  check "bootstrap: the refusal names every empty pin" "$(grep -c 'empty pin(s) in pins.sh, the operator must fill them: E15_FC_SHA256 E15_KERNEL_SHA256' "$TMP/boot.out")" "1"
+  check "bootstrap: the refusal touched nothing" "$(grep -c . "$TMP/fetch.log")/$(grep -c . "$TMP/bsudo.log")/$(cmp -s "$TMP/boot-m.md" "$TMP/boot-m.2" && echo same)" "0/0/same"
+  check "bootstrap: aws-prelim refuses it" "$(E15_ROOT="$BR" E15_TEST_ROOT="$BR" E15_MANIFEST="$TMP/boot-x.md" PATH="$BS:$PATH" bash "$BR/src/e15/rig/bootstrap.sh" >/dev/null 2>&1; echo $?)" "1"
+  rm -rf "$BR/state"
+  check "bootstrap: a non-Ubuntu host is refused" "$(boot E15_TEST_PINS= E15_OS_RELEASE="$TMP/os-amzn"; echo $?)/$(grep -c 'expects Ubuntu' "$TMP/boot.out")" "1/1"
+  check "setup.sh: fresh-metal refuses empty pins too" "$(grep -c '^  e15_require_pins$' "$RIG/setup.sh")" "1"
+  check "e15_fetch: no checksum -> refuses" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; e15_fetch https://x.invalid/a "" "$2"' _ "$RIG/lib.sh" "$TMP/nofetch" >/dev/null 2>&1; echo "$?/$([ -e "$TMP/nofetch" ] && echo file || echo none)")" "1/none"
+fi
+
+# reflink probe -> sparse fallback
+if [ -f "$RIG/lib.sh" ]; then
+  CPS="$TMP/cpstub"
+  mkdir -p "$CPS" "$TMP/rprobe"
+  printf '#!/usr/bin/env bash\nfor a; do [ "$a" = --reflink=always ] && { echo "cp: failed to clone: Operation not supported" >&2; exit 1; }; done\nexec /bin/cp "$@"\n' >"$CPS/cp"
+  chmod +x "$CPS/cp"
+  rp() { PATH="$1:$PATH" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; probe_reflink "$2"' _ "$RIG/lib.sh" "$TMP/rprobe"; }
+  check "probe_reflink: cp --reflink=always fails (ext4) -> sparse" "$(rp "$CPS")" "sparse"
+  printf '#!/usr/bin/env bash\nargs=(); for a; do [ "$a" = --reflink=always ] || args+=("$a"); done\nexec /bin/cp "${args[@]}"\n' >"$CPS/cp"
+  check "probe_reflink: cp --reflink=always works (XFS) -> reflink" "$(rp "$CPS")" "reflink"
+  check "probe_reflink: leaves no probe files" "$(find "$TMP/rprobe" -mindepth 1 | grep -c .)" "0"
+  wcm() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; m=$(workspace_copy_mode); echo "$m $(workspace_cp_flag "$m")"' _ "$RIG/lib.sh"; }
+  rm -f "$TROOT/state/workspace_copy"
+  check "workspace copy: no state (aws-prelim) -> reflink, as before" "$(wcm)" "reflink --reflink=always"
+  echo sparse >"$TROOT/state/workspace_copy"
+  check "workspace copy: state sparse -> cp --sparse=always" "$(wcm)" "sparse --sparse=always"
+  rm -f "$TROOT/state/workspace_copy"
+  check "setup.sh probes reflink and records workspace_copy (fresh-metal)" "$(grep -c 'mode=$(probe_reflink "$E15_STATE")' "$RIG/setup.sh")/$(grep -c '>"$E15_STATE/workspace_copy"' "$RIG/setup.sh")" "1/1"
+  check "rung.sh copies with the recorded mode's flag" "$(grep -c 'cp "\$cpf" "\$tpl" "\$d/workspace.img"' "$RIG/rung.sh")/$(grep -c 'workspace_cp_flag "\$WS_COPY"' "$RIG/rung.sh")" "1/2"
+  check "rung.sh keeps the K floor unchanged" "$(grep -c 'print(max(16, (int(math.ceil(w/s))+3)\*int(sys.argv\[3\])))' "$RIG/rung.sh")" "1"
+  de() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; shift; workspace_disk_estimate "$@"' _ "$RIG/lib.sh" "$@"; }
+  check "disk estimate: 128 x 16 images x 256 MiB worst case" "$(de 128 16 256 15000 104857600)" \
+    "N=128: 2048 images (K=16) x 256 MiB = 512.0 GiB worst case; 29.3 GiB at creation; 100.0 GiB free"
+  check "disk estimate: creation cost above free space fails" "$(de 128 16 1024 600000 104857600 >/dev/null; echo $?)" "1"
+  # rung.sh in sparse mode: prints the estimate and refuses a rung that cannot fit (before any unit)
+  printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
+  printf '#!/usr/bin/env bash\necho "Filesystem 1024-blocks Used Available Capacity Mounted"\necho "/dev/x 100 1 10 1%% /"\n' >"$STUB/df"
+  chmod +x "$STUB/df"
+  mkdir -p "$TROOT/corpora/default" "$TROOT/runs" "$TROOT/workspaces" "$TROOT/jail" "$TROOT/state"
+  printf '{"table": {"mean_span_min": 30}}\n' >"$TROOT/corpora/default/corpus-report.json"
+  head -c 4096 /dev/zero >"$TROOT/template/workspace.img"
+  echo sparse >"$TROOT/state/workspace_copy"
+  : >"$CALLS"
+  E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/rung.sh" sbx 1 default >"$TMP/r.out" 2>&1
+  check "rung.sh sparse: refuses when the copies do not fit" "$?/$(grep -c 'not enough disk for 16 sparse workspaces' "$TMP/r.out")" "1/1"
+  check "rung.sh sparse: the refusal started no worker" "$(grep -c 'systemd-run' "$CALLS")" "0"
+  rm -f "$TROOT/state/workspace_copy" "$STUB/df"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
+fi
+
+# parallel disk measurement: 4 concurrent direct readers of separate files, summed (stubbed dd)
+if [ -f "$RIG/lib.sh" ]; then
+  PDS="$TMP/pddstub"
+  mkdir -p "$PDS"
+  : >"$TMP/pdd.calls"
+  # Each reader of FILE.<i> takes 0.3 s and reports (i+1) x 100 MB/s; a write creates its file.
+  cat >"$PDS/dd" <<SH
+#!/usr/bin/env bash
+echo "\$(date +%s.%N) dd \$*" >>"$TMP/pdd.calls"
+for a; do case "\$a" in of=/dev/null) ;; of=*) : >"\${a#of=}" ;; if=/dev/zero) ;; if=*) f=\${a#if=} ;; esac; done
+case "\$*" in *iflag=direct*)
+  sleep 0.5
+  echo "\$(date +%s.%N) end \$f" >>"$TMP/pdd.calls"
+  i=\${f##*.}
+  echo "2147483648 bytes (2.1 GB, 2.0 GiB) copied, \$(python3 -c "print(2147.483648/((\$i+1)*100))") s, x MB/s" >&2 ;;
+esac
+SH
+  chmod +x "$PDS/dd"
+  got=$(PATH="$PDS:$PATH" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; measure_disk_read_parallel "$2" 4 2048' _ "$RIG/lib.sh" "$TMP/pprobe")
+  check "parallel disk read: the readers' MB/s summed (100+200+300+400)" "$got" "1000.0"
+  check "parallel disk read: 4 writes of 512 x 4M direct, 4 direct reads of separate files" \
+    "$(grep -c 'bs=4M count=512 oflag=direct' "$TMP/pdd.calls")/$(grep 'iflag=direct' "$TMP/pdd.calls" | grep -o 'if=[^ ]*' | sort -u | grep -c .)" "4/4"
+  # concurrent: every reader started before the first one ended
+  check "parallel disk read: the readers ran concurrently" "$(python3 -c '
+import sys
+rows = [l.split() for l in open(sys.argv[1])]
+starts = [float(r[0]) for r in rows if "iflag=direct" in r]
+ends = [float(r[0]) for r in rows if r[1] == "end"]
+print("yes" if len(starts) == 4 and max(starts) < min(ends) else "no")' "$TMP/pdd.calls")" "yes"
+  check "parallel disk read: every probe file is removed" "$(find "$TMP" -maxdepth 1 -name 'pprobe*' | grep -c .)" "0"
+  printf '#!/usr/bin/env bash\ncase "$*" in *iflag=direct*) exit 1 ;; *of=*) for a; do case "$a" in of=*) : >"${a#of=}" ;; esac; done ;; esac\n' >"$PDS/dd"
+  PATH="$PDS:$PATH" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; measure_disk_read_parallel "$2" 4 2048' _ "$RIG/lib.sh" "$TMP/pprobe" >/dev/null 2>&1
+  check "parallel disk read: a failed reader fails, files still removed" "$?/$(find "$TMP" -maxdepth 1 -name 'pprobe*' | grep -c .)" "1/0"
+  check "setup.sh fresh-metal: max = parallel, single kept for reference" \
+    "$(grep -c 'par=$(measure_disk_read_parallel "$E15_STATE/.disk-read-probe-p" 4 2048)' "$RIG/setup.sh")/$(grep -c 'printf .%s\\n. "$par" >"$E15_STATE/disk_read_max_mbs"' "$RIG/setup.sh")/$(grep -c 'printf .%s\\n. "$one" >"$E15_STATE/disk_read_single_mbs"' "$RIG/setup.sh")" "1/1/1"
+  check "setup.sh: the parallel measurement is fresh-metal only" "$(grep -B3 'par=$(measure_disk_read_parallel' "$RIG/setup.sh" | grep -c '^if \[ "\$METAL" = 1 \] && \[ ! -s "\$E15_STATE/disk_read_max_mbs" \]; then$')" "1"
+  check "rung.sh records disk_read_single_mbs too" "$(grep -c '"disk_read_single_mbs": ' "$RIG/rung.sh")" "1"
+fi
+
+# teardown on fresh-metal: no host-worker/bench verify; lists LEFTOVERs; undoes in reverse
+if [ -f "$RIG/teardown.sh" ]; then
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$STUB/systemctl"
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$STUB/sudo"
+  mkdir -p "$TROOT/state" && echo fresh-metal >"$TROOT/state/host_profile"
+  : >"$OUT"
+  printf -- '## Bootstrap 1\n- t LEFTOVER: apt packages podman (kept)\n- t added u to group kvm | PURGE: echo kvm >>"$OUT"\n## Setup 1\n- t PRESTATE: fresh-metal: no host services to pause\n- t created slice | UNDO: echo slice >>"$OUT"\n- t relay | UNDO: echo relay >>"$OUT"\n' >"$TMP/m7.md"
+  E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m7.md" bash "$RIG/teardown.sh" >"$TMP/t7.out" 2>&1
+  check "fresh-metal teardown: verifies without a host worker or bench containers (exit 0)" "$?" "0"
+  check "fresh-metal teardown: undoes setup in reverse, keeps bootstrap's PURGE for --purge" "$(tr '\n' ' ' <"$OUT")" "relay slice "
+  check "fresh-metal teardown: lists the LEFTOVER packages" "$(grep -c '^LEFTOVER: apt packages podman' "$TMP/t7.out")" "1"
+  check "fresh-metal teardown: the verify note names fresh-metal" "$(grep -c 'verified (fresh-metal)' "$TMP/m7.md")" "1"
+  rm -f "$TROOT/state/host_profile"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
+  printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s"\n' "$CALLS" >"$STUB/sudo"
+fi
+
+# aws-prelim is unchanged where it matters: guards, PRESTATE, rootfs source, disk measurement
+check "aws-prelim setup keeps the shared-host pause" "$(grep -c 'sctl stop "\$E15_HOST_WORKER"' "$RIG/setup.sh")/$(grep -c 'sudo -n docker stop "\$c"' "$RIG/setup.sh")" "1/1"
+check "aws-prelim setup keeps the base snapshot loop mount" "$(grep -c 'sudo -n mount -o loop,ro "\$E15_BASE_SNAPSHOT/rootfs" "\$mnt"' "$RIG/setup.sh")" "1"
+check "setup.sh: fresh-metal rootfs from build-rootfs.sh over the pinned image, digest checked" \
+  "$(grep -c 'deploy/microvm/build-rootfs.sh" --out "\$tree" --image "\$E15_SANDBOX_IMAGE"' "$RIG/setup.sh")/$(grep -c '"\$E15_SANDBOX_IMAGE_DIGEST" | "\$E15_SANDBOX_IMAGE_AMD64_DIGEST") ;;' "$RIG/setup.sh")" "1/1"
+check "setup.sh: fresh-metal kernel fetched by pinned sha256" "$(grep -c 'e15_fetch "\$E15_KERNEL_URL" "\$E15_KERNEL_SHA256" "\$KERNEL"' "$RIG/setup.sh")" "1"
+check "setup.sh: one build-snapshot call, --guest-ram-mb 1024, kernel per profile" "$(grep -c -- '--kernel "\$KERNEL" --rootfs "\$tree"' "$RIG/setup.sh")/$(grep -c -- '--vmm firecracker --guest-ram-mb 1024' "$RIG/setup.sh")" "1/1"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "rig.test.sh: all checks passed"

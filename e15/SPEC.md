@@ -1,6 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
 Version: 0.9 (draft for review), 2026-11-03
+2026-11-03: fresh-metal host profile for the metal run (§13): bootstrap, guest rootfs from moca v0.9.0's sandbox image, ext4 sparse workspace fallback, parallel disk read measurement; metal substrate table.
 2026-11-03: condition 3 class-matched (user decision before sealing): a session's expected time = the driver's schedule with each call lengthened by its class's N=1 probe median added latency; class pace ≤ 10%; N=1 median pace reported.
 2026-11-03: condition 3 relative to the arm's own N=1 median pace (user decision before sealing; at mem512 SBX's N=1 pace is +19.3%); metal run moves to an AWS m7i.metal-24xl (EBS-only), the IBM metal rig being unavailable.
 2026-11-03: memory-pressure point mem512 added (user decision after calibration): a 512 MiB per-session dataset, read once per recorded call of the scanning classes; its binding may be disk I/O, reported as a finding; §9.3 lists disk_io.
@@ -605,6 +606,36 @@ results and sealed before it runs. Metal removes the nesting penalty, the term m
 the answer (§4), and gives CPU room for the memory difference between the arms to show.
 Its disk bound depends on the provisioned EBS throughput and the instance's EBS bandwidth, and
 `disk_read_max` is re-measured with parallel streams before that run.
+
+The rig scripts bring the stack up on that host under the host profile `E15_HOST_PROFILE=fresh-metal`
+(the default, `aws-prelim`, is the preliminary rig's behaviour, unchanged). The metal host is fresh and
+dedicated, so the profile drops the shared-host rules of §4. Instead E15 writes nothing outside
+`/srv/e15` except the package installs, the `kvm` group membership and its two slice unit files, each
+recorded in the manifest with its undo. `e15/rig/bootstrap.sh` installs the toolchain first:
+Go 1.26.0, Node 22 with pnpm 9 through corepack, Firecracker v1.17.0 with its jailer, and grpcurl, all
+under `/srv/e15`, plus podman from Ubuntu's apt. Each is pinned by version and checksum in
+`e15/rig/pins.sh`, and the script refuses to run while any pin is empty. The guest is built the way
+moca v0.9.0 documents it: `deploy/microvm/build-rootfs.sh` exports the v0.9.0 sandbox image
+(`ghcr.io/rossoctl/moca-remote-worker:0.9.0`, pinned by digest) as the rootfs tree. The same pytest
+wheels are then added, and `build-snapshot.sh --guest-ram-mb 1024` runs with the pinned Firecracker CI
+kernel `vmlinux-6.18.44`, the version the preliminary rig ran. Every artifact's sha256 goes in
+`/srv/e15/state/artifacts`. The root volume is ext4 and has no reflink, so setup probes for reflink
+support. Without it, workspaces are sparse copies (`workspace_copy=sparse`). They share no blocks, so
+setup and each rung print the disk cost, the image count × the image size in the worst case, and a rung
+whose copies do not fit at creation is refused. `disk_read_max_mbs` is the sum of 4 concurrent direct-I/O
+readers of separate 2 GiB files; one stream does not saturate an EBS volume. The single-stream figure is
+kept as `disk_read_single_mbs`.
+
+| | |
+|---|---|
+| Host | AWS `m7i.metal-24xl`, **bare metal** (`systemd-detect-virt`: none), **96 vCPU, 377 GiB RAM, no swap** |
+| Virtualization | none; Firecracker runs directly on KVM (`/dev/kvm` root:kvm 0660) |
+| OS / kernel | Ubuntu 24.04.5 LTS, 7.0.0-1014-aws |
+| Firecracker | v1.17.0 (bootstrap.sh); guests have **1 vCPU** (`deploy/microvm/build-snapshot.sh`) |
+| Disk | one 200 GB EBS root volume (`/dev/nvme0n1`), ext4 assumed (setup probes reflink) |
+| cgroups | v2 |
+| Software | fresh: no docker, podman, go, node, pnpm or firecracker before bootstrap; stock services only |
+| Access | user `ubuntu`, passwordless sudo |
 
 ## 14. Left to the builder
 

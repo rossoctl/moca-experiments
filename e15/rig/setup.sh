@@ -30,6 +30,19 @@
 # Built artifacts (step 5-8) are stamped in /srv/e15/state and skipped when unchanged; they are
 # PURGE lines in the manifest (teardown.sh --purge), so a plain teardown keeps them for the next
 # setup. Services and host state are UNDO lines (teardown.sh).
+#
+# Host profile (lib.sh, E15_HOST_PROFILE; SPEC §13). The above is aws-prelim, the default. With
+# E15_HOST_PROFILE=fresh-metal (a fresh dedicated Ubuntu host, after bootstrap.sh):
+#   1-2. no shared-host guards and nothing to pause; every path must be under /srv/e15
+#   5-6. pnpm, Node and Go are bootstrap.sh's (/srv/e15/bin, /srv/e15/node, /srv/e15/go-toolchain)
+#   7.   guest kernel = the pinned Firecracker CI kernel (pins.sh, sha256-checked); rootfs =
+#        moca v0.9.0's deploy/microvm/build-rootfs.sh over the pinned sandbox image (by digest),
+#        then the same pytest wheels and gitconfig; each artifact's sha256 in state/artifacts
+#   7b.  workspace copies: a reflink probe under /srv/e15; on a filesystem without reflink (ext4)
+#        sparse copies, state/workspace_copy=sparse
+#   8b.  disk read max: 4 parallel direct-I/O readers of separate 2 GiB files, summed
+#        (state/disk_read_max_mbs) and the single stream (state/disk_read_single_mbs)
+#   9.   Redis by digest, in podman storage under /srv/e15/containers
 set -euo pipefail
 E15_PROG=setup.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,13 +55,28 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sudo -n true 2>/dev/null || die "needs passwordless sudo"
 [ -d "$E15_SRC" ] || die "no $E15_SRC: rsync e15/ there first"
 case "$HERE" in "$E15_SRC"/rig) ;; *) die "run the staged copy: $E15_SRC/rig/setup.sh (not $HERE)" ;; esac
+METAL=0
+if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+  METAL=1
+  e15_require_pins
+  for t in "$E15_GO_ROOT/bin/go" "$E15_NODE_ROOT/bin/node" "$E15_BIN/pnpm" "$E15_FIRECRACKER" "$E15_JAILER" "$E15_BIN/grpcurl"; do
+    [ -x "$t" ] || die "fresh-metal: no $t; run bootstrap.sh first"
+  done
+  command -v podman >/dev/null || die "fresh-metal: no podman; run bootstrap.sh first"
+  id -nG | tr ' ' '\n' | grep -qx kvm || log "note: $(id -un) is not yet in group kvm in this shell (bootstrap added it; the units run as root)"
+  # Every tool the rig calls is bootstrap.sh's first.
+  PATH=$(e15_path)
+  export PATH
+  mapfile -t UENV < <(e15_userenv user)
+  export "${UENV[@]}"
+fi
 
 refuse_shared_paths "$E15_ROOT" "$E15_MANIFEST" "$E15_SNAPDIR" "$E15_WORKSPACES" "$E15_JAIL"
 m_init
 
 # A setup whose services are already up is a no-op for them (second setup is idempotent).
 already_up=0
-if unit_active "$E15_UNIT_RELAY" && sudo -n podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
+if unit_active "$E15_UNIT_RELAY" && e15_podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
   already_up=1
 fi
 if [ "$already_up" = 0 ]; then
@@ -57,7 +85,7 @@ if [ "$already_up" = 0 ]; then
   done
   # A partial setup may have left E15's own Redis up; its port is then ours, not a conflict.
   ports=("${E15_PORTS[@]}")
-  if sudo -n podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
+  if e15_podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
     ports=("$E15_PORT_ATTACH" "$E15_PORT_EXEC" "$E15_PORT_NULL" "$E15_PORT_STATS")
   fi
   refuse_ports "${ports[@]}"
@@ -68,6 +96,10 @@ log "setup: manifest $E15_MANIFEST (already_up=$already_up)"
 # --- 2. pause the host's own worker and the bench containers ---------------------------------
 # The pre-setup state teardown.sh verifies against: one PRESTATE line per cycle (m_prestate). A
 # second setup in the same cycle sees E15's own stops, so only the first one is written.
+# fresh-metal: nothing of the shared rig exists there; nothing to pause.
+if [ "$METAL" = 1 ]; then
+  m_prestate "fresh-metal: no host services to pause"
+else
 if unit_active "$E15_HOST_WORKER"; then hw=active; else hw=inactive; fi
 bench=()
 for c in "${E15_BENCH_CTRS[@]}"; do
@@ -90,6 +122,7 @@ for c in "${E15_BENCH_CTRS[@]}"; do
     m_note "container $c not running (nothing to undo)"
   fi
 done
+fi
 
 # --- 3. tree and secrets ---------------------------------------------------------------------
 for d in "$E15_BIN" "$E15_SECRETS" "$E15_STATE" "$E15_LOGS" "$E15_RUNS" "$E15_WORKSPACES" \
@@ -102,6 +135,11 @@ done
 m_has "PURGE: sudo -n rm -rf $E15_ROOT" ||
   m_purge "created $E15_ROOT (all E15 files)" "sudo -n rm -rf $E15_ROOT"
 chmod 0700 "$E15_SECRETS"
+# fresh-metal: the profile is recorded (bootstrap.sh did already); lib.sh then defaults to it and
+# refuses another (rung, teardown). aws-prelim records nothing: it is the default.
+if [ "$METAL" = 1 ] && [ "$(cat "$E15_STATE/host_profile" 2>/dev/null || true)" != fresh-metal ]; then
+  echo fresh-metal >"$E15_STATE/host_profile"
+fi
 gen_token() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 if [ ! -s "$E15_SECRETS/exec.token" ]; then
   (umask 077 && gen_token >"$E15_SECRETS/exec.token" && gen_token >"$E15_SECRETS/sandbox.token")
@@ -123,7 +161,7 @@ want_vms=$(printf '[Unit]\nDescription=E15 worker and its microVMs\n\n[Slice]\nM
 for pair in "$E15_SLICE:$want_slice" "$E15_VM_SLICE:$want_vms"; do
   unit=${pair%%:*}
   body=${pair#*:}
-  f=/etc/systemd/system/$unit
+  f=$E15_UNIT_DIR/$unit
   if [ ! -f "$f" ]; then
     printf '%s\n' "$body" | sudo -n tee "$f" >/dev/null
     m_change "created $f" "sudo -n systemctl stop $unit; sudo -n rm -f $f; sudo -n systemctl daemon-reload"
@@ -187,10 +225,36 @@ fi
 # --- 7. rootfs + snapshot --------------------------------------------------------------------
 compgen -G "$E15_ROOT/wheels/pytest-*.whl" >/dev/null || die "no pytest wheel in $E15_ROOT/wheels (pip download on the laptop)"
 wheels_key=$( (cd "$E15_ROOT/wheels" && sha256sum ./*.whl) | sha256sum | cut -c1-16)
-snap_key="$E15_MOCA_PIN-$wheels_key-$(sha256_of "$E15_BASE_SNAPSHOT/rootfs" | cut -c1-16)"
+if [ "$METAL" = 1 ]; then
+  # The guest kernel (pins.sh): fetched once, sha256-checked on every setup.
+  KERNEL=$E15_ROOT/kernel/$E15_KERNEL_NAME
+  mkdir -p "$(dirname "$KERNEL")"
+  e15_fetch "$E15_KERNEL_URL" "$E15_KERNEL_SHA256" "$KERNEL"
+  e15_artifact kernel "$E15_KERNEL_SHA256" "$E15_KERNEL_URL"
+  snap_key="$E15_MOCA_PIN-$wheels_key-$(printf '%s' "$E15_SANDBOX_IMAGE_DIGEST" | cut -c8-23)-$(printf '%s' "$E15_KERNEL_SHA256" | cut -c1-16)"
+else
+  KERNEL=$E15_BASE_SNAPSHOT/kernel
+  snap_key="$E15_MOCA_PIN-$wheels_key-$(sha256_of "$E15_BASE_SNAPSHOT/rootfs" | cut -c1-16)"
+fi
 if ! stamp_ok snapshot "$snap_key" || [ ! -f "$E15_SNAPDIR/$E15_SNAPIMG/manifest.json" ]; then
-  log "rootfs: $E15_BASE_SNAPSHOT/rootfs (read-only loop mount) + pytest wheels"
   tree=$E15_ROOT/rootfs-build/tree
+  if [ "$METAL" = 1 ]; then
+  log "rootfs: moca v0.9.0 build-rootfs.sh over $E15_SANDBOX_IMAGE + pytest wheels (log $E15_LOGS/build-rootfs.log)"
+  sudo -n rm -rf "$E15_ROOT/rootfs-build"
+  sudo -n mkdir -p "$E15_ROOT/rootfs-build"
+  e15_podman pull "$E15_SANDBOX_IMAGE" >"$E15_LOGS/podman-pull-sandbox.log" 2>&1 ||
+    die "podman pull $E15_SANDBOX_IMAGE failed; see $E15_LOGS/podman-pull-sandbox.log"
+  sudo -n env CONTAINERS_STORAGE_CONF="$E15_PODMAN_CONF" PATH="$(e15_path)" \
+    bash "$E15_MOCA/deploy/microvm/build-rootfs.sh" --out "$tree" --image "$E15_SANDBOX_IMAGE" \
+    >"$E15_LOGS/build-rootfs.log" 2>&1 || die "build-rootfs.sh failed; see $E15_LOGS/build-rootfs.log"
+  src_digest=$(sudo -n sed -n 's/^digest=//p' "$tree/etc/moca-rootfs-source")
+  case "$src_digest" in
+  "$E15_SANDBOX_IMAGE_DIGEST" | "$E15_SANDBOX_IMAGE_AMD64_DIGEST") ;;
+  *) die "build-rootfs.sh exported digest '$src_digest', not the pinned $E15_SANDBOX_IMAGE_DIGEST" ;;
+  esac
+  e15_artifact sandbox-image "$src_digest" "$E15_SANDBOX_IMAGE"
+  else
+  log "rootfs: $E15_BASE_SNAPSHOT/rootfs (read-only loop mount) + pytest wheels"
   mnt=$(mktemp -d "$E15_ROOT/rootfs-build.mnt.XXXXXX")
   # A failure between mount and umount must not leave the loop device attached.
   trap 'mountpoint -q "$mnt" && sudo -n umount -d "$mnt"; rmdir "$mnt" 2>/dev/null || true' EXIT
@@ -201,6 +265,7 @@ if ! stamp_ok snapshot "$snap_key" || [ ! -f "$E15_SNAPDIR/$E15_SNAPIMG/manifest
   sudo -n umount -d "$mnt"
   rmdir "$mnt"
   trap - EXIT
+  fi
   # The base image's init and agent are replaced by build-snapshot.sh's own.
   sp=$(sudo -n sh -c "ls -d $tree/usr/lib/python3.*/site-packages" | head -1)
   [ -n "$sp" ] || die "no python3 site-packages in the base rootfs"
@@ -217,17 +282,23 @@ if ! stamp_ok snapshot "$snap_key" || [ ! -f "$E15_SNAPDIR/$E15_SNAPIMG/manifest
   sudo -n rm -rf "${E15_SNAPDIR:?}/$E15_SNAPIMG"
   log "build-snapshot.sh --guest-ram-mb 1024 --image $E15_SNAPIMG --out $E15_SNAPDIR/$E15_SNAPIMG (log $E15_LOGS/build-snapshot.log)"
   mapfile -t GOENV_ROOT < <(e15_goenv root)
-  sudo -n env PATH="/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin" "${GOENV_ROOT[@]}" TMPDIR="$E15_ROOT" \
+  sudo -n env PATH="$(e15_path)" "${GOENV_ROOT[@]}" TMPDIR="$E15_ROOT" \
     bash "$E15_MOCA/deploy/microvm/build-snapshot.sh" \
-    --kernel "$E15_BASE_SNAPSHOT/kernel" --rootfs "$tree" --agent "$E15_MOCA/remote-worker" \
+    --kernel "$KERNEL" --rootfs "$tree" --agent "$E15_MOCA/remote-worker" \
     --image "$E15_SNAPIMG" --vmm firecracker --guest-ram-mb 1024 --out "$E15_SNAPDIR/$E15_SNAPIMG" \
     >"$E15_LOGS/build-snapshot.log" 2>&1 || die "build-snapshot.sh failed; see $E15_LOGS/build-snapshot.log"
   sudo -n rm -rf "$E15_ROOT/rootfs-build"
   stamp_set snapshot "$snap_key"
+  if [ "$METAL" = 1 ]; then
+    for f in rootfs agent; do
+      e15_artifact "snapshot-$f" "$(sudo -n python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2] + "_sha256"])' "$E15_SNAPDIR/$E15_SNAPIMG/manifest.json" "$f")" "$E15_SNAPDIR/$E15_SNAPIMG/$f"
+    done
+  fi
   m_note "built snapshot $E15_SNAPDIR/$E15_SNAPIMG ($(sudo -n python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["hash"], "guest", m["guest_ram_mb"], "MiB", ",".join(m["capabilities"]))' "$E15_SNAPDIR/$E15_SNAPIMG/manifest.json"))"
 fi
 
 # --- 8. workspace templates (points.sh): default, and mem512's (1024 MiB, 512 MiB data.bin) ------
+tpath() { if [ "$METAL" = 1 ]; then e15_path; else echo "/usr/bin:/usr/sbin:/bin:/sbin"; fi; }
 k=$(src_key commands)
 while read -r tpoint; do
   e15_point "$tpoint" || die "points.sh: unknown template point $tpoint"
@@ -241,14 +312,44 @@ while read -r tpoint; do
     [ "$E15_P_DATASET_MIB" = 0 ] || wsopts+=(--dataset-mib "$E15_P_DATASET_MIB" --dataset-seed "$E15_P_DATASET_SEED")
     wlog=$E15_LOGS/build_workspace-$tpoint.log
     [ "$tpoint" = default ] && wlog=$E15_LOGS/build_workspace.log
-    sudo -n env "${psrc[@]}" PATH="/usr/bin:/usr/sbin:/bin:/sbin" bash "$E15_SRC/commands/build_workspace.sh" \
+    sudo -n env "${psrc[@]}" PATH="$(tpath)" bash "$E15_SRC/commands/build_workspace.sh" \
       "${wsopts[@]}" "$E15_P_TEMPLATE" >"$wlog" 2>&1 || die "build_workspace.sh ($tpoint) failed; see $wlog"
     stamp_set "$E15_P_TEMPLATE_STAMP" "$tkey"
     m_note "built $E15_P_TEMPLATE ($(tail -1 "$wlog"))"
   fi
+  [ "$METAL" = 1 ] && e15_artifact "$E15_P_TEMPLATE_STAMP" "$(sha256_of "$E15_P_TEMPLATE")" "$E15_P_TEMPLATE"
 done < <(e15_templates)
 
+# --- 7b. workspace copies: reflink where the filesystem has it, else sparse (fresh-metal) -----
+# aws-prelim is XFS with reflink (rung.sh's default). fresh-metal probes once and records it.
+if [ "$METAL" = 1 ] && [ ! -s "$E15_STATE/workspace_copy" ]; then
+  mode=$(probe_reflink "$E15_STATE")
+  printf '%s\n' "$mode" >"$E15_STATE/workspace_copy"
+  m_note "workspace_copy=$mode (cp --reflink=always probe under $E15_STATE; $(stat -f -c %T "$E15_ROOT" 2>/dev/null || echo fs unknown))"
+fi
+if [ "$METAL" = 1 ] && [ "$(workspace_copy_mode)" = sparse ]; then
+  # Sparse copies share no blocks: the operator checks each rung's cost against the free space
+  # (rung.sh prints it again and refuses a rung whose copies alone do not fit). K = 16 is the floor.
+  free_kb=$(df -Pk "$E15_ROOT" | awk 'NR==2 {print $4}')
+  while read -r tpoint; do
+    e15_point "$tpoint"
+    tkb=$(du -k "$E15_P_TEMPLATE" | cut -f1)
+    for n in "${E15_LADDER[@]}"; do
+      log "sparse workspaces, point $tpoint: $(workspace_disk_estimate "$n" 16 "$E15_P_IMAGE_MB" "$tkb" "$free_kb" || true)"
+    done
+    m_note "sparse workspaces, point $tpoint at N=${E15_LADDER[-1]}: $(workspace_disk_estimate "${E15_LADDER[-1]}" 16 "$E15_P_IMAGE_MB" "$tkb" "$free_kb" || echo "(does not fit)")"
+  done < <(e15_templates)
+fi
+
 # --- 8b. the volume's sequential read throughput (record.py's disk_io binding), once -----------
+if [ "$METAL" = 1 ] && [ ! -s "$E15_STATE/disk_read_max_mbs" ]; then
+  log "measuring direct-I/O read throughput of the /srv/e15 volume: 1 stream, then 4 parallel (2 GiB files)"
+  one=$(measure_disk_read "$E15_STATE/.disk-read-probe-1" 2048) || die "disk read measurement (single) failed"
+  par=$(measure_disk_read_parallel "$E15_STATE/.disk-read-probe-p" 4 2048) || die "disk read measurement (parallel) failed"
+  printf '%s\n' "$one" >"$E15_STATE/disk_read_single_mbs"
+  printf '%s\n' "$par" >"$E15_STATE/disk_read_max_mbs"
+  m_note "disk_read_max_mbs=$par (4 parallel dd iflag=direct bs=4M readers of separate 2 GiB files, summed); disk_read_single_mbs=$one (one stream); files removed"
+fi
 if [ ! -s "$E15_STATE/disk_read_max_mbs" ]; then
   log "measuring sequential direct-I/O read throughput of the /srv/e15 volume (2 GiB file)"
   mbs=$(measure_disk_read "$E15_STATE/.disk-read-probe" 2048) || die "disk read measurement failed"
@@ -257,19 +358,26 @@ if [ ! -s "$E15_STATE/disk_read_max_mbs" ]; then
 fi
 
 # Listed leftovers: things outside /srv/e15 E15's builds touch that no UNDO removes.
-for left in "npm cache ~/.npm (pi-fork npm ci; shared with other users of npm on this host)" \
-  "podman image $E15_REDIS_IMAGE (pre-existing on this host; E15 pulls nothing new)"; do
+if [ "$METAL" = 1 ]; then
+  # npm, corepack and podman storage are all under /srv/e15 (lib.sh e15_userenv, storage.conf);
+  # bootstrap.sh listed its apt packages.
+  left_list=("systemd journal lines of E15's transient units (rotated by journald)")
+else
+  left_list=("npm cache ~/.npm (pi-fork npm ci; shared with other users of npm on this host)"
+    "podman image $E15_REDIS_IMAGE (pre-existing on this host; E15 pulls nothing new)")
+fi
+for left in "${left_list[@]}"; do
   m_has "LEFTOVER: $left" || m_note "LEFTOVER: $left"
 done
 
 # --- 9. Redis and the relay ------------------------------------------------------------------
-if ! sudo -n podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
+if ! e15_podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
   # Host network, bound to loopback: no port-forward NAT rules, and the relay's systemd IP fence
   # (IPAddressAllow=localhost) admits it, which a DNAT to the podman bridge would not.
-  sudo -n podman run -d --name "$E15_REDIS_CTR" --network host \
+  e15_podman run -d --name "$E15_REDIS_CTR" --network host \
     "$E15_REDIS_IMAGE" redis-server --bind 127.0.0.1 --port "$E15_PORT_REDIS" --save '' --appendonly no >/dev/null
   m_change "podman run $E15_REDIS_CTR (host network, 127.0.0.1:$E15_PORT_REDIS, --save '')" \
-    "sudo -n podman rm -f $E15_REDIS_CTR"
+    "$(e15_podman_str) rm -f $E15_REDIS_CTR"
   wait_for 30 port_listening "$E15_PORT_REDIS" || die "Redis did not listen on 127.0.0.1:$E15_PORT_REDIS"
 fi
 if ! unit_active "$E15_UNIT_RELAY"; then
@@ -298,7 +406,7 @@ if ! stamp_ok e2e "$check_key"; then
   mkdir -p "$d"
   sudo -n rm -rf "$E15_WORKSPACES/e15-e2e"
   sudo -n mkdir -m 0700 "$E15_WORKSPACES/e15-e2e"
-  sudo -n cp --reflink=always "$E15_TEMPLATE" "$E15_WORKSPACES/e15-e2e/workspace.img"
+  sudo -n cp "$(workspace_cp_flag "$(workspace_copy_mode)")" "$E15_TEMPLATE" "$E15_WORKSPACES/e15-e2e/workspace.img"
   start_worker sbx "$d"
   e2e_ok=1
   for c in 'python3 -m pytest --version' 'cd project && git status --porcelain && git rev-parse HEAD' \

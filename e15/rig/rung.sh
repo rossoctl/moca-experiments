@@ -18,6 +18,7 @@
 # Steps:
 #   1. stop any rung units left over; wipe /srv/e15/workspaces and /srv/e15/jail (E15's own)
 #   2. pre-create /srv/e15/workspaces/<key>/workspace.img by `cp --reflink=always` of the template
+#      (or `cp --sparse=always` where setup.sh recorded state/workspace_copy=sparse: ext4, no reflink)
 #      for key = e15-<run>-<slot>-<seq>, slot 0..N-1, seq 0..K-1,
 #      K = max(16, ceil((warmup_s + window_s) / (corpus mean session span)) + 3) x K_MULT
 #   3. start the arm's worker (e15-worker.service in e15-vms.slice; SPEC §7 env; lib.sh worker_env)
@@ -183,18 +184,28 @@ refuse_shared_paths "$E15_WORKSPACES" "$E15_JAIL"
 sudo -n find "$E15_WORKSPACES" "$E15_JAIL" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 span_min=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["table"]["mean_span_min"])' "$CORPUS_DIR/corpus-report.json")
 K=$(python3 -c 'import math,sys; w,s=float(sys.argv[1]),float(sys.argv[2])*60; print(max(16, (int(math.ceil(w/s))+3)*int(sys.argv[3])))' "$((WARMUP + WINDOW))" "$span_min" "$K_MULT")
-log "pre-creating $((N * K)) reflink workspaces (K=$K, mean span ${span_min} min)"
+WS_COPY=$(workspace_copy_mode)
+if [ "$WS_COPY" = sparse ]; then
+  # Sparse copies share nothing: each costs the template's allocated blocks now, and up to its
+  # full image size if a guest writes it all. The operator checks the free space against this.
+  tpl_kb=$(du -k "$TEMPLATE" | cut -f1)
+  free_kb=$(df -Pk "$E15_WORKSPACES" | awk 'NR==2 {print $4}')
+  est=$(workspace_disk_estimate "$N" "$K" "$E15_P_IMAGE_MB" "$tpl_kb" "$free_kb") ||
+    die "not enough disk for $((N * K)) sparse workspaces: $est"
+  log "workspaces (sparse): $est"
+fi
+log "pre-creating $((N * K)) $WS_COPY workspaces (K=$K, mean span ${span_min} min)"
 sudo -n bash -c '
   set -e
-  ws=$1 tpl=$2 run=$3 n=$4 k=$5
+  ws=$1 tpl=$2 run=$3 n=$4 k=$5 cpf=$6
   for ((s = 0; s < n; s++)); do
     for ((q = 0; q < k; q++)); do
       d="$ws/e15-$run-$s-$q"
       mkdir -m 0700 "$d"
-      cp --reflink=always "$tpl" "$d/workspace.img"
+      cp "$cpf" "$tpl" "$d/workspace.img"
       chmod 0600 "$d/workspace.img"
     done
-  done' _ "$E15_WORKSPACES" "$TEMPLATE" "$RUN_ID" "$N" "$K"
+  done' _ "$E15_WORKSPACES" "$TEMPLATE" "$RUN_ID" "$N" "$K" "$(workspace_cp_flag "$WS_COPY")"
 
 # OOM kills anywhere in e15.slice over the rung (SPEC §7.2: an OOM kill fails the rung).
 oom_count() { awk '$1=="oom_kill"{print $2; f=1} END{if(!f) print 0}' "$E15_CG/memory.events" 2>/dev/null || echo 0; }
@@ -340,7 +351,8 @@ p = {
     "workspaces_per_slot": $K, "workspaces_k_mult": $K_MULT, "workspaces_precreated": len(pre),
     "oom_kills": $oom_after - $oom_before,
     "unseeded_sessions": len(keys - pre), "sessions_started": len(keys),
-    "workspace_seeding": "cp --reflink=always of the template per key before t0",
+    "workspace_seeding": "cp $(workspace_cp_flag "$WS_COPY") of the template per key before t0",
+    "workspace_copy": "$WS_COPY", "host_profile": "$E15_HOST_PROFILE",
     "corpus": "$CORPUS", "corpus_sha256": sha("$CORPUS"), "H_s": report.get("H_s"),
     "corpus_exclude": report.get("exclude"), "corpus_mean_span_min": report["table"]["mean_span_min"],
     "library_sha256": sha("$LIBRARY"),
@@ -350,6 +362,7 @@ p = {
     "scan_classes": [c for c in "$E15_P_SCAN_CLASSES".split(",") if c], "scan_cmd": "$E15_P_SCAN_CMD",
     "point_sig": "$(e15_point_sig "$POINT")", "point_settings": "$E15_P_SETTINGS",
     "disk_read_max_mbs": (lambda v: float(v) if v else None)(readf("$E15_STATE/disk_read_max_mbs")),
+    "disk_read_single_mbs": (lambda v: float(v) if v else None)(readf("$E15_STATE/disk_read_single_mbs")),
     "library": "$LIBRARY",
     "moca_commit": "$E15_MOCA_PIN",
     "moca_experiments_commit": readf("$commit_file"),

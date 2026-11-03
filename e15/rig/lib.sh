@@ -15,7 +15,15 @@
 #   - <utc> <what> | UNDO: <command>     replayed in reverse by teardown.sh
 #   - <utc> <what> | PURGE: <command>    replayed in reverse by teardown.sh --purge only
 #   - <utc> <what>                       a note
-# Sections: "## Setup <utc>", "## Teardown <utc>", "## Purge <utc>".
+# Sections: "## Setup <utc>", "## Bootstrap <utc>", "## Teardown <utc>", "## Purge <utc>".
+#
+# Host profile (E15_HOST_PROFILE, SPEC §13):
+#   aws-prelim   (default) the preliminary, shared AWS rig: Amazon Linux 2023, a P6 install, its
+#                Firecracker in /usr/local/bin and its golden snapshot. The shared-host guards above.
+#   fresh-metal  a dedicated, fresh Ubuntu host. bootstrap.sh installs the toolchain under /srv/e15
+#                (pins.sh); setup.sh builds the guest rootfs from moca v0.9.0's sandbox image. No
+#                shared-host guards (nothing shared runs there); instead refuse_shared_paths refuses
+#                any path outside /srv/e15 (the manifest excepted) and sctl any non-E15 unit.
 
 E15_ROOT=${E15_ROOT:-/srv/e15}
 # Rig rule: E15's files live under /srv/e15. A root elsewhere is refused at source time.
@@ -32,6 +40,30 @@ case "$E15_ROOT" in
   ;;
 esac
 E15_MANIFEST=${E15_MANIFEST:-$HOME/e15-manifest.md}
+# The profile setup.sh recorded ($E15_ROOT/state/host_profile) is the default, so rung.sh and
+# teardown.sh need no E15_HOST_PROFILE; without one, aws-prelim. A different explicit profile is
+# refused: the two lay out binaries and the guest differently.
+_e15_rec_profile=$(cat "$E15_ROOT/state/host_profile" 2>/dev/null || true)
+E15_HOST_PROFILE=${E15_HOST_PROFILE:-${_e15_rec_profile:-aws-prelim}}
+case "$E15_HOST_PROFILE" in
+aws-prelim | fresh-metal) ;;
+*)
+  printf 'lib.sh: E15_HOST_PROFILE=%s is not a profile (aws-prelim, fresh-metal)\n' "$E15_HOST_PROFILE" >&2
+  exit 3
+  ;;
+esac
+if [ -n "$_e15_rec_profile" ] && [ "$_e15_rec_profile" != "$E15_HOST_PROFILE" ]; then
+  printf 'lib.sh: E15_HOST_PROFILE=%s, but this host was set up as %s (%s/state/host_profile)\n' \
+    "$E15_HOST_PROFILE" "$_e15_rec_profile" "$E15_ROOT" >&2
+  exit 3
+fi
+# shellcheck source=pins.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pins.sh"
+# rig.test.sh only: fixture pins (its own tarballs' checksums), honoured only under its named root.
+if [ -n "${E15_TEST_PINS:-}" ] && [ -n "${E15_TEST_ROOT:-}" ] && [ "$E15_TEST_ROOT" = "$E15_ROOT" ]; then
+  # shellcheck disable=SC1090
+  . "$E15_TEST_PINS"
+fi
 E15_SHARED=/opt/serverless-harness
 
 # moca v0.9.0 (SPEC §6.6).
@@ -47,6 +79,8 @@ E15_PORT_REDIS=6400
 E15_PORTS=("$E15_PORT_ATTACH" "$E15_PORT_EXEC" "$E15_PORT_NULL" "$E15_PORT_STATS" "$E15_PORT_REDIS")
 
 # Units E15 creates. The worker's slice nests inside e15.slice (systemd expands the dash).
+# Unit files go to the admin unit directory, the same path on AL2023 and Ubuntu.
+E15_UNIT_DIR=/etc/systemd/system
 E15_SLICE=e15.slice
 E15_VM_SLICE=e15-vms.slice
 E15_PARENT_CGROUP=e15.slice/e15-vms.slice
@@ -60,10 +94,20 @@ E15_REDIS_IMAGE=docker.io/library/redis:7-alpine
 E15_HOST_WORKER=microvm-worker.service
 E15_BENCH_CTRS=(bench-cp bench-redis)
 
-# Firecracker binaries already on the host (read only).
-E15_JAILER=/usr/local/bin/jailer
-E15_FIRECRACKER=/usr/local/bin/firecracker
-E15_BASE_SNAPSHOT=/srv/snapshots/default
+# Firecracker binaries: aws-prelim, already on the host (read only); fresh-metal, bootstrap.sh's
+# pinned release under /srv/e15/bin. The guest's base: aws-prelim copies the host's golden
+# snapshot's rootfs and kernel; fresh-metal builds the rootfs from moca's sandbox image and fetches
+# the pinned CI kernel (pins.sh), so it has no E15_BASE_SNAPSHOT.
+if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+  E15_JAILER=$E15_ROOT/bin/jailer
+  E15_FIRECRACKER=$E15_ROOT/bin/firecracker
+  E15_BASE_SNAPSHOT=""
+  E15_REDIS_IMAGE=$E15_METAL_REDIS_IMAGE
+else
+  E15_JAILER=/usr/local/bin/jailer
+  E15_FIRECRACKER=/usr/local/bin/firecracker
+  E15_BASE_SNAPSHOT=/srv/snapshots/default
+fi
 
 E15_ARMS=(sbx resident-inf resident-300 control)
 E15_LADDER=(1 8 16 24 32 40 48 56 64 80 96 128)
@@ -111,6 +155,10 @@ _under() { [ "$1" = "$2" ] || case "$1" in "$2"/*) return 0 ;; *) return 1 ;; es
 
 refuse_shared_paths() {
   local p lp phys
+  if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+    refuse_outside_root "$@"
+    return
+  fi
   for p in "$@"; do
     lp=$(_lexical_path "$p")
     phys=$lp
@@ -135,8 +183,44 @@ refuse_ports() {
   done
 }
 
+# refuse_outside_root PATH... (fresh-metal): exit 3 unless each PATH is under $E15_ROOT or is the
+# manifest itself. Package installs (bootstrap.sh) are the only host changes outside it.
+refuse_outside_root() {
+  local p lp phys root_phys
+  root_phys=$(cd -P "$E15_ROOT" 2>/dev/null && pwd -P) || root_phys=$E15_ROOT
+  for p in "$@"; do
+    lp=$(_lexical_path "$p")
+    [ "$lp" = "$(_lexical_path "$E15_MANIFEST")" ] && continue
+    # A symlink under the root that points out of it is outside too (the last component included).
+    phys=$lp
+    if [ -d "$lp" ]; then
+      phys=$(cd -P "$lp" 2>/dev/null && pwd -P) || phys=$lp
+    elif [ -e "$lp" ]; then
+      phys=$(cd -P "$(dirname "$lp")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$lp")") || phys=$lp
+      [ -L "$phys" ] && phys=$(_lexical_path "$(cd -P "$(dirname "$phys")" && readlink "$phys" | sed "s#^[^/]#$(pwd -P)/&#")")
+    fi
+    if ! _under "$lp" "$E15_ROOT" || ! { _under "$phys" "$E15_ROOT" || _under "$phys" "$root_phys"; }; then
+      printf 'refuse_outside_root: %s is outside %s (fresh-metal rule: E15 writes only there)\n' "$p" "$E15_ROOT" >&2
+      exit 3
+    fi
+  done
+}
+
 refuse_units() {
   local a
+  if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+    # Every argument is an option, a systemctl verb, or one of E15's own units.
+    for a in "$@"; do
+      case "$a" in
+      -* | start | stop | restart | reset-failed | daemon-reload | is-active | is-failed | status | show | e15.slice | e15-*) ;;
+      *)
+        printf 'refuse_units: %s is not an E15 unit (fresh-metal rule: E15 touches only its own)\n' "$a" >&2
+        exit 3
+        ;;
+      esac
+    done
+    return 0
+  fi
   for a in "$@"; do
     case "$a" in
     sh-* | */sh-*)
@@ -194,6 +278,174 @@ e15_goenv() {
   local who=${1:-user}
   printf '%s\n' GOTOOLCHAIN=go1.26.0 GOWORK=off "GOPATH=$E15_ROOT/go/$who" \
     "GOMODCACHE=$E15_ROOT/go/$who/mod" "GOCACHE=$E15_ROOT/go/$who/cache"
+  # fresh-metal: the host has no go/node; bootstrap.sh's are first on PATH, caches under /srv/e15.
+  [ "$E15_HOST_PROFILE" != fresh-metal ] || e15_userenv "$who"
+}
+
+# e15_userenv [WHO] (fresh-metal): VAR=value lines that keep every tool's PATH, cache and config
+# under /srv/e15 (npm, corepack, pnpm's XDG dirs, go telemetry). Empty on aws-prelim.
+e15_userenv() {
+  local who=${1:-user} x=$E15_ROOT/xdg/${1:-user}
+  [ "$E15_HOST_PROFILE" = fresh-metal ] || return 0
+  printf '%s\n' "PATH=$(e15_path)" "npm_config_cache=$E15_ROOT/npm-cache/$who" \
+    "COREPACK_HOME=$E15_COREPACK_HOME" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    "XDG_CACHE_HOME=$x/cache" "XDG_CONFIG_HOME=$x/config" "XDG_DATA_HOME=$x/data" "XDG_STATE_HOME=$x/state"
+}
+
+# --- host profile ----------------------------------------------------------------------------
+
+# Toolchain directories bootstrap.sh fills (fresh-metal only).
+E15_GO_ROOT=$E15_ROOT/go-toolchain
+E15_NODE_ROOT=$E15_ROOT/node
+E15_COREPACK_HOME=$E15_ROOT/corepack
+
+# e15_path: the PATH the rig's commands run with. aws-prelim: the system's (unchanged).
+# fresh-metal: /srv/e15/bin, then the pinned Go and Node, then the system's sbin/bin.
+e15_path() {
+  if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+    printf '%s\n' "$E15_ROOT/bin:$E15_GO_ROOT/bin:$E15_NODE_ROOT/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  else
+    printf '%s\n' "/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
+  fi
+}
+
+# e15_node: the node binary the relay unit runs.
+e15_node() {
+  if [ "$E15_HOST_PROFILE" = fresh-metal ]; then echo "$E15_NODE_ROOT/bin/node"; else echo /usr/bin/node; fi
+}
+
+# e15_os_id: ID from /etc/os-release (E15_OS_RELEASE overrides the file, for tests).
+# shellcheck disable=SC1090,SC1091  # /etc/os-release, or a test fixture
+e15_os_id() { (. "${E15_OS_RELEASE:-/etc/os-release}" 2>/dev/null && echo "${ID:-unknown}") || echo unknown; }
+
+# e15_pkg_install PKG...: the host's package manager (Ubuntu/Debian apt-get; AL2023/Fedora dnf).
+# Prints the command it ran; the undo is e15_pkg_remove.
+e15_pkg_mgr() {
+  case "$(e15_os_id)" in
+  ubuntu | debian) echo apt ;;
+  amzn | fedora | rhel | centos | rocky | almalinux) echo dnf ;;
+  *) echo unknown ;;
+  esac
+}
+e15_pkg_installed() {
+  case "$(e15_pkg_mgr)" in
+  apt) dpkg-query -W -f '${Status}' "$1" 2>/dev/null | grep -q 'install ok installed' ;;
+  dnf) rpm -q "$1" >/dev/null 2>&1 ;;
+  *) return 1 ;;
+  esac
+}
+e15_pkg_install() {
+  case "$(e15_pkg_mgr)" in
+  apt) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ;;
+  dnf) sudo -n dnf install -y "$@" ;;
+  *) die "no known package manager for OS $(e15_os_id)" ;;
+  esac
+}
+e15_pkg_remove_cmd() {
+  case "$(e15_pkg_mgr)" in
+  apt) echo "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get remove -y $*" ;;
+  dnf) echo "sudo -n dnf remove -y $*" ;;
+  *) echo "false # no package manager for $*" ;;
+  esac
+}
+
+# e15_require_pins: die naming every empty pins.sh constant (fresh-metal never guesses a checksum).
+e15_require_pins() {
+  local n empty=()
+  for n in "${E15_PINS[@]}"; do [ -n "${!n:-}" ] || empty+=("$n"); done
+  [ ${#empty[@]} -eq 0 ] || die "empty pin(s) in pins.sh, the operator must fill them: ${empty[*]}"
+}
+
+# e15_fetch URL SHA256 OUT: download URL to OUT and check its sha256; a mismatch removes OUT and
+# fails. An OUT already present with the right sha256 is kept (no download). E15_FETCH overrides
+# the downloader (tests): it is called as "$E15_FETCH URL OUT".
+e15_fetch() {
+  local url=$1 want=$2 out=$3 got
+  [ -n "$want" ] || die "e15_fetch: no checksum for $url"
+  if [ -f "$out" ] && [ "$(sha256_of "$out")" = "$want" ]; then return 0; fi
+  rm -f "$out.part"
+  if [ -n "${E15_FETCH:-}" ]; then
+    "$E15_FETCH" "$url" "$out.part" || die "download failed: $url"
+  else
+    curl -fsSL --retry 3 -o "$out.part" "$url" || die "download failed: $url"
+  fi
+  got=$(sha256_of "$out.part")
+  if [ "$got" != "$want" ]; then
+    rm -f "$out.part"
+    die "checksum mismatch for $url: got $got, want $want"
+  fi
+  mv -f "$out.part" "$out"
+}
+
+# probe_reflink DIR: "reflink" if `cp --reflink=always` works on DIR's filesystem, else "sparse".
+probe_reflink() {
+  local d=$1 r=sparse
+  printf 'e15 reflink probe\n' >"$d/.reflink-probe.src"
+  cp --reflink=always "$d/.reflink-probe.src" "$d/.reflink-probe.dst" 2>/dev/null && r=reflink
+  rm -f "$d/.reflink-probe.src" "$d/.reflink-probe.dst"
+  echo "$r"
+}
+
+# workspace_copy_mode: the state setup.sh recorded (reflink | sparse); reflink when none (the
+# preliminary rig, whose setup predates the probe, is XFS).
+workspace_copy_mode() {
+  local m
+  m=$(cat "$E15_STATE/workspace_copy" 2>/dev/null) || m=reflink
+  case "$m" in reflink | sparse) echo "$m" ;; *) echo reflink ;; esac
+}
+
+# workspace_cp_flag MODE: the cp flag that makes one workspace copy.
+workspace_cp_flag() {
+  case "$1" in sparse) echo --sparse=always ;; *) echo --reflink=always ;; esac
+}
+
+# workspace_disk_estimate N K IMAGE_MB TEMPLATE_KB FREE_KB: one line for the operator -- a sparse
+# rung's N*K copies cost the template's allocated size each at creation, and at worst (every guest
+# writing its whole image) IMAGE_MB each. Exit 1 when the creation cost alone exceeds FREE_KB.
+workspace_disk_estimate() {
+  local n=$1 k=$2 mb=$3 tkb=$4 fkb=$5 imgs
+  imgs=$((n * k))
+  awk -v i="$imgs" -v mb="$mb" -v t="$tkb" -v f="$fkb" -v n="$n" -v k="$k" 'BEGIN {
+    init = i * t / 1048576; worst = i * mb / 1024; free = f / 1048576
+    printf "N=%d: %d images (K=%d) x %d MiB = %.1f GiB worst case; %.1f GiB at creation; %.1f GiB free\n", n, i, k, mb, worst, init, free
+    exit (i * t > f) ? 1 : 0 }'
+}
+
+# --- containers (Redis; fresh-metal also the rootfs image) -------------------------------------
+# fresh-metal keeps root podman's storage under /srv/e15 (CONTAINERS_STORAGE_CONF), so no image or
+# layer lands in /var/lib/containers. aws-prelim: root podman as before.
+E15_PODMAN_CONF=$E15_ROOT/containers/storage.conf
+e15_podman_str() {
+  if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+    echo "sudo -n env CONTAINERS_STORAGE_CONF=$E15_PODMAN_CONF podman"
+  else
+    echo "sudo -n podman"
+  fi
+}
+e15_podman() {
+  if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+    # No storage.conf (before bootstrap, after --purge): podman must not fall back to
+    # /var/lib/containers, so there is no E15 container to see.
+    [ -f "$E15_PODMAN_CONF" ] || return 1
+    sudo -n env CONTAINERS_STORAGE_CONF="$E15_PODMAN_CONF" podman "$@"
+  else
+    sudo -n podman "$@"
+  fi
+}
+e15_podman_conf_body() {
+  printf '[storage]\ndriver = "overlay"\ngraphroot = "%s"\nrunroot = "%s"\n' \
+    "$E15_ROOT/containers/storage" "$E15_ROOT/containers/run"
+}
+
+# e15_artifact NAME SHA256 SOURCE (fresh-metal): one line per artifact in $E15_STATE/artifacts,
+# replaced when NAME is recorded again.
+e15_artifact() {
+  mkdir -p "$E15_STATE"
+  local f=$E15_STATE/artifacts
+  touch "$f"
+  { grep -v "^$1 " "$f" || true; } >"$f.new"
+  printf '%s %s %s\n' "$1" "$2" "$3" >>"$f.new"
+  mv -f "$f.new" "$f"
 }
 
 sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
@@ -217,6 +469,38 @@ measure_disk_read() {
   out=$(dd if="$f" of=/dev/null bs=4M iflag=direct 2>&1)
   rm -f "$f"
   printf '%s\n' "$out" | dd_mbs
+}
+
+# measure_disk_read_parallel PREFIX [STREAMS] [MIB] (fresh-metal): STREAMS (default 4) separate
+# MIB (default 2048) MiB files PREFIX.<i>, written with direct I/O, then read back by STREAMS
+# concurrent `dd iflag=direct bs=4M` readers; prints the SUM of the readers' MB/s. One stream does
+# not saturate an EBS volume (its per-I/O latency caps it), the rungs' many guests do. Every file is
+# removed, whatever fails.
+measure_disk_read_parallel() {
+  local pre=$1 n=${2:-4} mib=${3:-2048} i rc=0 pids=()
+  for ((i = 0; i < n; i++)); do
+    dd if=/dev/zero of="$pre.$i" bs=4M count=$((mib / 4)) oflag=direct conv=fsync status=none || rc=1
+  done
+  if [ "$rc" = 0 ]; then
+    for ((i = 0; i < n; i++)); do
+      dd if="$pre.$i" of=/dev/null bs=4M iflag=direct 2>"$pre.$i.out" &
+      pids+=($!)
+    done
+    for i in "${pids[@]}"; do wait "$i" || rc=1; done
+  fi
+  local sum=0 v
+  if [ "$rc" = 0 ]; then
+    for ((i = 0; i < n; i++)); do
+      v=$(dd_mbs <"$pre.$i.out") || {
+        rc=1
+        break
+      }
+      sum=$(awk -v a="$sum" -v b="$v" 'BEGIN {printf "%.1f", a + b}')
+    done
+  fi
+  for ((i = 0; i < n; i++)); do rm -f "$pre.$i" "$pre.$i.out"; done
+  [ "$rc" = 0 ] || return 1
+  echo "$sum"
 }
 
 # unit_active UNIT: systemctl is-active, quiet (reading state needs no sudo).
@@ -392,13 +676,16 @@ start_relay() {
   mkdir -p "$E15_LOGS"
   # systemd creates the file as root; rotate it so this start's lines are the only ones checked.
   [ -f "$E15_LOGS/relay.log" ] && sudo -n mv -f "$E15_LOGS/relay.log" "$E15_LOGS/relay.log.1"
+  # fresh-metal: node is bootstrap.sh's, not the system's; aws-prelim's unit is as before.
+  local envp=()
+  [ "$E15_HOST_PROFILE" != fresh-metal ] || envp=(-p Environment="PATH=$(e15_path)")
   sudo -n systemd-run --quiet --unit="$E15_UNIT_RELAY" --slice="$E15_SLICE" \
     -p User="$(id -un)" -p WorkingDirectory="$E15_MOCA/packages/sandbox-relay" \
     -p EnvironmentFile="$E15_SECRETS/relay.env" \
     -p IPAddressDeny=any -p IPAddressAllow=localhost \
     -p MemoryAccounting=yes -p CPUAccounting=yes \
-    -p StandardOutput="append:$E15_LOGS/relay.log" \
-    /usr/bin/node --import tsx --import "$E15_RELAY_PRELOAD" src/main.ts >/dev/null ||
+    -p StandardOutput="append:$E15_LOGS/relay.log" "${envp[@]}" \
+    "$(e15_node)" --import tsx --import "$E15_RELAY_PRELOAD" src/main.ts >/dev/null ||
     die "systemd-run $E15_UNIT_RELAY failed"
   if ! wait_for 60 port_listening "$E15_PORT_ATTACH" || ! wait_for 30 port_listening "$E15_PORT_EXEC"; then
     stop_e15_unit "$E15_UNIT_RELAY"

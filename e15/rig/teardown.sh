@@ -9,6 +9,12 @@
 # A failing undo is reported and the rest still run; the exit code is 1 if any failed.
 # Afterwards (unless E15_TEARDOWN_VERIFY=0) it checks the host is as E15 found it:
 # microvm-worker.service active, bench-cp and bench-redis running, nothing E15's on its ports.
+#
+# fresh-metal (lib.sh E15_HOST_PROFILE, recorded by setup/bootstrap in /srv/e15/state): no host
+# worker or bench containers to verify. A plain teardown stops E15's services and removes its unit
+# files; --purge then also undoes bootstrap.sh (the kvm group membership) and removes /srv/e15
+# (toolchain, Firecracker, podman storage, every artifact), leaving the OS as found apart from the
+# manifest's LEFTOVER lines (apt packages E15 installed, kept), which it lists at the end.
 set -uo pipefail
 E15_PROG=teardown.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,6 +83,7 @@ fi
 
 if [ "${E15_TEARDOWN_VERIFY:-1}" = 1 ]; then
   ok=1
+  if [ "$E15_HOST_PROFILE" != fresh-metal ]; then
   # Expected state: what setup recorded before it changed anything; without a PRESTATE line
   # (a manifest from before fix round 1), SPEC §4's normal state: worker active, bench running.
   want_hw=active
@@ -96,13 +103,14 @@ if [ "${E15_TEARDOWN_VERIFY:-1}" = 1 ]; then
       ok=0
     fi
   done
+  fi
   for u in "$E15_UNIT_RELAY" "$E15_UNIT_WORKER" "$E15_UNIT_NULL"; do
     if systemctl is-active --quiet "$u"; then
       log "VERIFY: $u still active"
       ok=0
     fi
   done
-  if sudo -n podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
+  if e15_podman container exists "$E15_REDIS_CTR" 2>/dev/null; then
     log "VERIFY: container $E15_REDIS_CTR still exists"
     ok=0
   fi
@@ -112,7 +120,23 @@ if [ "${E15_TEARDOWN_VERIFY:-1}" = 1 ]; then
       ok=0
     fi
   done
-  if [ "$ok" = 1 ]; then
+  if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+    for u in "$E15_SLICE" "$E15_VM_SLICE"; do
+      if [ -e "$E15_UNIT_DIR/$u" ]; then
+        log "VERIFY: $E15_UNIT_DIR/$u still present"
+        ok=0
+      fi
+    done
+    if [ "$purge" = 1 ] && [ -e "$E15_ROOT" ]; then
+      log "VERIFY: $E15_ROOT still present after --purge"
+      ok=0
+    fi
+  fi
+  if [ "$ok" = 1 ] && [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+    printf -- '- %s verified (fresh-metal): E15 units, unit files, container and ports gone%s\n' "$(utc)" \
+      "$([ "$purge" = 1 ] && echo ", $E15_ROOT removed")" >>"$E15_MANIFEST"
+    log "teardown: verified"
+  elif [ "$ok" = 1 ]; then
     printf -- '- %s verified: %s %s, bench as before setup (%s), E15 units/ports gone\n' "$(utc)" \
       "$E15_HOST_WORKER" "$want_hw" "${prestate:-no PRESTATE: expected all running}" >>"$E15_MANIFEST"
     log "teardown: verified"
@@ -120,5 +144,9 @@ if [ "${E15_TEARDOWN_VERIFY:-1}" = 1 ]; then
     printf -- '- %s VERIFY FAILED (see teardown output)\n' "$(utc)" >>"$E15_MANIFEST"
     rc=1
   fi
+fi
+# fresh-metal: what stays on the host by design (bootstrap.sh/setup.sh LEFTOVER lines).
+if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ -f "$E15_MANIFEST" ]; then
+  sed -n 's/^- [^ ]* LEFTOVER: /LEFTOVER: /p' "$E15_MANIFEST" | awk '!seen[$0]++' >&2
 fi
 exit "$rc"
