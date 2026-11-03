@@ -484,8 +484,9 @@ component commits (moca, moca-experiments, patch), every parameter in §5, §7 a
 CPU, the four §8 conditions with their values, results split by provider and by command class, and
 the binding resource at the end of the window (the first of: memory floor reached, CPU ≥ 90% busy,
 disk reads ≥ 90% of the volume's measured sequential read throughput (`disk_io`), disk ≥ 90% full, a
-moca gate refusal), and the arm's per-call overhead at N = 1 (corpus-weighted
-median of class medians).
+moca gate refusal; and for a rung that does not hold with none of these, `memory_high`: e15.slice's
+MemoryHigh reclaim throttled it, its `memory.events` `high` counter rose over the window), and the
+arm's per-call overhead at N = 1 (corpus-weighted median of class medians).
 
 ## 10. Procedure
 
@@ -621,7 +622,9 @@ wheels are then added, and `build-snapshot.sh --guest-ram-mb 1024` runs with the
 kernel `vmlinux-6.18.44`, the version the preliminary rig ran. Every artifact's sha256 goes in
 `/srv/e15/state/artifacts`. Workspaces need reflink, which the ext4 root volume lacks, so the host has
 a second EBS gp3 volume. `bootstrap.sh` (`E15_DATA_DEV`) formats it XFS (`mkfs.xfs -m reflink=1`) and
-mounts it at `/srv/e15`, the whole E15 root. Mounting it only at `workspaces/` is not enough: moca's
+mounts it at `/srv/e15`, the whole E15 root. A volume the operator already formatted XFS with
+`reflink=1` and mounted at `/srv/e15` is accepted as it is: bootstrap without `E15_DATA_DEV` leaves it
+alone, it is never reformatted, and teardown empties it but keeps the mount. Mounting it only at `workspaces/` is not enough: moca's
 worker hardlinks the snapshot files and each workspace image into the jail, so snapshots, workspaces
 and jail must share one device (it refuses to start otherwise), and a reflink of the template
 cannot cross filesystems. Setup refuses any other layout: the five directories must be on one

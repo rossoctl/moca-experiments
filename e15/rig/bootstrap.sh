@@ -186,7 +186,7 @@ if [ -n "${E15_DATA_DEV:-}" ]; then
     b_note "formatted $dev XFS (mkfs.xfs -m reflink=1); never wiped by E15's undo"
     uuid=$(sudo -n blkid -p -o value -s UUID "$dev")
     [ -n "$uuid" ] || die "no UUID on $dev after mkfs.xfs"
-    line="UUID=$uuid $E15_ROOT xfs defaults,nofail 0 2"
+    line="UUID=$uuid $E15_ROOT xfs defaults,nofail 0 0" # passno 0: fsck.xfs is a no-op
     printf '%s\n' "$line" | sudo -n tee -a "$E15_FSTAB" >/dev/null
     # The undo drops exactly that line (grep exit 1 = no other line left; 2 = error: fstab kept).
     b_purge "added to $E15_FSTAB: $line" \

@@ -1139,7 +1139,7 @@ SH
   grep -q 'bootstrap.sh:' "$TMP/dboot.out" && sed 's/^/    /' "$TMP/dboot.out" | tail -5
   check "data volume: mkfs.xfs -m reflink=1 on the disk, once" "$(cat "$DV/mkfs.log")" "mkfs.xfs -q -m reflink=1 /dev/e15fake"
   check "data volume: mounted at the WHOLE root (not workspaces/)" "$(cat "$DV/mounts")" "$DR /dev/e15fake xfs"
-  check "data volume: fstab line by UUID, nofail" "$(grep -c "^UUID=fake-uuid-1 $DR xfs defaults,nofail 0 2\$" "$DV/fstab")/$(grep -c . "$DV/fstab")" "1/2"
+  check "data volume: fstab line by UUID, nofail, passno 0 (as the operator's)" "$(grep -c "^UUID=fake-uuid-1 $DR xfs defaults,nofail 0 0\$" "$DV/fstab")/$(grep -c . "$DV/fstab")" "1/2"
   check "data volume: the staged tree moved onto the volume" "$([ -f "$DR/src/e15/rig/bootstrap.sh" ] && echo staged)" "staged"
   check "data volume: everything bootstrap writes lands on the volume" "$([ -f "$DR/state/host_profile" ] && [ -x "$DR/bin/grpcurl" ] && echo on-volume)" "on-volume"
   check "data volume: mounted before anything is written under the root (mount line before the root PURGE)" "$(awk '/mounted \/dev\/e15fake/{a=NR} /\(all E15 files\) \| PURGE/{b=NR} END{print (a && b && a<b) ? "before" : "after"}' "$TMP/boot-d.md")" "before"
@@ -1456,6 +1456,8 @@ printf 'E15_GO_VERSION=evil\n' >"$TMP/evil-pins.sh"
 check "test pins: honoured under a test root" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_TEST_PINS="$TMP/evil-pins.sh" bash -c 'source "$1"; echo $E15_GO_VERSION' _ "$RIG/lib.sh")" "evil"
 check "test pins: ignored on /srv/e15 even when E15_TEST_ROOT names it" "$(E15_ROOT=/srv/e15 E15_TEST_ROOT=/srv/e15 E15_TEST_PINS="$TMP/evil-pins.sh" E15_TEST_FSTAB="$TMP/f" bash -c 'source "$1"; echo $E15_GO_VERSION $E15_FSTAB' _ "$RIG/lib.sh")" "1.26.0 /etc/fstab"
 check "aws-prelim: the root PURGE is still rm -rf of the root" "$(E15_ROOT=/srv/e15 bash -c 'source "$1"; e15_root_purge_cmd' _ "$RIG/lib.sh")" "sudo -n rm -rf /srv/e15"
+check "SPEC §9.3 lists memory_high; §13 accepts the operator's XFS reflink=1 mount" \
+  "$(grep -c 'MemoryHigh reclaim throttled it' "$RIG/../SPEC.md")/$(grep -c 'is accepted as it is: bootstrap without `E15_DATA_DEV` leaves it' "$RIG/../SPEC.md")" "1/1"
 check "aws-prelim: no missing workspace_copy state still means reflink" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; rm -f "$E15_STATE/workspace_copy"; workspace_copy_mode' _ "$RIG/lib.sh")" "reflink"
 
 # --- rung.sh relay hygiene: restart E15's relay before the worker, attach check before the driver --

@@ -245,7 +245,7 @@ Patch shape (decided here; the implementer writes the code):
 
 **Interfaces:**
 - Consumes: Task 4's `calls.jsonl` and `sessions.jsonl`; Task 7's `samples.jsonl` and `worker.log`.
-- Produces: `holds.evaluate(calls, sessions, baseline_p95_ms: float) -> dict` with keys `holds: bool`, `failed_calls`, `refusals`, `median_pace`, `p95_added_ms`, `p95_limit_ms`, `sessions_excluded_lt3`; `record.build(rung_dir, params) -> dict` writing `record.json` per SPEC §9.3, including `binding` ∈ `memory_floor | cpu | disk | gate | none`.
+- Produces: `holds.evaluate(calls, sessions, baseline_p95_ms: float) -> dict` with keys `holds: bool`, `failed_calls`, `refusals`, `median_pace`, `p95_added_ms`, `p95_limit_ms`, `sessions_excluded_lt3`; `record.build(rung_dir, params) -> dict` writing `record.json` per SPEC §9.3, including `binding` ∈ `memory_floor | cpu | disk_io | disk | gate | memory_high | none`.
 - Refusal detection in `worker.log`: lines matching `memory-budget|host-floor|busy|queue full|RESOURCE_EXHAUSTED|oom`.
 
 - [ ] **Step 1: Write failing tests:**
