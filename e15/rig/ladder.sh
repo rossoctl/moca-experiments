@@ -4,7 +4,8 @@
 # Ladder: 1 8 16 24 32 40 48 56 64 80 96 128, from START_N (default 1; it must be on the ladder).
 # Each rung's record.json decides, in order:
 #   rig errors (never a host verdict -- the ladder DIES, it records no stopped_at):
-#     aborted=true, time_origin_mismatch=true, a rung.sh failure (incl. a missing N=1 baseline)
+#     aborted=true, time_origin_mismatch=true, offset_join_misses>0 (class pace could not join the
+#     corpus), a rung.sh failure (incl. a missing N=1 baseline)
 #     unseeded_sessions>0   -> rig_error: re-run once with K doubled (E15_K_MULT=2, tag k2);
 #                              die if still unseeded
 #   repeat_required=true  -> the rung is re-run ONCE with the warm-up doubled (tag repeat);
@@ -17,8 +18,9 @@
 # steps below the default N_max), and ladder.json says so.
 #
 # Writes /srv/e15/runs/POINT/ARM/ladder.json:
-#   {point, arm, start_n, ladder, rungs: [{n, holds, holds_abs, repeated, rig_errors, dir}],
-#    n_max, stopped_at, n_max_abs, stopped_at_abs}
+#   {point, arm, start_n, ladder, rungs: [{n, holds, holds_abs, repeated, median_class_pace,
+#    rig_errors, dir}], n_max, stopped_at, n_max_abs, stopped_at_abs, abs_rule, n1_overhead_ms,
+#    n1_median_pace}
 # Environment passes through to rung.sh (E15_WARMUP_S, E15_WINDOW_S, ...). E15_RUNG overrides the
 # rung command (tests only).
 set -euo pipefail
@@ -84,6 +86,8 @@ rig_check() {
   local f=$1/record.json
   [ "$(rec_field "$f" aborted)" = true ] && die "$1: driver aborted (driver_exit != 0): rig error, ladder stopped"
   [ "$(rec_field "$f" time_origin_mismatch)" = true ] && die "$1: time_origin_mismatch: rig error, ladder stopped"
+  [ "$(rec_field "$f" offset_join_misses)" != 0 ] && [ "$(rec_field "$f" offset_join_misses)" != false ] &&
+    die "$1: offset_join_misses=$(rec_field "$f" offset_join_misses): the corpus did not supply the offsets class pace needs: rig error, ladder stopped"
   return 0
 }
 unseeded() { local v; v=$(rec_field "$1/record.json" unseeded_sessions); [ "$v" = false ] && v=0; printf '%s' "$v"; }

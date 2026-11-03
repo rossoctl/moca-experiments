@@ -271,6 +271,13 @@ SH
   printf '1=%s\n8=%s\n' "$ok" '{"holds":false,"holds_abs":false,"unseeded_sessions":0,"median_class_pace":0.0}' >"$TMP/recs"
   ladder
   check "ladder.json rungs carry median_class_pace" "$(python3 -c 'import json,sys; print([r["median_class_pace"] for r in json.load(open(sys.argv[1]))["rungs"]])' "$TROOT/runs/default/sbx/ladder.json")" "[None, 0.0]"
+  printf '1=%s\n8=%s\n' "$ok" '{"holds":false,"holds_abs":false,"offset_join_misses":2,"reason":"corpus_join_miss"}' >"$TMP/recs"
+  ladder
+  check "ladder: offset_join_misses > 0 is a rig error (dies, no ladder.json)" "$?/$([ -f "$TROOT/runs/default/sbx/ladder.json" ] && echo yes || echo no)" "1/no"
+  check "ladder: the death names offset_join_misses" "$(grep -c 'offset_join_misses=2' "$TMP/l.out")" "1"
+  printf '1=%s\n8=%s\n' "$ok" '{"holds":false,"holds_abs":false,"offset_join_misses":0,"unseeded_sessions":0}' >"$TMP/recs"
+  ladder
+  check "ladder: offset_join_misses 0 is fine" "$?" "0"
 
   printf '1=%s\n8=%s\n' "$ok" '{"holds":false,"holds_abs":false,"aborted":true}' >"$TMP/recs"
   ladder
@@ -289,7 +296,7 @@ SH
   check "ladder: the re-run had E15_K_MULT=2" "$(grep -c '^1-k2 k=2' "$TMP/lcalls")" "1"
   mkdir -p "$TROOT/runs/default/sbx/N1"
   echo '{"overhead_ms": 12.5}' >"$TROOT/runs/default/sbx/N1/baseline.json"
-  check "ladder.json would read n1_overhead_ms from N1/baseline.json (rule text mentions B + 250)" "$(grep -c 'B + 250 ms' "$RIG/ladder.sh")/$(grep -c 'n1_overhead_ms' "$RIG/ladder.sh")/$(grep -c '"n1_median_pace": n1_pace' "$RIG/ladder.sh")/$(grep -c 'median_class_pace' "$RIG/ladder.sh")" "2/1/1/2"
+  check "ladder.json would read n1_overhead_ms from N1/baseline.json (rule text mentions B + 250)" "$(grep -v '^#' "$RIG/ladder.sh" | grep -c 'B + 250 ms')/$(grep -v '^#' "$RIG/ladder.sh" | grep -c 'n1_overhead_ms')/$(grep -c '"n1_median_pace": n1_pace' "$RIG/ladder.sh")/$(grep -v '^#' "$RIG/ladder.sh" | grep -c 'median_class_pace')" "1/1/1/2"
   rm -f "$TROOT/runs/default/sbx/N1/baseline.json"
   check "ladder: the rig error is recorded" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rungs"][0]["rig_errors"])' "$TROOT/runs/default/sbx/ladder.json")" "['unseeded_sessions=2']"
   printf '1=%s\n1-k2=%s\n' '{"unseeded_sessions":2}' '{"unseeded_sessions":1}' >"$TMP/recs"

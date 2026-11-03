@@ -824,13 +824,21 @@ def test_slowdown_is_absorbed_by_gaps_longer_than_x():
 
 def test_slowdown_beyond_gaps_accumulates():
     meds = {"x": 0}
-    cs = [sc("a", i, "x", 100, 10) for i in range(4)]
-    o = offs(0, 110, 110, 110)
-    exp = H.expected_ms(cs, o["t"], meds, 0)          # 330 + 100 = 430
-    X = 200                                           # > gap: each call ends late, the next waits
-    obs = 4 * (100 + X) + 0
-    paces, _, _ = H.class_paces(cs, [csess("a", obs, n=4)], meds, 0, o)
-    assert abs(paces[0] - (obs / float(exp) - 1)) < 1e-9 and paces[0] > X * 3 / exp
+    dur, gap, k, X = 100, 10, 4, 200
+    cs = [sc("a", i, "x", dur, gap) for i in range(k)]
+    o = offs(0, *[dur + gap] * (k - 1))
+    exp = H.expected_ms(cs, o["t"], meds, 0)
+    assert exp == (k - 1) * (dur + gap) + dur                 # 430
+    # independent simulation of the driver with every call really taking dur + X: a send waits for
+    # the previous End when that is later than its planned offset
+    send = end = 0
+    for i in range(k):
+        send = 0 if i == 0 else max(send + dur + gap, end)
+        end = send + dur + X
+    obs = end
+    assert obs == k * (dur + X)                               # 1200: nothing is absorbed
+    paces, _, _ = H.class_paces(cs, [csess("a", obs, n=k)], meds, 0, o)
+    assert abs(paces[0] - (1200 / 430.0 - 1)) < 1e-9
 
 
 def test_scan_heavy_session_fails_relative_rule_but_holds_class_pace():
@@ -874,7 +882,9 @@ def test_global_median_for_unknown_class():
     cs = [sc("a", i, "zzz", 100, 0) for i in range(3)]
     o = offs(0, 100, 100)
     exp = H.expected_ms(cs, o["t"], {}, 100)
-    assert exp == 300 + 100 - 0 + 0 + 0 or True
+    # each call lasts 100 + global median 100 = 200 but its offset is only 100, so every send waits
+    # for the previous End: sends 0/200/400, last End 600 (not planned 300 + 3 x 100)
+    assert exp == 600
     paces, _, _ = H.class_paces(cs, [csess("a", exp)], {}, 100, o)
     assert abs(paces[0]) < 1e-9
 
@@ -903,3 +913,52 @@ def test_record_loads_corpus_offsets_for_class_pace(tmp_path):
     assert abs(r["median_class_pace"]) < 1e-9 and r["holds"]
     assert R.corpus_offsets(str(corpus), {"t"}) == {"t": {0: 0, 1: 600, 2: 600}}
     assert R.corpus_offsets(None, {"t"}) == {}
+
+
+def _join_rung(tmp_path, corpus_calls, with_corpus=True):
+    cs = [sc("a", i, "x", 100, 500, added=20) for i in range(3)]
+    (tmp_path / "calls.jsonl").write_text("".join(json.dumps(c) + "\n" for c in cs))
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(csess("a", 1340, planned=1300)) + "\n")
+    bp = tmp_path / "b.json"
+    bp.write_text(json.dumps(BL(excess=1000, medians={"x": 20}, gmed=20)))
+    p = dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(bp))
+    if with_corpus:
+        corpus = tmp_path / "corpus.jsonl"
+        corpus.write_text(json.dumps({"session": "t", "user": "u", "provider": "claude",
+                                      "calls": corpus_calls}) + "\n")
+        p["corpus"] = str(corpus)
+    return R.build(str(tmp_path), p)
+
+
+def _corpus_calls(n=3):
+    return [{"i": i, "class": "x", "dur_ms": 100, "work_ms": 1, "gap_ms": 500,
+             "offset_ms": 0 if i == 0 else 600, "chain": False} for i in range(n)]
+
+
+def test_corpus_join_correct_has_no_misses(tmp_path):
+    r = _join_rung(tmp_path, _corpus_calls())
+    assert r["offset_join_misses"] == 0 and r["holds"] and "reason" not in r
+
+
+def test_missing_trace_or_calls_counts_misses_and_refuses(tmp_path):
+    # the trace "t" is absent from the corpus (session id differs): calls 1 and 2 miss
+    r = _join_rung(tmp_path, [])
+    assert r["offset_join_misses"] == 2
+    assert not r["holds"] and not r["holds_abs"] and r["reason"] == "corpus_join_miss"
+
+
+def test_missing_call_index_counts_one_miss(tmp_path):
+    r = _join_rung(tmp_path, _corpus_calls(2))          # call index 2 absent
+    assert r["offset_join_misses"] == 1 and not r["holds"] and r["reason"] == "corpus_join_miss"
+
+
+def test_unset_corpus_path_is_a_miss(tmp_path):
+    r = _join_rung(tmp_path, [], with_corpus=False)
+    assert r["offset_join_misses"] == 2 and not r["holds"]
+
+
+def test_n1_never_joins(tmp_path):
+    (tmp_path / "calls.jsonl").write_text(json.dumps(sc("a", 0, "x")) + "\n")
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(csess("a", 100)) + "\n")
+    r = R.build(str(tmp_path), dict(arm="sbx", n=1, warmup_s=0, window_s=10))
+    assert r["offset_join_misses"] == 0
