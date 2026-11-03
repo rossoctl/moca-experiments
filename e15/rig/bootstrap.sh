@@ -10,16 +10,20 @@
 # Every download is pinned by version and checksum in pins.sh; an empty pin refuses the run.
 # What it does, each change logged to ~/e15-manifest.md:
 #   1. apt packages the rig needs and the host lacks (podman for E15's Redis and the rootfs
-#      export; unzip, git, curl, e2fsprogs, python3, iproute2 when missing). Packages are
-#      kept by teardown and listed as LEFTOVER, with their remove command
+#      export; unzip, git, curl, e2fsprogs, xfsprogs, python3, iproute2 when missing), after
+#      cloud-init is done and with a 10-minute dpkg lock timeout. The exact packages apt added
+#      (dpkg before/after, recorded even when the install fails) and any unit they enabled are
+#      kept by teardown and listed as LEFTOVER with their undo (apt-get purge of that list)
 #   2. /srv/e15 tree; podman storage under /srv/e15/containers (storage.conf)
 #   3. Go into /srv/e15/go-toolchain, Node into /srv/e15/node, pnpm via corepack (COREPACK_HOME
 #      /srv/e15/corepack, shim in /srv/e15/bin), Firecracker + jailer and grpcurl into /srv/e15/bin;
-#      each tarball's sha256 in /srv/e15/state/artifacts
+#      each tarball's sha256 in /srv/e15/state/artifacts. A re-run checks each tool's version
+#      (and grpcurl's binary sha256), it does not re-hash the tarballs
 #   4. the login user in group kvm (PURGE: removed again by teardown.sh --purge)
 # Files under /srv/e15 go with its PURGE line (teardown.sh --purge).
 #
-# Test hooks (rig.test.sh): E15_FETCH (downloader), E15_OS_RELEASE, E15_KVM_DEV.
+# Test hooks (rig.test.sh): E15_FETCH (downloader), E15_OS_RELEASE, E15_KVM_DEV; under a test root
+# only, E15_TEST_PINS (lib.sh).
 set -euo pipefail
 E15_PROG=bootstrap.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,23 +64,51 @@ b_note() {
 }
 
 # --- 1. apt packages -------------------------------------------------------------------------
-E15_APT_PKGS=(podman unzip git curl e2fsprogs python3 iproute2)
+E15_APT_PKGS=(podman unzip git curl e2fsprogs xfsprogs python3 iproute2)
+APT_OPTS=(-o DPkg::Lock::Timeout=600)
 missing=()
 for p in "${E15_APT_PKGS[@]}"; do e15_pkg_installed "$p" || missing+=("$p"); done
+# apt_record: what apt actually added (dpkg before/after) and the units that became enabled,
+# written once, also when the install fails part way (EXIT trap): the next run sees those packages
+# as present and would not name them.
+apt_recorded=0
+apt_record() {
+  [ "$apt_recorded" = 0 ] || return 0
+  apt_recorded=1
+  local added units undo
+  added=$(comm -13 <(printf '%s\n' "$pkgs_before") <(e15_dpkg_list) | tr '\n' ' ')
+  added=${added% }
+  units=$(comm -13 <(printf '%s\n' "$units_before") <(e15_enabled_units) | tr '\n' ' ')
+  units=${units% }
+  if [ -z "$added" ]; then
+    b_note "apt: no package was added (asked for ${missing[*]})"
+    return 0
+  fi
+  undo=$(e15_pkg_remove_cmd "$added")
+  [ -z "$units" ] || undo="sudo -n systemctl disable --now $units; $undo"
+  b_note "LEFTOVER: apt packages added by E15 (asked for ${missing[*]}): $added; units they enabled: ${units:-none}; kept; undo: $undo"
+}
 if [ ${#missing[@]} -gt 0 ]; then
+  if command -v cloud-init >/dev/null 2>&1; then
+    log "apt: waiting for cloud-init to finish (it holds the dpkg lock on a fresh boot)"
+    cloud-init status --wait >/dev/null 2>&1 || log "note: cloud-init status --wait exited non-zero; continuing"
+  fi
   log "apt: installing ${missing[*]}"
   # needrestart (Ubuntu) would otherwise restart the host's services after the install.
-  sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get update -q >/dev/null ||
+  sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get "${APT_OPTS[@]}" update -q >/dev/null ||
     die "apt-get update failed"
   b_note "LEFTOVER: apt package lists refreshed (apt-get update)"
   # Recommends included: podman needs its network backend and runtime. Every package apt adds is
   # listed, not only the named ones.
-  before=$(dpkg-query -W -f '${Package}\n' | sort)
-  sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q \
+  pkgs_before=$(e15_dpkg_list)
+  units_before=$(e15_enabled_units)
+  b_note "apt: installing ${missing[*]} (the packages added are recorded next, even if this fails)"
+  trap apt_record EXIT
+  sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get "${APT_OPTS[@]}" install -y -q \
     "${missing[@]}" >/dev/null || die "apt-get install ${missing[*]} failed"
+  apt_record
+  trap - EXIT
   for p in "${missing[@]}"; do e15_pkg_installed "$p" || die "apt reported success but $p is not installed"; done
-  added=$(comm -13 <(printf '%s\n' "$before") <(dpkg-query -W -f '${Package}\n' | sort) | tr '\n' ' ')
-  b_note "LEFTOVER: apt packages ${missing[*]} (installed by E15 with their dependencies: ${added% }; kept; remove with: $(e15_pkg_remove_cmd "${missing[@]}") && sudo -n apt-get autoremove -y)"
 fi
 
 # --- 2. tree, podman storage -----------------------------------------------------------------
@@ -116,30 +148,37 @@ install_tarball() {
   b_note "installed $name ($url, sha256 $sha)"
 }
 
+# The helpers run under `|| die` (errexit off), so every step checks its own exit.
 untar_into() { # DIR TARBALL: replace DIR with TARBALL's single top directory
   local dir=$1 tb=$2
-  rm -rf "$dir.new"
-  mkdir -p "$dir.new"
-  tar -xf "$tb" -C "$dir.new" --strip-components=1 --no-same-owner
-  rm -rf "$dir"
+  rm -rf "$dir.new" || return 1
+  mkdir -p "$dir.new" || return 1
+  tar -xf "$tb" -C "$dir.new" --strip-components=1 --no-same-owner || return 1
+  rm -rf "$dir" || return 1
   mv "$dir.new" "$dir"
 }
 inst_go() { untar_into "$E15_GO_ROOT" "$1"; }
 inst_node() { untar_into "$E15_NODE_ROOT" "$1"; }
 inst_fc() {
-  local t
-  t=$(mktemp -d "$DL/fc.XXXXXX")
-  tar -xzf "$1" -C "$t" --no-same-owner
-  install -m 0755 "$t/release-$E15_FC_VERSION-x86_64/firecracker-$E15_FC_VERSION-x86_64" "$E15_BIN/firecracker"
-  install -m 0755 "$t/release-$E15_FC_VERSION-x86_64/jailer-$E15_FC_VERSION-x86_64" "$E15_BIN/jailer"
+  local t r=1
+  t=$(mktemp -d "$DL/fc.XXXXXX") || return 1
+  tar -xzf "$1" -C "$t" --no-same-owner &&
+    install -m 0755 "$t/release-$E15_FC_VERSION-x86_64/firecracker-$E15_FC_VERSION-x86_64" "$E15_BIN/firecracker" &&
+    install -m 0755 "$t/release-$E15_FC_VERSION-x86_64/jailer-$E15_FC_VERSION-x86_64" "$E15_BIN/jailer" && r=0
   rm -rf "$t"
+  return "$r"
 }
+# grpcurl's own sha256 (the installed binary) is kept beside it: a re-run's check compares it, so a
+# failed upgrade that left another binary in place is not taken for the pinned one.
+GRPCURL_BIN_SHA=$E15_STATE/grpcurl.bin.sha256
 inst_grpcurl() {
-  local t
-  t=$(mktemp -d "$DL/grpcurl.XXXXXX")
-  tar -xzf "$1" -C "$t" --no-same-owner
-  install -m 0755 "$t/grpcurl" "$E15_BIN/grpcurl"
+  local t r=1
+  t=$(mktemp -d "$DL/grpcurl.XXXXXX") || return 1
+  tar -xzf "$1" -C "$t" --no-same-owner &&
+    install -m 0755 "$t/grpcurl" "$E15_BIN/grpcurl" &&
+    sha256_of "$E15_BIN/grpcurl" >"$GRPCURL_BIN_SHA" && r=0
   rm -rf "$t"
+  return "$r"
 }
 
 install_tarball go "$E15_GO_URL" "$E15_GO_SHA256" \
@@ -148,7 +187,8 @@ install_tarball node "$E15_NODE_URL" "$E15_NODE_SHA256" \
   "[ \"\$('$E15_NODE_ROOT/bin/node' --version)\" = v$E15_NODE_VERSION ]" -- inst_node
 install_tarball firecracker "$E15_FC_URL" "$E15_FC_SHA256" \
   "'$E15_BIN/firecracker' --version | head -1 | grep -qF 'Firecracker $E15_FC_VERSION' && [ -x '$E15_BIN/jailer' ]" -- inst_fc
-install_tarball grpcurl "$E15_GRPCURL_URL" "$E15_GRPCURL_SHA256" "[ -x '$E15_BIN/grpcurl' ]" -- inst_grpcurl
+install_tarball grpcurl "$E15_GRPCURL_URL" "$E15_GRPCURL_SHA256" \
+  "'$E15_BIN/grpcurl' -version 2>&1 | grep -qE '^grpcurl v?$E15_GRPCURL_VERSION\$' && [ \"\$(sha256sum '$E15_BIN/grpcurl' | cut -d' ' -f1)\" = \"\$(cat '$GRPCURL_BIN_SHA')\" ]" -- inst_grpcurl
 
 # pnpm through corepack, pinned by version and the registry's sha512.
 mapfile -t UENV < <(e15_userenv user)

@@ -893,7 +893,7 @@ check "aws-prelim: sctl on microvm-worker still passes" "$(guard 'sctl stop micr
 printf 'ID=ubuntu\nVERSION_ID="24.04"\n' >"$TMP/os-ubuntu"
 printf 'ID="amzn"\nVERSION_ID="2023"\n' >"$TMP/os-amzn"
 osq() { E15_OS_RELEASE="$1" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; e15_os_id; e15_pkg_mgr; e15_pkg_remove_cmd podman' _ "$RIG/lib.sh" | tr '\n' '|'; }
-check "ubuntu: apt" "$(osq "$TMP/os-ubuntu")" "ubuntu|apt|sudo -n env DEBIAN_FRONTEND=noninteractive apt-get remove -y podman|"
+check "ubuntu: apt (purge: conffiles too)" "$(osq "$TMP/os-ubuntu")" "ubuntu|apt|sudo -n env DEBIAN_FRONTEND=noninteractive apt-get purge -y podman|"
 check "al2023: dnf" "$(osq "$TMP/os-amzn")" "amzn|dnf|sudo -n dnf remove -y podman|"
 check "unit files go to /etc/systemd/system on both" "$(prof 'echo $E15_UNIT_DIR')/$(E15_HOST_PROFILE=fresh-metal prof 'echo $E15_UNIT_DIR')" "/etc/systemd/system//etc/systemd/system"
 check "no rig script writes /etc/serverless-harness" "$(cat "$RIG"/*.sh | grep -v '^ *#' | grep -c '/etc/serverless-harness')" "0"
@@ -938,8 +938,29 @@ EOF
   chmod +x "$TMP/fetch.sh"
   # sudo runs the command (no root needed for the test root); apt/dpkg/usermod/getent are stubs.
   printf '#!/usr/bin/env bash\n[ "$1" = -n ] && shift\necho "sudo $*" >>"%s"\n[ $# -eq 0 ] || [ "$1" = true ] && exit 0\nexec "$@"\n' "$TMP/bsudo.log" >"$BS/sudo"
-  printf '#!/usr/bin/env bash\necho "apt-get $*" >>"%s"\n[ "$1" = install ] && for a; do case "$a" in -*|install) ;; *) echo "$a" >>"%s" ;; esac; done\nexit 0\n' "$TMP/apt.log" "$TMP/dpkg.db" >"$BS/apt-get"
-  printf '#!/usr/bin/env bash\nif [ "$1" = -W ] && [ "$2" = -f ] && [ "$3" = "\\${Status}" ]; then grep -qx "$4" "%s" 2>/dev/null && printf "install ok installed"; exit 0; fi\ncat "%s" 2>/dev/null; exit 0\n' "$TMP/dpkg.db" "$TMP/dpkg.db" >"$BS/dpkg-query"
+  # apt-get: logs; install adds each package (podman also its dependency conmon, and enables
+  # podman-restart.service); APT_FAIL=1 fails after the first package, like a broken download.
+  cat >"$BS/apt-get" <<SH
+#!/usr/bin/env bash
+echo "apt-get \$*" >>"$TMP/apt.log"
+echo "apt-get \$*" >>"$TMP/order.log"
+inst=0
+for a; do
+  case "\$a" in
+  install) inst=1 ;;
+  -* | DPkg::* | update) ;;
+  *) [ "\$inst" = 1 ] || continue
+    echo "\$a" >>"$TMP/dpkg.db"
+    [ "\$a" = podman ] && echo conmon >>"$TMP/dpkg.db" && echo podman-restart.service >>"$TMP/units.db"
+    [ "\${APT_FAIL:-0}" = 1 ] && exit 100 ;;
+  esac
+done
+exit 0
+SH
+  printf '#!/usr/bin/env bash\nif [ "$1" = -W ] && [ "$2" = -f ] && [ "$3" = "\\${Status}" ]; then grep -qx "$4" "%s" 2>/dev/null && printf "install ok installed"; exit 0; fi\nsed "s/^/ii  /" "%s" 2>/dev/null; exit 0\n' "$TMP/dpkg.db" "$TMP/dpkg.db" >"$BS/dpkg-query"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\ncase "$1" in is-active|is-failed) exit 1 ;; esac\n[ "$1" = list-unit-files ] && sed "s/$/ enabled enabled/" "%s" 2>/dev/null\nexit 0\n' "$TMP/bsctl.log" "$TMP/units.db" >"$BS/systemctl"
+  printf '#!/usr/bin/env bash\necho "cloud-init $*" >>"%s"\n' "$TMP/order.log" >"$BS/cloud-init"
+  printf 'ssh.service\n' >"$TMP/units.db"
   printf '#!/usr/bin/env bash\necho "usermod $*" >>"%s"\necho "$3" >"%s"\n' "$TMP/usermod.log" "$TMP/kvm.members" >"$BS/usermod"
   printf '#!/usr/bin/env bash\n[ "$2" = kvm ] && echo "kvm:x:992:$(cat "%s" 2>/dev/null)"\n' "$TMP/kvm.members" >"$BS/getent"
   printf '#!/bin/sh\necho x86_64\n' >"$BS/uname"
@@ -951,6 +972,7 @@ EOF
       E15_MANIFEST="$TMP/boot-m.md" PATH="$BS:$PATH" "$@" bash "$BR/src/e15/rig/bootstrap.sh" >"$TMP/boot.out" 2>&1
   }
   : >"$TMP/fetch.log"
+  : >"$TMP/order.log"
   printf 'git\ncurl\npython3\niproute2\n' >"$TMP/dpkg.db"
   : >"$TMP/kvm.members"
   rm -f "$TMP/boot-m.md"
@@ -960,8 +982,15 @@ EOF
   check "bootstrap: downloads go, node, firecracker, grpcurl once each" "$(sort "$TMP/fetch.log" | uniq -c | awk '{print $1}' | tr -d '\n')/$(grep -c . "$TMP/fetch.log")" "1111/4"
   check "bootstrap: go into go-toolchain, node into node, firecracker+jailer+grpcurl+pnpm into bin" \
     "$(cd "$BR" && for f in go-toolchain/bin/go node/bin/node bin/firecracker bin/jailer bin/grpcurl bin/pnpm; do [ -x "$f" ] && printf y || printf n; done)" "yyyyyy"
-  check "bootstrap: installs only the missing apt packages" "$(grep '^apt-get install' "$TMP/apt.log" | sed 's/.* -q //')" "podman unzip e2fsprogs"
-  check "bootstrap: apt packages listed as LEFTOVER with their remove command" "$(grep -c 'LEFTOVER: apt packages podman unzip e2fsprogs .*remove with: sudo -n env DEBIAN_FRONTEND=noninteractive apt-get remove -y podman unzip e2fsprogs' "$TMP/boot-m.md")" "1"
+  check "bootstrap: installs only the missing apt packages" "$(grep ' install ' "$TMP/apt.log" | sed 's/.* -q //')" "podman unzip e2fsprogs xfsprogs"
+  # M4: cloud-init first, then apt with a dpkg lock timeout on both calls
+  check "bootstrap: waits for cloud-init before apt" "$(head -2 "$TMP/order.log" | cut -d' ' -f1-3 | tr '\n' '|')" "cloud-init status --wait|apt-get -o DPkg::Lock::Timeout=600|"
+  check "bootstrap: apt update and install both carry DPkg::Lock::Timeout=600" "$(grep -c '^apt-get -o DPkg::Lock::Timeout=600 \(update\|install\) ' "$TMP/apt.log")" "2"
+  # M5: exactly what apt added (the dependency too), the unit it enabled, purge of that list
+  check "bootstrap: LEFTOVER names exactly the packages apt added, and the unit they enabled" \
+    "$(grep -c 'LEFTOVER: apt packages added by E15 (asked for podman unzip e2fsprogs xfsprogs): conmon e2fsprogs podman unzip xfsprogs; units they enabled: podman-restart.service;' "$TMP/boot-m.md")" "1"
+  check "bootstrap: the package undo disables the unit, then purges exactly that list (no autoremove)" \
+    "$(grep -c 'undo: sudo -n systemctl disable --now podman-restart.service; sudo -n env DEBIAN_FRONTEND=noninteractive apt-get purge -y conmon e2fsprogs podman unzip xfsprogs$' "$TMP/boot-m.md")/$(grep -c autoremove "$TMP/boot-m.md")" "1/0"
   check "bootstrap: adds the user to kvm, with a PURGE that undoes it" "$(grep -c '^usermod -aG kvm' "$TMP/usermod.log")/$(grep -c "PURGE: sudo -n gpasswd -d $(id -un) kvm" "$TMP/boot-m.md")" "1/1"
   check "bootstrap: pnpm via corepack, pinned by version and sha512" "$(grep -c 'corepack install -g pnpm@9.15.9+sha512.68046141' "$TMP/cp.log")" "1"
   check "bootstrap: records each artifact's sha256 in state/artifacts" "$(awk '{print $1}' "$BR/state/artifacts" | sort | tr '\n' ' ')" "firecracker go grpcurl node pnpm "
@@ -977,6 +1006,26 @@ EOF
   check "bootstrap: second run downloads, installs and adds nothing" "$(grep -c . "$TMP/fetch.log")/$(grep -c . "$TMP/apt.log")/$(grep -c . "$TMP/usermod.log")" "0/0/0"
   check "bootstrap: second run leaves the manifest unchanged" "$(cmp -s "$TMP/boot-m.md" "$TMP/boot-m.1" && echo same || echo changed)" "same"
   check "bootstrap: second run says nothing to change" "$(grep -c 'nothing to change' "$TMP/boot.out")" "1"
+  # M5: an install that fails part way still records what it added (EXIT trap)
+  cp "$TMP/dpkg.db" "$TMP/dpkg.full"
+  printf 'git\ncurl\npython3\niproute2\nunzip\ne2fsprogs\nxfsprogs\n' >"$TMP/dpkg.db"
+  cp "$TMP/boot-m.md" "$TMP/boot-m.pre-fail"
+  boot APT_FAIL=1
+  check "bootstrap: a failed apt install exits 1" "$?/$(grep -c 'apt-get install podman failed' "$TMP/boot.out")" "1/1"
+  check "bootstrap: a failed install still records the packages it added, with their purge" \
+    "$(diff "$TMP/boot-m.pre-fail" "$TMP/boot-m.md" | grep -c 'LEFTOVER: apt packages added by E15 (asked for podman): conmon podman; .*apt-get purge -y conmon podman$')" "1"
+  check "bootstrap: the intent line precedes the install" "$(diff "$TMP/boot-m.pre-fail" "$TMP/boot-m.md" | grep -c 'apt: installing podman (the packages added are recorded next, even if this fails)')" "1"
+  cp "$TMP/dpkg.full" "$TMP/dpkg.db"
+  cp "$TMP/boot-m.pre-fail" "$TMP/boot-m.md"
+  # L1: grpcurl's check is its version and its installed binary's sha256, not only -x
+  printf '#!/bin/sh\necho "grpcurl 1.9.4"\n# another build\n' >"$BR/bin/grpcurl"
+  : >"$TMP/fetch.log"
+  boot
+  check "bootstrap: a grpcurl binary that is not the installed one is reinstalled" "$?/$(grep -c 'bootstrap: grpcurl from' "$TMP/boot.out")/$(cmp -s "$BR/bin/grpcurl" "$FIX/grpcurl/grpcurl" && echo pinned)" "0/1/pinned"
+  check "bootstrap: install helpers check every step (no bare tar/install)" \
+    "$(sed -n '/^untar_into()/,/^install_tarball go/p' "$BR/src/e15/rig/bootstrap.sh" | grep -E '^\s+(tar|install|rm|mkdir|mv) ' | grep -cvE '\|\| return 1$|&&( r=0)?$|^\s+mv "\$dir.new" "\$dir"$|^\s+rm -rf "\$t"$')" "0"
+  cp "$TMP/boot-m.pre-fail" "$TMP/boot-m.md"
+
   # a tarball that does not match its pin is refused and not installed
   printf 'E15_GRPCURL_SHA256=%064d\n' 0 >>"$TMP/test-pins.sh"
   rm -f "$BR/bin/grpcurl" "$BR/state/bootstrap-grpcurl" "$BR/downloads/grpcurl.tgz"
@@ -992,8 +1041,14 @@ EOF
   check "bootstrap: an empty pin refuses the run (exit 1)" "$?" "1"
   check "bootstrap: the refusal names every empty pin" "$(grep -c 'empty pin(s) in pins.sh, the operator must fill them: E15_FC_SHA256 E15_KERNEL_SHA256' "$TMP/boot.out")" "1"
   check "bootstrap: the refusal touched nothing" "$(grep -c . "$TMP/fetch.log")/$(grep -c . "$TMP/bsudo.log")/$(cmp -s "$TMP/boot-m.md" "$TMP/boot-m.2" && echo same)" "0/0/same"
-  check "bootstrap: aws-prelim refuses it" "$(E15_ROOT="$BR" E15_TEST_ROOT="$BR" E15_MANIFEST="$TMP/boot-x.md" PATH="$BS:$PATH" bash "$BR/src/e15/rig/bootstrap.sh" >/dev/null 2>&1; echo $?)" "1"
+  # M2: no recorded profile, so lib.sh defaults to aws-prelim and bootstrap's own guard refuses it
   rm -rf "$BR/state"
+  E15_ROOT="$BR" E15_TEST_ROOT="$BR" E15_MANIFEST="$TMP/boot-x.md" E15_OS_RELEASE="$TMP/os-ubuntu" \
+    PATH="$BS:$PATH" bash "$BR/src/e15/rig/bootstrap.sh" >"$TMP/boot.out" 2>&1
+  check "bootstrap: aws-prelim refuses it (clean profile state, its own message)" "$?/$(grep -c '^bootstrap.sh: fresh-metal only (E15_HOST_PROFILE=aws-prelim); aws-prelim needs no bootstrap$' "$TMP/boot.out")" "1/1"
+  E15_HOST_PROFILE=aws-prelim E15_ROOT="$BR" E15_TEST_ROOT="$BR" E15_MANIFEST="$TMP/boot-x.md" E15_OS_RELEASE="$TMP/os-ubuntu" \
+    PATH="$BS:$PATH" bash "$BR/src/e15/rig/bootstrap.sh" >"$TMP/boot.out" 2>&1
+  check "bootstrap: explicit aws-prelim refuses it too" "$?/$(grep -c 'fresh-metal only (E15_HOST_PROFILE=aws-prelim)' "$TMP/boot.out")" "1/1"
   check "bootstrap: a non-Ubuntu host is refused" "$(boot E15_TEST_PINS= E15_OS_RELEASE="$TMP/os-amzn"; echo $?)/$(grep -c 'expects Ubuntu' "$TMP/boot.out")" "1/1"
   check "setup.sh: fresh-metal refuses empty pins too" "$(grep -c '^  e15_require_pins$' "$RIG/setup.sh")" "1"
   check "e15_fetch: no checksum -> refuses" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; e15_fetch https://x.invalid/a "" "$2"' _ "$RIG/lib.sh" "$TMP/nofetch" >/dev/null 2>&1; echo "$?/$([ -e "$TMP/nofetch" ] && echo file || echo none)")" "1/none"
@@ -1094,6 +1149,12 @@ if [ -f "$RIG/teardown.sh" ]; then
   printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
   printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s"\n' "$CALLS" >"$STUB/sudo"
 fi
+
+# --- L3: E15_TEST_PINS only under a */e15-rig-test.* root ---------------------
+printf 'E15_GO_VERSION=evil\n' >"$TMP/evil-pins.sh"
+check "test pins: honoured under a test root" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_TEST_PINS="$TMP/evil-pins.sh" bash -c 'source "$1"; echo $E15_GO_VERSION' _ "$RIG/lib.sh")" "evil"
+check "test pins: ignored on /srv/e15 even when E15_TEST_ROOT names it" "$(E15_ROOT=/srv/e15 E15_TEST_ROOT=/srv/e15 E15_TEST_PINS="$TMP/evil-pins.sh" bash -c 'source "$1"; echo $E15_GO_VERSION' _ "$RIG/lib.sh")" "1.26.0"
+check "aws-prelim: no missing workspace_copy state still means reflink" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; rm -f "$E15_STATE/workspace_copy"; workspace_copy_mode' _ "$RIG/lib.sh")" "reflink"
 
 # aws-prelim is unchanged where it matters: guards, PRESTATE, rootfs source, disk measurement
 check "aws-prelim setup keeps the shared-host pause" "$(grep -c 'sctl stop "\$E15_HOST_WORKER"' "$RIG/setup.sh")/$(grep -c 'sudo -n docker stop "\$c"' "$RIG/setup.sh")" "1/1"

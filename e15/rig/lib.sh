@@ -59,11 +59,16 @@ if [ -n "$_e15_rec_profile" ] && [ "$_e15_rec_profile" != "$E15_HOST_PROFILE" ];
 fi
 # shellcheck source=pins.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pins.sh"
-# rig.test.sh only: fixture pins (its own tarballs' checksums), honoured only under its named root.
-if [ -n "${E15_TEST_PINS:-}" ] && [ -n "${E15_TEST_ROOT:-}" ] && [ "$E15_TEST_ROOT" = "$E15_ROOT" ]; then
-  # shellcheck disable=SC1090
-  . "$E15_TEST_PINS"
-fi
+# rig.test.sh only: fixture pins (its own tarballs' checksums), honoured only under its named
+# scratch root (*/e15-rig-test.*, never /srv/e15 even if E15_TEST_ROOT names it).
+case "$E15_ROOT" in
+*/e15-rig-test.*)
+  if [ -n "${E15_TEST_PINS:-}" ] && [ "${E15_TEST_ROOT:-}" = "$E15_ROOT" ]; then
+    # shellcheck disable=SC1090
+    . "$E15_TEST_PINS"
+  fi
+  ;;
+esac
 E15_SHARED=/opt/serverless-harness
 
 # moca v0.9.0 (SPEC §6.6).
@@ -318,8 +323,7 @@ e15_node() {
 # shellcheck disable=SC1090,SC1091  # /etc/os-release, or a test fixture
 e15_os_id() { (. "${E15_OS_RELEASE:-/etc/os-release}" 2>/dev/null && echo "${ID:-unknown}") || echo unknown; }
 
-# e15_pkg_install PKG...: the host's package manager (Ubuntu/Debian apt-get; AL2023/Fedora dnf).
-# Prints the command it ran; the undo is e15_pkg_remove.
+# e15_pkg_mgr: the host's package manager (Ubuntu/Debian apt; AL2023/Fedora dnf).
 e15_pkg_mgr() {
   case "$(e15_os_id)" in
   ubuntu | debian) echo apt ;;
@@ -334,19 +338,22 @@ e15_pkg_installed() {
   *) return 1 ;;
   esac
 }
-e15_pkg_install() {
-  case "$(e15_pkg_mgr)" in
-  apt) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ;;
-  dnf) sudo -n dnf install -y "$@" ;;
-  *) die "no known package manager for OS $(e15_os_id)" ;;
-  esac
-}
+# e15_pkg_remove_cmd PKG...: the command that removes exactly PKG... (apt: purge, conffiles too;
+# no autoremove, which could take auto-installed packages that predate E15).
 e15_pkg_remove_cmd() {
   case "$(e15_pkg_mgr)" in
-  apt) echo "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get remove -y $*" ;;
+  apt) echo "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get purge -y $*" ;;
   dnf) echo "sudo -n dnf remove -y $*" ;;
   *) echo "false # no package manager for $*" ;;
   esac
+}
+# e15_dpkg_list: every installed package (dpkg "ii"), arch-qualified where dpkg does, sorted.
+e15_dpkg_list() {
+  { dpkg-query -W -f '${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null || true; } | awk '$1 ~ /^ii/ {print $2}' | sort
+}
+# e15_enabled_units: every enabled unit file (read only, no sudo), sorted.
+e15_enabled_units() {
+  { systemctl list-unit-files --state=enabled --no-legend --no-pager 2>/dev/null || true; } | awk 'NF {print $1}' | sort
 }
 
 # e15_require_pins: die naming every empty pins.sh constant (fresh-metal never guesses a checksum).
