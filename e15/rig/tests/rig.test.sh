@@ -1217,7 +1217,7 @@ if [ -f "$RIG/lib.sh" ]; then
   check "workspace copy: state sparse -> cp --sparse=always" "$(wcm)" "sparse --sparse=always"
   rm -f "$TROOT/state/workspace_copy"
   check "setup.sh requires reflink from each template dir into workspaces, every run (fresh-metal)" "$(grep -c 'for d in "$E15_ROOT/template" "$E15_ROOT/template-mem512"; do e15_require_reflink "$E15_WORKSPACES" "$d"; done' "$RIG/setup.sh")/$(grep -c 'workspace_copy" ]' "$RIG/setup.sh")" "1/0"
-  check "rung.sh copies with the recorded mode's flag (sessions and the attach probe)" "$(grep -c 'cp "\$cpf" "\$tpl" "\$d/workspace.img"' "$RIG/rung.sh")/$(grep -c 'workspace_cp_flag "\$WS_COPY"' "$RIG/rung.sh")" "1/3"
+  check "rung.sh copies with the recorded mode's flag" "$(grep -c 'cp "\$cpf" "\$tpl" "\$d/workspace.img"' "$RIG/rung.sh")/$(grep -c 'workspace_cp_flag "\$WS_COPY"' "$RIG/rung.sh")" "1/2"
   check "rung.sh keeps the K floor unchanged" "$(grep -c 'print(max(16, (int(math.ceil(w/s))+3)\*int(sys.argv\[3\])))' "$RIG/rung.sh")" "1"
   de() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; shift; workspace_disk_estimate "$@"' _ "$RIG/lib.sh" "$@"; }
   check "disk estimate: 128 x 16 images x 256 MiB worst case" "$(de 128 16 256 15000 104857600)" \
@@ -1444,8 +1444,19 @@ esac
 exec "\$@"
 SH
   printf '#!/usr/bin/env bash\n[ -e "%s/relay-up" ] && printf "LISTEN 0 1 127.0.0.1:9643 0.0.0.0:*\\nLISTEN 0 1 127.0.0.1:9644 0.0.0.0:*\\n"\nexit 0\n' "$RR" >"$RH/ss"
-  # grpcurl: the probe Exec; answers exit 0 unless GRPC_FAIL=1 (a refused duplicate Hello: EOF)
-  printf '#!/usr/bin/env bash\necho "probe $*" | grep -o "workspace_key[^,}]*" | sed "s/^/probe /" >>"%s"\n[ "${GRPC_FAIL:-0}" = 1 ] && { echo "ERROR: Code: Unavailable desc = EOF" >&2; exit 1; }\necho "{\\"end\\": {\\"exitCode\\": 0}}"\n' "$ORD" >"$RH/grpcurl"
+  # grpcurl: the probe Exec. GRPC_MODE=refuse (default): the worker's checkKey refusal of an invalid
+  # key (in-stream ExecError); eof: a refused duplicate Hello; ran: the worker ran it (exit 0).
+  cat >"$RH/grpcurl" <<SH
+#!/usr/bin/env bash
+echo "\$*" | grep -o '"workspace_key": *"[^"]*"' | sed 's/^/probe /' >>"$ORD"
+case "\${GRPC_MODE:-refuse}" in
+eof) echo "ERROR: Code: Unavailable desc = EOF" >&2; exit 1 ;;
+ran) echo '{"end": {"exitCode": 0}}' ;;
+*) k=\$(echo "\$*" | grep -o '"workspace_key": *"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+   echo "{\"error\": {\"message\": \"invalid-workspace-key: workspace_key \\\\\"\$k\\\\\" must match [A-Za-z0-9][A-Za-z0-9._-]{0,127}\"}}"
+   echo "ERROR: Code: Internal" >&2; exit 1 ;;
+esac
+SH
   # cp: --reflink=always is GNU's; the copy itself is real
   printf '#!/usr/bin/env bash\nargs=(); for a; do case "$a" in --reflink=*|--sparse=*) ;; *) args+=("$a") ;; esac; done\nexec /bin/cp "${args[@]}"\n' >"$RH/cp"
   chmod +x "$RH"/*
@@ -1454,15 +1465,32 @@ SH
       E15_MEMINFO="$TMP/nomeminfo" PATH="$RH:$STUB:$PATH" "$@" bash "$RIG/rung.sh" sbx 1 default >"$TMP/rh.out" 2>&1; }
   rh
   check "rung.sh: relay restarted after the old units stop, before the worker; probe, then driver" \
-    "$(grep -v '^probe .*attach-probe' "$ORD" | tr '\n' ' ' | sed 's/ $//')|$(grep -c '^probe workspace_key.*attach-probe' "$ORD")" "relay-stop relay-start worker-start driver|1"
+    "$(grep -v '^probe ' "$ORD" | tr '\n' ' ' | sed 's/ $//')|$(grep -c '^probe "workspace_key": *"_e15-attach-probe"' "$ORD")" "relay-stop relay-start worker-start driver|1"
   check "rung.sh: the attach probe ran between the worker start and the driver" \
     "$(awk '/^worker-start/{w=NR} /attach-probe/{p=NR} /^driver/{d=NR} END{print (w<p && p<d) ? "ordered" : "no"}' "$ORD")" "ordered"
   check "rung.sh: the relay restart touches E15's relay only (no sh-* unit)" "$(grep -c SHARED "$ORD")" "0"
   check "rung.sh: the attach check passed is logged" "$(grep -c 'relay attach check passed' "$TMP/rh.out")" "1"
-  rh GRPC_FAIL=1 E15_ATTACH_TIMEOUT_S=3
+  check "rung.sh: the probe key is one the worker's checkKey refuses (no run, no VM, no standby)" \
+    "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'eval "$(grep "^E15_PROBE_KEY=" "$1")"; [[ "$E15_PROBE_KEY" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] && echo valid || echo refused' _ "$RIG/rung.sh")/$(find "$RR/workspaces" -name '*attach-probe*' | grep -c .)" "refused/0"
+  check "rung.sh: the probe passes on the worker's own refusal (proof it reached the worker)" "$(grep -c '^ExecError: invalid-workspace-key: ' "$RR"/runs/default/sbx/N1/attach-probe.log)" "1"
+  rh GRPC_MODE=eof E15_ATTACH_TIMEOUT_S=3
   check "rung.sh: a failed attach check is a rig error (exit 1) and the driver never starts" \
-    "$?/$(grep -c 'relay attach check failed: no Exec through e15-relay.service succeeded within 3 s (rig error, not a measured result)' "$TMP/rh.out")/$(grep -c '^driver' "$ORD")" "1/1/0"
+    "$?/$(grep -c 'relay attach check failed: no Exec through e15-relay.service reached the worker within 3 s (rig error, not a measured result)' "$TMP/rh.out")/$(grep -c '^driver' "$ORD")" "1/1/0"
   check "rung.sh: a failed attach check writes no record" "$(find "$RR/runs" -name record.json -o -name params.json | grep -c .)" "0"
+  rh GRPC_MODE=ran
+  check "rung.sh: a worker that RUNS the probe (it would cost a VM) is refused" "$?/$(grep -c 'the worker ran the probe on workspace_key _e15-attach-probe instead of refusing it' "$TMP/rh.out")/$(grep -c '^driver' "$ORD")" "1/1/0"
+  # M2: grpcurl resolved before the relay is touched
+  mv "$RH/grpcurl" "$RH/grpcurl.off"
+  NOG="$TMP/nogrpc"; mkdir -p "$NOG"
+  for b in bash env sh python3 awk sed grep cat date mkdir rm cp mv chmod find head tail tr cut dirname basename sort mktemp sleep kill pkill du df ls touch seq wc od comm stat readlink xargs sha256sum shasum uname id hostname tee printf true false test; do
+    w=$(command -v "$b" 2>/dev/null) && [ -n "$w" ] && [ "${w#/}" != "$w" ] && ln -sf "$w" "$NOG/$b"
+  done
+  touch "$RR/relay-up"; : >"$ORD"
+  env -i HOME="$HOME" E15_ROOT="$RR" E15_TEST_ROOT="$RR" E15_MANIFEST="$TMP/rh.md" E15_WARMUP_S=1 E15_WINDOW_S=1 \
+    E15_MEMINFO="$TMP/nomeminfo" PATH="$RH:$NOG" "$NOG/bash" "$RIG/rung.sh" sbx 1 default >"$TMP/rh.out" 2>&1
+  check "rung.sh: no grpcurl -> refused before the relay is restarted, naming grpcurl" \
+    "$?/$(grep -c 'no grpcurl on PATH .*the relay was not touched' "$TMP/rh.out")/$(grep -c '^relay-' "$ORD")" "1/1/0"
+  mv "$RH/grpcurl.off" "$RH/grpcurl"
   rm -rf "$RR"
 fi
 

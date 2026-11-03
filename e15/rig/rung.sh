@@ -25,8 +25,9 @@
 #      (not control) restart E15's relay (e15-relay.service), so no stale worker session from a
 #      previous rung makes it refuse this rung's worker
 #   3. start the arm's worker (e15-worker.service in e15-vms.slice; SPEC §7 env; lib.sh worker_env)
-#      and require one Exec through the relay within E15_ATTACH_TIMEOUT_S (60; else exit 1, a rig
-#      error); or, for control, the null-responder on 127.0.0.1:9645
+#      and require one probe Exec to reach it through the relay within E15_ATTACH_TIMEOUT_S (60;
+#      else exit 1, a rig error) -- on a workspace_key the worker refuses, so it starts no VM; or,
+#      for control, the null-responder on 127.0.0.1:9645
 #   4. start sample.sh and e15-driver together (sampler origin = the epoch just before the driver
 #      is exec'd); after the run re-base samples.jsonl t onto the driver's t0_epoch, which becomes
 #      rung_start_ts (see "time origin")
@@ -183,12 +184,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# relay_attach_probe KEY TIMEOUT_S: one Exec (`true`) through E15's relay on KEY answers exit 0
-# within TIMEOUT_S, retried every 2 s; the last attempt's output in $DIR/attach-probe.log.
+# The attach probe's workspace_key: one the worker's checkKey refuses ([A-Za-z0-9] must come first),
+# so ExecPhased answers before it creates a run or a VM, on every arm (stock and resident). The
+# reply, an in-stream "invalid-workspace-key" ExecError, can only come from a live, attached worker:
+# with none, the relay itself fails the call ("no live worker for sandbox"). So the probe proves the
+# relay routes to this rung's worker and leaves no VM, standby or run behind.
+E15_PROBE_KEY=_e15-attach-probe
+# relay_attach_probe TIMEOUT_S: 0 when one probe Exec gets the worker's invalid-workspace-key
+# refusal within TIMEOUT_S (retried every 2 s); 2 when the worker ran it instead (the key was
+# accepted: it would have cost a VM); 1 otherwise. The last attempt's output: $DIR/attach-probe.log.
 relay_attach_probe() {
-  local key=$1 deadline=$((SECONDS + $2)) pid
+  local deadline=$((SECONDS + $1)) pid rc
   while [ "$SECONDS" -lt "$deadline" ]; do
-    gexec "$key" true >"$DIR/attach-probe.log" 2>&1 &
+    gexec "$E15_PROBE_KEY" true >"$DIR/attach-probe.log" 2>&1 &
     pid=$!
     while kill -0 "$pid" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.5; done
     if kill -0 "$pid" 2>/dev/null; then
@@ -197,7 +205,10 @@ relay_attach_probe() {
       wait "$pid" 2>/dev/null || true
       return 1
     fi
-    wait "$pid" && return 0
+    rc=0
+    wait "$pid" || rc=$?
+    grep -q '^ExecError: invalid-workspace-key: ' "$DIR/attach-probe.log" && return 0
+    [ "$rc" != 0 ] || return 2
     sleep 2
   done
   return 1
@@ -241,14 +252,6 @@ sudo -n bash -c '
       chmod 0600 "$d/workspace.img"
     done
   done' _ "$E15_WORKSPACES" "$TEMPLATE" "$RUN_ID" "$N" "$K" "$(workspace_cp_flag "$WS_COPY")"
-# The attach probe's own workspace (not a session key: unseeded_sessions counts the driver's only).
-PROBE_KEY="e15-$RUN_ID-attach-probe"
-if [ "$ARM" != control ]; then
-  sudo -n mkdir -m 0700 "$E15_WORKSPACES/$PROBE_KEY"
-  sudo -n cp "$(workspace_cp_flag "$WS_COPY")" "$TEMPLATE" "$E15_WORKSPACES/$PROBE_KEY/workspace.img"
-  sudo -n chmod 0600 "$E15_WORKSPACES/$PROBE_KEY/workspace.img"
-fi
-
 # OOM kills anywhere in e15.slice over the rung (SPEC §7.2: an OOM kill fails the rung).
 oom_count() { awk '$1=="oom_kill"{print $2; f=1} END{if(!f) print 0}' "$E15_CG/memory.events" 2>/dev/null || echo 0; }
 oom_before=$(oom_count)
@@ -260,6 +263,11 @@ oom_before=$(oom_count)
 # an sh-* unit) after step 1 stopped the previous rung's units, before this rung's worker starts. Its
 # log so far is kept in the rung directory.
 if [ "$ARM" != control ]; then
+  # The attach check below needs grpcurl (lib.sh gexec): resolve it before the relay is touched.
+  # fresh-metal: bootstrap.sh's, in /srv/e15/bin. aws-prelim: whatever the ladder's PATH holds.
+  [ "$E15_HOST_PROFILE" != fresh-metal ] || PATH="$E15_BIN:$PATH"
+  command -v grpcurl >/dev/null 2>&1 ||
+    die "no grpcurl on PATH ($PATH): rung.sh's relay attach check needs it (fresh-metal: run bootstrap.sh; aws-prelim: start the ladder with grpcurl on PATH); the relay was not touched"
   [ -f "$E15_LOGS/relay.log" ] && sudo -n cp "$E15_LOGS/relay.log" "$DIR/relay.before-restart.log"
   stop_e15_unit "$E15_UNIT_RELAY"
   start_relay
@@ -276,18 +284,16 @@ else
   start_worker "$ARM" "$DIR" "$E15_P_IMAGE_MB"
   TARGET=127.0.0.1:$E15_PORT_EXEC
   # Attach check: the worker's own "attached" line is not enough (a refused duplicate Hello still
-  # logs it). One Exec through the relay must succeed within E15_ATTACH_TIMEOUT_S (60) before the
-  # driver starts; otherwise this is a rig error (exit 1, no record), not a measured failure.
-  # fresh-metal: grpcurl is bootstrap.sh's, in /srv/e15/bin.
-  [ "$E15_HOST_PROFILE" != fresh-metal ] || PATH="$E15_BIN:$PATH"
-  relay_attach_probe "$PROBE_KEY" "${E15_ATTACH_TIMEOUT_S:-60}" ||
-    die "relay attach check failed: no Exec through $E15_UNIT_RELAY succeeded within ${E15_ATTACH_TIMEOUT_S:-60} s (rig error, not a measured result); see $DIR/attach-probe.log, $DIR/worker.log, $E15_LOGS/relay.log"
-  # A resident arm keeps a VM per key: end the probe's, so it holds no memory during the rung.
-  case "$ARM" in resident-inf | resident-300)
-    gexec "$PROBE_KEY" ": e15-end-session" >>"$DIR/attach-probe.log" 2>&1 ||
-      die "relay attach check: ending the probe's resident session failed; see $DIR/attach-probe.log" ;;
-  esac
-  log "relay attach check passed (one Exec on $PROBE_KEY)"
+  # logs it). One probe Exec through the relay must reach this worker within E15_ATTACH_TIMEOUT_S
+  # (60) before the driver starts; otherwise this is a rig error (exit 1, no record), not a
+  # measured failure. The probe starts no VM (E15_PROBE_KEY above).
+  probe_rc=0
+  relay_attach_probe "${E15_ATTACH_TIMEOUT_S:-60}" || probe_rc=$?
+  [ "$probe_rc" != 2 ] ||
+    die "relay attach check: the worker ran the probe on workspace_key $E15_PROBE_KEY instead of refusing it (it would have cost a VM); see $DIR/attach-probe.log"
+  [ "$probe_rc" = 0 ] ||
+    die "relay attach check failed: no Exec through $E15_UNIT_RELAY reached the worker within ${E15_ATTACH_TIMEOUT_S:-60} s (rig error, not a measured result); see $DIR/attach-probe.log, $DIR/worker.log, $E15_LOGS/relay.log"
+  log "relay attach check passed (the worker refused the probe key $E15_PROBE_KEY: no VM started)"
 fi
 
 # --- 4. driver + sampler ---------------------------------------------------------------------
