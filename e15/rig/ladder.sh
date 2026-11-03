@@ -141,9 +141,10 @@ python3 - "$OUTDIR/ladder.json" "$rungs_json" "$POINT" "$ARM" "$START" "$n_max" 
 import json, sys
 out, rungs, point, arm, start, n_max, stopped, n_max_abs, stopped_abs, ladder = sys.argv[1:]
 rows = [json.loads(l) for l in open(rungs) if l.strip()]
-overhead = None
+overhead = n1_pace = None
 try:
-    overhead = json.load(open(out.rsplit("/", 1)[0] + "/N1/baseline.json")).get("overhead_ms")
+    bj = json.load(open(out.rsplit("/", 1)[0] + "/N1/baseline.json"))
+    overhead, n1_pace = bj.get("overhead_ms"), bj.get("n1_median_pace")
 except (OSError, ValueError):
     pass
 num = lambda v: None if v == "null" else int(v)
@@ -152,7 +153,7 @@ json.dump({"point": point, "arm": arm, "start_n": int(start), "ladder": [int(x) 
            "rungs": rows, "n_max": num(n_max), "stopped_at": num(stopped),
            "n_max_abs": num(n_max_abs), "stopped_at_abs": num(stopped_abs),
            "abs_rule": "condition 4 as p95(class excess) <= B + 250 ms (B = the arm's N=1 within-class excess p95; excess = added latency minus the per-class N=1 probe median)",
-           "n1_overhead_ms": overhead},
+           "n1_overhead_ms": overhead, "n1_median_pace": n1_pace},
           open(out, "w"), indent=2)
 PY
 rm -f "$rungs_json"

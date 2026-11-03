@@ -286,7 +286,7 @@ SH
   check "ladder: the re-run had E15_K_MULT=2" "$(grep -c '^1-k2 k=2' "$TMP/lcalls")" "1"
   mkdir -p "$TROOT/runs/default/sbx/N1"
   echo '{"overhead_ms": 12.5}' >"$TROOT/runs/default/sbx/N1/baseline.json"
-  check "ladder.json would read n1_overhead_ms from N1/baseline.json (rule text mentions B + 250)" "$(grep -c 'B + 250 ms' "$RIG/ladder.sh")/$(grep -c 'n1_overhead_ms' "$RIG/ladder.sh")" "2/1"
+  check "ladder.json would read n1_overhead_ms from N1/baseline.json (rule text mentions B + 250)" "$(grep -c 'B + 250 ms' "$RIG/ladder.sh")/$(grep -c 'n1_overhead_ms' "$RIG/ladder.sh")/$(grep -c '"n1_median_pace": n1_pace' "$RIG/ladder.sh")" "2/1/1"
   rm -f "$TROOT/runs/default/sbx/N1/baseline.json"
   check "ladder: the rig error is recorded" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rungs"][0]["rig_errors"])' "$TROOT/runs/default/sbx/ladder.json")" "['unseeded_sessions=2']"
   printf '1=%s\n1-k2=%s\n' '{"unseeded_sessions":2}' '{"unseeded_sessions":1}' >"$TMP/recs"
@@ -408,7 +408,7 @@ if [ -f "$RIG/rung.sh" ]; then
   STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1-repeat/record.json" p95_added_ms 300
   base_at default >/dev/null
   check "baseline lookup: an N1 record.json is no longer a baseline" "$?" "1"
-  GOOD='class_medians={} global_median_ms=1 excess_p95_ms=2'
+  GOOD='class_medians={} global_median_ms=1 excess_p95_ms=2 n1_median_pace=0.1'
   # stub_rec stores string values; rung.sh only checks the keys
   # shellcheck disable=SC2086
   STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 42.5 $GOOD
@@ -608,7 +608,7 @@ fi
 if [ -f "$RIG/rung.sh" ] && [ -f "$RIG/points.sh" ]; then
   printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
   rm -rf "$TROOT/runs"
-  GOOD='class_medians={} global_median_ms=1 excess_p95_ms=2'
+  GOOD='class_medians={} global_median_ms=1 excess_p95_ms=2 n1_median_pace=0.1'
   # shellcheck disable=SC2086
   STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 42.5 $GOOD
   check "mem512 control: the default baseline is valid for default" "$(base_at default | cut -d'|' -f2)" "$TROOT/runs/default/sbx/N1/baseline.json"

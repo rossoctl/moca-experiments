@@ -186,6 +186,7 @@ def build(rung_dir, params):
     n_ok = len(H.window_ok_calls(calls))
     rec["fallback_share"] = (ev["fallback_calls"] / float(n_ok)) if n_ok else None
     rec["undercovered"] = baseline.get("undercovered") if baseline else None
+    rec["n1_median_pace"] = baseline.get("n1_median_pace") if baseline else None
     rec["n1_overhead_ms"] = baseline.get("overhead_ms") if baseline else None
     rec["probe_failed"] = baseline.get("probe_failed") if baseline else None
     rec["refusal_scope"] = scope

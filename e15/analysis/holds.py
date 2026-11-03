@@ -106,8 +106,21 @@ def _split(calls, key, arm):
     return out
 
 
+def session_paces(sessions):
+    """Per-session pace = observed/planned - 1 for sessions with >= MIN_SESSION_CALLS window calls;
+    returns (paces, excluded_count)."""
+    paces, excluded = [], 0
+    for s in sessions:
+        if s.get("window_calls", 0) < MIN_SESSION_CALLS or not s.get("planned_ms"):
+            excluded += 1
+            continue
+        paces.append(s["observed_ms"] / float(s["planned_ms"]) - 1)
+    return paces, excluded
+
+
 def evaluate(calls, sessions, baseline, arm="sbx", refusals=0):
-    """baseline: baseline.json's dict (class_medians, global_median_ms, excess_p95_ms) or None (N=1)."""
+    """baseline: baseline.json's dict (class_medians, global_median_ms, excess_p95_ms, n1_median_pace)
+    or None (N=1, and the control arm): conditions 3 and 4 are skipped, median_pace still reported."""
     win = [c for c in calls if c.get("in_window")]
     failed = [c for c in win if _is_failure(c, arm)]
     not_started = [c for c in win if c.get("status") == "err"
@@ -121,12 +134,7 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0):
     added = window_added_ms(win)
     p95 = percentile(added, 95)
 
-    paces, excluded = [], 0
-    for s in sessions:
-        if s.get("window_calls", 0) < MIN_SESSION_CALLS or not s.get("planned_ms"):
-            excluded += 1
-            continue
-        paces.append(s["observed_ms"] / float(s["planned_ms"]) - 1)
+    paces, excluded = session_paces(sessions)
     med = median(paces)
 
     if baseline is None:
@@ -137,7 +145,10 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0):
         exc_limit = max(P95_FACTOR * baseline["excess_p95_ms"], EXCESS_FLOOR_MS)
     c1 = len(failed) == 0
     c2 = refusals == 0
-    c3 = med is None or med <= PACE_MAX + 1e-9  # float slack at the inclusive boundary
+    # condition 3 is relative to the arm's own N=1 median pace; N=1 (baseline None) skips it.
+    n1_pace = None if baseline is None else baseline.get("n1_median_pace")
+    pace_excess = None if (med is None or n1_pace is None) else med - n1_pace
+    c3 = baseline is None or pace_excess is None or pace_excess <= PACE_MAX + 1e-9  # float slack at the inclusive boundary
     c4 = exc_limit is None or p95_exc is None or p95_exc <= exc_limit
     # holds_abs: the same conditions, but condition 4 is p95 excess at most B + ABS_ADDED_MS
     # (B = baseline["excess_p95_ms"]). N=1 skips it as before.
@@ -158,6 +169,8 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0):
         "cut_at_end": len(cut),
         "refusals": refusals,
         "median_pace": med,
+        "n1_median_pace": n1_pace,
+        "pace_excess": pace_excess,
         "p95_added_ms": p95,
         "p95_excess_ms": p95_exc,
         "excess_limit_ms": exc_limit,

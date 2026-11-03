@@ -19,7 +19,7 @@ def sess(pace, n=5):
 
 
 def BL(excess=100, gmed=0, medians=None, **kw):
-    d = dict(class_medians=medians or {}, global_median_ms=gmed, excess_p95_ms=excess)
+    d = dict(class_medians=medians or {}, global_median_ms=gmed, excess_p95_ms=excess, n1_median_pace=0.0)
     d.update(kw)
     return d
 
@@ -64,8 +64,26 @@ def test_fails_on_refusal_line(tmp_path):
 
 
 def test_pace_boundary():
-    assert H.evaluate([call()], [sess(0.10)], None)["holds"]
-    assert not H.evaluate([call()], [sess(0.1001)], None)["holds"]
+    # relative to the arm's own N=1 median pace: inclusive at +0.10
+    bl = BL(excess=1000, n1_median_pace=0.193)
+    assert H.evaluate([call()], [sess(0.293)], bl)["holds"]
+    r = H.evaluate([call()], [sess(0.2931)], bl)
+    assert not r["holds"] and not r["holds_abs"] and not r["conditions"]["pace"]
+    assert abs(r["pace_excess"] - 0.1001) < 1e-9 and r["n1_median_pace"] == 0.193
+    # a faster-than-N=1 rung is fine
+    assert H.evaluate([call()], [sess(0.0)], bl)["holds"]
+
+
+def test_n1_skips_pace_and_holds_with_slow_pace():
+    r = H.evaluate([call()], [sess(0.193)], None)
+    assert r["holds"] and r["holds_abs"] and r["median_pace"] is not None
+    assert r["pace_excess"] is None and r["n1_median_pace"] is None
+    assert H.evaluate([call()], [sess(0.5)], None)["holds"]
+
+
+def test_control_exempt_from_pace():
+    (r,) = [H.evaluate([call()], [sess(0.9)], None, arm="control")]
+    assert r["holds"]
 
 
 def test_p95_boundary():
@@ -695,3 +713,29 @@ def test_baseline_carries_point_sig(tmp_path):
                         str(out)] + dirs, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert json.loads(out.read_text())["point_sig"] == "SIG"
+
+
+def _sessions_file(d, paces, n=5):
+    (d / "sessions.jsonl").write_text("".join(json.dumps(sess(p, n=n)) + "\n" for p in paces))
+
+
+def test_baseline_n1_pace_from_seeded_runs_only(tmp_path):
+    s1 = _rung_dir(tmp_path, "N1-s1", [5] * 3)
+    s2 = _rung_dir(tmp_path, "N1-s2", [5] * 3)
+    _sessions_file(tmp_path / "N1-s1", [0.10, 0.30])
+    _sessions_file(tmp_path / "N1-s2", [0.20, 9.0], n=2)    # the 2-call session is excluded
+    px = _probe_dir(tmp_path, "p-x", "x", [10] * 5)
+    _sessions_file(tmp_path / "p-x", [5.0, 5.0, 5.0])        # probe sessions must not count
+    out = tmp_path / "b.json"
+    B.main([str(out), s1, s2, "--probe", px])
+    g = json.loads(out.read_text())
+    assert g["n1_pace_sessions"] == 2 and abs(g["n1_median_pace"] - 0.20) < 1e-9
+
+
+def test_record_carries_n1_pace_and_pace_excess(tmp_path):
+    bp = tmp_path / "b.json"
+    bp.write_text(json.dumps(BL(excess=10, medians={"x": 100}, gmed=100, n1_median_pace=0.193)))
+    (tmp_path / "calls.jsonl").write_text(json.dumps(call(added=100)) + "\n")
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0.25)) + "\n")
+    r = R.build(str(tmp_path), dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(bp)))
+    assert r["n1_median_pace"] == 0.193 and abs(r["pace_excess"] - 0.057) < 1e-9 and r["holds"]

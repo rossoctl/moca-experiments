@@ -1,5 +1,8 @@
 """N=1 baseline (SPEC §8 condition 4): `python3 baseline.py OUT_JSON RUN_DIR [RUN_DIR...] [--probe PROBE_DIR...]`.
 
+"n1_median_pace" / "n1_pace_sessions": the median per-session pace (holds.session_paces: observed /
+planned - 1, sessions with >= 3 window calls) over the seeded RUN_DIRs' sessions.jsonl only -- never
+the probe runs. Condition 3 is relative to it (SPEC §8).
 Two kinds of N=1 run go in:
   * RUN_DIR: the seeded single-session runs (baseline.sh). Their in-window ok calls give
     "baseline_p95_ms" and "calls" -- evidence and a pace sanity check, NOT used for medians.
@@ -74,11 +77,12 @@ def weighted_median(pairs):
 
 
 def pool(dirs, probe_dirs=(), arm="sbx", corpus_counts=None):
-    pooled, runs = [], []
+    pooled, runs, paces = [], [], []
     for d in dirs:
         added = H.window_added_ms(read_jsonl(os.path.join(d, "calls.jsonl")))
         runs.append({"dir": d, "calls": len(added), "p95_added_ms": H.percentile(added, 95)})
         pooled.extend(added)
+        paces.extend(H.session_paces(read_jsonl(os.path.join(d, "sessions.jsonl")))[0])
     probe_calls, failed, probe_runs = [], {}, []
     for d in probe_dirs:
         cs = [c for c in read_jsonl(os.path.join(d, "calls.jsonl")) if c.get("in_window")]
@@ -98,6 +102,7 @@ def pool(dirs, probe_dirs=(), arm="sbx", corpus_counts=None):
     classes = {str(c.get("class")) for d in probe_dirs
                for c in read_jsonl(os.path.join(d, "calls.jsonl"))} | set(counts)
     return {"baseline_p95_ms": H.percentile(pooled, 95), "calls": len(pooled), "runs": runs,
+            "n1_median_pace": H.median(paces), "n1_pace_sessions": len(paces),
             "probe_runs": probe_runs, "class_medians": medians, "global_median_ms": gmed,
             "excess_p95_ms": H.percentile(exc, 95), "class_counts": counts,
             "overhead_ms": weighted_median([(m, (corpus_counts or {}).get(k, 0))

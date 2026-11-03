@@ -1,6 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
-Version: 0.7 (draft for review), 2026-11-03
+Version: 0.8 (draft for review), 2026-11-03
+2026-11-03: condition 3 relative to the arm's own N=1 median pace (user decision before sealing; at mem512 SBX's N=1 pace is +19.3%); metal run moves to an AWS m7i.metal-24xl (EBS-only), the IBM metal rig being unavailable.
 2026-11-03: memory-pressure point mem512 added (user decision after calibration): a 512 MiB per-session dataset, read once per recorded call of the scanning classes; its binding may be disk I/O, reported as a finding; §9.3 lists disk_io.
 2026-11-02: condition 4 class-matched (user decision before sealing): per-class N=1 medians, excess p95 ≤ max(3× baseline excess p95, 50 ms); medians from a per-class N=1 probe, 20 calls per class drawn from the corpus distribution (each class alone on an idle worker), every class is probed; a class with fewer than 5 ok probe calls is undercovered and uses the global median; absolute verdict B + 250 ms (user decision 2026-11-02); per-call N=1 overhead reported per arm.
 2026-11-02: §8 condition 4 factor 2× → 3× (user decision before sealing; calibration baselines unchanged, they do not depend on the factor).
@@ -438,8 +439,10 @@ rung, all four conditions are true:
    `RESOURCE_EXHAUSTED`, and no OOM kill.
 3. **Sessions keep their pace.** For each session with at least 3 calls in the window, pace =
    (observed time from its first to its last completed call in the window) ÷ (planned time for the
-   same calls and gaps) − 1. The **median pace is at most 10%**. Sessions with fewer than 3 calls in
-   the window are excluded from this condition and counted.
+   same calls and gaps) − 1. The **median pace is at most 10 percentage points above the arm's own median pace
+   at `N = 1`** (the pooled seeded `N = 1` sessions, §10.1; the `N = 1` rung itself skips this
+   condition). Sessions with fewer than 3 calls in the window are excluded from this condition and
+   counted.
 4. **Added latency stays bounded, class by class.** Per call, added latency = observed time from send
    to `End`, minus the planned duration. From the arm's per-class `N = 1` probe (§10.1: each class alone on an idle
    worker, 20 calls drawn from the corpus's distribution for that class) take the median added
@@ -559,7 +562,7 @@ The direction of each prediction is fixed now:
 5. **Removing host-infrastructure sessions and chains moves both arms the same way.** Neither point
    reverses the default result.
 6. **The driver uses less than 1% of host CPU at every `N`** (A2).
-8. **The metal rig shows the largest SBX gain.** On the metal run (§13), SBX's N_max divided by resident ∞'s N_max is larger than on this nested instance. Falsified by a metal ratio no larger than the preliminary one.
+8. **The m7i.metal-24xl run shows the largest SBX gain.** On the metal run (§13), SBX's N_max divided by resident ∞'s N_max is larger than on this nested instance. Falsified by a metal ratio no larger than the preliminary one.
 9. **At mem512, resident ∞ is bound by memory and SBX holds more sessions than resident ∞.** Falsified by resident ∞'s first failed mem512 rung not bound by memory, or by n_max(SBX) ≤ n_max(resident ∞) at mem512.
 
 Prediction 3 matters most for SBX: an idle-reclaiming resident VM is the strongest baseline, and on a
@@ -592,10 +595,12 @@ where the arms separate.
 
 ## 13. After the preliminary run
 
-The metal run reuses the instrument unchanged, on the 72-core, 754 GB metal rig or a larger machine,
+The metal run reuses the instrument unchanged, on an AWS m7i.metal-24xl with EBS-only storage,
 with the ladder extended until one arm fails. Its predictions are written from the preliminary
 results and sealed before it runs. Metal removes the nesting penalty, the term most likely to change
 the answer (§4), and gives CPU room for the memory difference between the arms to show.
+Its disk bound depends on the provisioned EBS throughput and the instance's EBS bandwidth, and
+`disk_read_max` is re-measured with parallel streams before that run.
 
 ## 14. Left to the builder
 
