@@ -1217,7 +1217,7 @@ if [ -f "$RIG/lib.sh" ]; then
   check "workspace copy: state sparse -> cp --sparse=always" "$(wcm)" "sparse --sparse=always"
   rm -f "$TROOT/state/workspace_copy"
   check "setup.sh requires reflink from each template dir into workspaces, every run (fresh-metal)" "$(grep -c 'for d in "$E15_ROOT/template" "$E15_ROOT/template-mem512"; do e15_require_reflink "$E15_WORKSPACES" "$d"; done' "$RIG/setup.sh")/$(grep -c 'workspace_copy" ]' "$RIG/setup.sh")" "1/0"
-  check "rung.sh copies with the recorded mode's flag" "$(grep -c 'cp "\$cpf" "\$tpl" "\$d/workspace.img"' "$RIG/rung.sh")/$(grep -c 'workspace_cp_flag "\$WS_COPY"' "$RIG/rung.sh")" "1/2"
+  check "rung.sh copies with the recorded mode's flag (sessions and the attach probe)" "$(grep -c 'cp "\$cpf" "\$tpl" "\$d/workspace.img"' "$RIG/rung.sh")/$(grep -c 'workspace_cp_flag "\$WS_COPY"' "$RIG/rung.sh")" "1/3"
   check "rung.sh keeps the K floor unchanged" "$(grep -c 'print(max(16, (int(math.ceil(w/s))+3)\*int(sys.argv\[3\])))' "$RIG/rung.sh")" "1"
   de() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; shift; workspace_disk_estimate "$@"' _ "$RIG/lib.sh" "$@"; }
   check "disk estimate: 128 x 16 images x 256 MiB worst case" "$(de 128 16 256 15000 104857600)" \
@@ -1398,6 +1398,73 @@ check "test pins: honoured under a test root" "$(E15_ROOT="$TROOT" E15_TEST_ROOT
 check "test pins: ignored on /srv/e15 even when E15_TEST_ROOT names it" "$(E15_ROOT=/srv/e15 E15_TEST_ROOT=/srv/e15 E15_TEST_PINS="$TMP/evil-pins.sh" E15_TEST_FSTAB="$TMP/f" bash -c 'source "$1"; echo $E15_GO_VERSION $E15_FSTAB' _ "$RIG/lib.sh")" "1.26.0 /etc/fstab"
 check "aws-prelim: the root PURGE is still rm -rf of the root" "$(E15_ROOT=/srv/e15 bash -c 'source "$1"; e15_root_purge_cmd' _ "$RIG/lib.sh")" "sudo -n rm -rf /srv/e15"
 check "aws-prelim: no missing workspace_copy state still means reflink" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; rm -f "$E15_STATE/workspace_copy"; workspace_copy_mode' _ "$RIG/lib.sh")" "reflink"
+
+# --- rung.sh relay hygiene: restart E15's relay before the worker, attach check before the driver --
+if [ -f "$RIG/rung.sh" ]; then
+  RH="$TMP/rhstub"
+  RR="$TMP/e15-rig-test.relay"
+  rm -rf "$RH" "$RR"
+  mkdir -p "$RH" "$RR"/{corpora/default,src/e15/commands,bin,template,secrets,logs,state,workspaces,jail,runs}
+  ORD="$TMP/rh.order"
+  printf '{"session":"s","calls":[]}\n' >"$RR/corpora/default/corpus.jsonl"
+  printf '{"table": {"mean_span_min": 30}}\n' >"$RR/corpora/default/corpus-report.json"
+  echo '{}' >"$RR/src/e15/commands/library.json"
+  printf '#!/bin/sh\necho driver >>"%s"\nexit 0\n' "$ORD" >"$RR/bin/e15-driver"
+  printf '#!/bin/sh\n' >"$RR/bin/microvm-worker"
+  chmod +x "$RR/bin/e15-driver" "$RR/bin/microvm-worker"
+  head -c 4096 /dev/zero >"$RR/template/workspace.img"
+  echo tok >"$RR/secrets/exec.token"
+  # systemctl: the relay is active while $RR/relay-up exists; nothing else is.
+  cat >"$RH/systemctl" <<SH
+#!/usr/bin/env bash
+case "\$1 \$*" in
+is-active*e15-relay.service*) [ -e "$RR/relay-up" ] ;;
+is-active* | is-failed*) exit 1 ;;
+*) exit 0 ;;
+esac
+SH
+  # sudo: systemd-run / systemctl are simulated and logged in order; file commands run.
+  cat >"$RH/sudo" <<SH
+#!/usr/bin/env bash
+[ "\$1" = -n ] && shift
+case "\$1" in
+systemctl)
+  case "\$*" in *"stop e15-relay.service"*) rm -f "$RR/relay-up"; echo relay-stop >>"$ORD" ;; esac
+  case "\$*" in *" sh-"*) echo "SHARED \$*" >>"$ORD" ;; esac
+  exit 0 ;;
+systemd-run)
+  case "\$*" in
+  *--unit=e15-relay.service*) touch "$RR/relay-up"; echo relay-start >>"$ORD" ;;
+  *--unit=e15-worker.service*)
+    echo worker-start >>"$ORD"
+    for a; do case "\$a" in StandardOutput=file:*) echo "microvm-worker: attached, serving execs" >"\${a#StandardOutput=file:}" ;; esac; done ;;
+  esac
+  exit 0 ;;
+esac
+exec "\$@"
+SH
+  printf '#!/usr/bin/env bash\n[ -e "%s/relay-up" ] && printf "LISTEN 0 1 127.0.0.1:9643 0.0.0.0:*\\nLISTEN 0 1 127.0.0.1:9644 0.0.0.0:*\\n"\nexit 0\n' "$RR" >"$RH/ss"
+  # grpcurl: the probe Exec; answers exit 0 unless GRPC_FAIL=1 (a refused duplicate Hello: EOF)
+  printf '#!/usr/bin/env bash\necho "probe $*" | grep -o "workspace_key[^,}]*" | sed "s/^/probe /" >>"%s"\n[ "${GRPC_FAIL:-0}" = 1 ] && { echo "ERROR: Code: Unavailable desc = EOF" >&2; exit 1; }\necho "{\\"end\\": {\\"exitCode\\": 0}}"\n' "$ORD" >"$RH/grpcurl"
+  # cp: --reflink=always is GNU's; the copy itself is real
+  printf '#!/usr/bin/env bash\nargs=(); for a; do case "$a" in --reflink=*|--sparse=*) ;; *) args+=("$a") ;; esac; done\nexec /bin/cp "${args[@]}"\n' >"$RH/cp"
+  chmod +x "$RH"/*
+  rh() { touch "$RR/relay-up"; : >"$ORD"
+    env E15_ROOT="$RR" E15_TEST_ROOT="$RR" E15_MANIFEST="$TMP/rh.md" E15_WARMUP_S=1 E15_WINDOW_S=1 \
+      E15_MEMINFO="$TMP/nomeminfo" PATH="$RH:$STUB:$PATH" "$@" bash "$RIG/rung.sh" sbx 1 default >"$TMP/rh.out" 2>&1; }
+  rh
+  check "rung.sh: relay restarted after the old units stop, before the worker; probe, then driver" \
+    "$(grep -v '^probe .*attach-probe' "$ORD" | tr '\n' ' ' | sed 's/ $//')|$(grep -c '^probe workspace_key.*attach-probe' "$ORD")" "relay-stop relay-start worker-start driver|1"
+  check "rung.sh: the attach probe ran between the worker start and the driver" \
+    "$(awk '/^worker-start/{w=NR} /attach-probe/{p=NR} /^driver/{d=NR} END{print (w<p && p<d) ? "ordered" : "no"}' "$ORD")" "ordered"
+  check "rung.sh: the relay restart touches E15's relay only (no sh-* unit)" "$(grep -c SHARED "$ORD")" "0"
+  check "rung.sh: the attach check passed is logged" "$(grep -c 'relay attach check passed' "$TMP/rh.out")" "1"
+  rh GRPC_FAIL=1 E15_ATTACH_TIMEOUT_S=3
+  check "rung.sh: a failed attach check is a rig error (exit 1) and the driver never starts" \
+    "$?/$(grep -c 'relay attach check failed: no Exec through e15-relay.service succeeded within 3 s (rig error, not a measured result)' "$TMP/rh.out")/$(grep -c '^driver' "$ORD")" "1/1/0"
+  check "rung.sh: a failed attach check writes no record" "$(find "$RR/runs" -name record.json -o -name params.json | grep -c .)" "0"
+  rm -rf "$RR"
+fi
 
 # aws-prelim is unchanged where it matters: guards, PRESTATE, rootfs source, disk measurement
 check "aws-prelim setup keeps the shared-host pause" "$(grep -c 'sctl stop "\$E15_HOST_WORKER"' "$RIG/setup.sh")/$(grep -c 'sudo -n docker stop "\$c"' "$RIG/setup.sh")" "1/1"

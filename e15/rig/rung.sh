@@ -22,8 +22,11 @@
 #      refuses a rung whose N*K per-session deltas + 10% exceed the workspaces' free space)
 #      for key = e15-<run>-<slot>-<seq>, slot 0..N-1, seq 0..K-1,
 #      K = max(16, ceil((warmup_s + window_s) / (corpus mean session span)) + 3) x K_MULT
+#      (not control) restart E15's relay (e15-relay.service), so no stale worker session from a
+#      previous rung makes it refuse this rung's worker
 #   3. start the arm's worker (e15-worker.service in e15-vms.slice; SPEC §7 env; lib.sh worker_env)
-#      or, for control, the null-responder on 127.0.0.1:9645
+#      and require one Exec through the relay within E15_ATTACH_TIMEOUT_S (60; else exit 1, a rig
+#      error); or, for control, the null-responder on 127.0.0.1:9645
 #   4. start sample.sh and e15-driver together (sampler origin = the epoch just before the driver
 #      is exec'd); after the run re-base samples.jsonl t onto the driver's t0_epoch, which becomes
 #      rung_start_ts (see "time origin")
@@ -180,6 +183,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# relay_attach_probe KEY TIMEOUT_S: one Exec (`true`) through E15's relay on KEY answers exit 0
+# within TIMEOUT_S, retried every 2 s; the last attempt's output in $DIR/attach-probe.log.
+relay_attach_probe() {
+  local key=$1 deadline=$((SECONDS + $2)) pid
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    gexec "$key" true >"$DIR/attach-probe.log" 2>&1 &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do sleep 0.5; done
+    if kill -0 "$pid" 2>/dev/null; then
+      pkill -P "$pid" 2>/dev/null || true
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 1
+    fi
+    wait "$pid" && return 0
+    sleep 2
+  done
+  return 1
+}
+
 # --- 1-2. fresh worker state and workspaces --------------------------------------------------
 stop_rung_units
 refuse_shared_paths "$E15_WORKSPACES" "$E15_JAIL"
@@ -218,18 +241,53 @@ sudo -n bash -c '
       chmod 0600 "$d/workspace.img"
     done
   done' _ "$E15_WORKSPACES" "$TEMPLATE" "$RUN_ID" "$N" "$K" "$(workspace_cp_flag "$WS_COPY")"
+# The attach probe's own workspace (not a session key: unseeded_sessions counts the driver's only).
+PROBE_KEY="e15-$RUN_ID-attach-probe"
+if [ "$ARM" != control ]; then
+  sudo -n mkdir -m 0700 "$E15_WORKSPACES/$PROBE_KEY"
+  sudo -n cp "$(workspace_cp_flag "$WS_COPY")" "$TEMPLATE" "$E15_WORKSPACES/$PROBE_KEY/workspace.img"
+  sudo -n chmod 0600 "$E15_WORKSPACES/$PROBE_KEY/workspace.img"
+fi
 
 # OOM kills anywhere in e15.slice over the rung (SPEC §7.2: an OOM kill fails the rung).
 oom_count() { awk '$1=="oom_kill"{print $2; f=1} END{if(!f) print 0}' "$E15_CG/memory.events" 2>/dev/null || echo 0; }
 oom_before=$(oom_count)
 
 # --- 3. the arm's backend --------------------------------------------------------------------
+# Relay hygiene: a worker that wedged mid-rung can leave the relay holding a stale session for
+# sandbox "e15"; the relay refuses a duplicate worker Hello (sandbox-relay relay.ts sessions.has),
+# so the next worker gets EOF on every call. Restart E15's own relay (e15-relay.service only; never
+# an sh-* unit) after step 1 stopped the previous rung's units, before this rung's worker starts. Its
+# log so far is kept in the rung directory.
+if [ "$ARM" != control ]; then
+  [ -f "$E15_LOGS/relay.log" ] && sudo -n cp "$E15_LOGS/relay.log" "$DIR/relay.before-restart.log"
+  stop_e15_unit "$E15_UNIT_RELAY"
+  start_relay
+  sleep 3
+  if grep -qs 'redis client error' "$E15_LOGS/relay.log"; then
+    die "the restarted relay cannot reach Redis on 127.0.0.1:$E15_PORT_REDIS; see $E15_LOGS/relay.log"
+  fi
+  log "relay restarted ($E15_UNIT_RELAY)"
+fi
 if [ "$ARM" = control ]; then
   start_null "$DIR"
   TARGET=127.0.0.1:$E15_PORT_NULL
 else
   start_worker "$ARM" "$DIR" "$E15_P_IMAGE_MB"
   TARGET=127.0.0.1:$E15_PORT_EXEC
+  # Attach check: the worker's own "attached" line is not enough (a refused duplicate Hello still
+  # logs it). One Exec through the relay must succeed within E15_ATTACH_TIMEOUT_S (60) before the
+  # driver starts; otherwise this is a rig error (exit 1, no record), not a measured failure.
+  # fresh-metal: grpcurl is bootstrap.sh's, in /srv/e15/bin.
+  [ "$E15_HOST_PROFILE" != fresh-metal ] || PATH="$E15_BIN:$PATH"
+  relay_attach_probe "$PROBE_KEY" "${E15_ATTACH_TIMEOUT_S:-60}" ||
+    die "relay attach check failed: no Exec through $E15_UNIT_RELAY succeeded within ${E15_ATTACH_TIMEOUT_S:-60} s (rig error, not a measured result); see $DIR/attach-probe.log, $DIR/worker.log, $E15_LOGS/relay.log"
+  # A resident arm keeps a VM per key: end the probe's, so it holds no memory during the rung.
+  case "$ARM" in resident-inf | resident-300)
+    gexec "$PROBE_KEY" ": e15-end-session" >>"$DIR/attach-probe.log" 2>&1 ||
+      die "relay attach check: ending the probe's resident session failed; see $DIR/attach-probe.log" ;;
+  esac
+  log "relay attach check passed (one Exec on $PROBE_KEY)"
 fi
 
 # --- 4. driver + sampler ---------------------------------------------------------------------
