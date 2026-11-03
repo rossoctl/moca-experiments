@@ -29,9 +29,9 @@ e15_point "$POINT" || usage
 RUNG=${E15_RUNG:-$HERE/rung.sh}
 PROBES=$E15_RUNS/$POINT/$ARM/probe-corpora
 rm -rf "$PROBES"
-# The point's own corpus and library (points.sh): at mem512 the probe draws from the default
-# corpus and replays library-mem512.json on the mem512 template (rung.sh), so the per-class medians
-# include the data.bin scan.
+# The point's own corpus and library (points.sh): at mem512 the probe draws from the default corpus,
+# and its rungs run at mem512 (rung.sh: the mem512 template and the driver's scan flags), so the
+# per-class medians include the once-per-call data.bin scan.
 python3 "$E15_SRC/analysis/make_probe.py" "$E15_CORPORA/$E15_P_CORPUS/corpus.jsonl" "$E15_P_LIBRARY" "$PROBES" \
   --per-class "${E15_PROBE_CALLS:-20}" --seed "${E15_PROBE_SEED:-1}" >&2 ||
   die "make_probe.py failed"

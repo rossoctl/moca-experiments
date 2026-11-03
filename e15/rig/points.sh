@@ -13,14 +13,23 @@
 #     E15_P_IMAGE_MB      the template's size; the rung's SH_WORKSPACE_IMAGE_MB
 #     E15_P_DATASET_MIB   /workspace/data.bin size in MiB (0: none)
 #     E15_P_DATASET_SEED  data.bin's seed
-#     E15_P_SCAN_CLASSES  classes whose invocations first scan data.bin (comma-separated; empty: none)
-#     E15_P_SCAN_CMD      the scan
+#     E15_P_SCAN_CLASSES  classes whose calls open with the scan (driver --scan-classes; empty: none)
+#     E15_P_SCAN_CMD      the scan, run ONCE per recorded call of those classes (driver --scan-cmd)
+#     E15_P_FALLBACK      1: with no pooled runs of its own, the point may use the default point's
+#                         N=1 baseline (rung.sh); 0 for default itself and for mem512
+#     E15_P_SETTINGS      the point's settings line (point name, corpus, library, template, image
+#                         size, dataset, scan); its sha256 is the point signature
+#   e15_point_sig POINT   echo the point signature: sha256 of E15_P_SETTINGS. rung.sh records it in
+#                         params.json/record.json, baseline.py in baseline.json, and rung.sh refuses
+#                         a baseline whose point_sig is not the one it expects
 #   e15_point_arms POINT  echo E15_P_ARMS, or return 1 for an unknown POINT
 #   e15_templates         the distinct templates setup.sh builds, one POINT per line
 #
-# mem512 (memory pressure): the default point's corpus, with a 512 MiB incompressible data.bin in
-# every workspace that the read, shell_read, search, test, interpreter and lint_check calls scan
-# first. A resident VM's page cache keeps it after the first scan; each SBX call reads it afresh.
+# mem512 (memory pressure): the default point's corpus and library, with a 512 MiB incompressible
+# data.bin in every workspace; each call of read, shell_read, search, test, interpreter or
+# lint_check reads it once first (the driver's scan step). A resident VM's page cache keeps it
+# after the first read; each SBX call reads it afresh. Its library and corpus hashes equal the
+# default point's, so the point signature is what keeps the two points' baselines apart.
 
 E15_MEM512_SCAN_CLASSES=read,shell_read,search,test,interpreter,lint_check
 E15_MEM512_SCAN_CMD='cat /workspace/data.bin >/dev/null'
@@ -35,8 +44,12 @@ e15_point() {
   E15_P_DATASET_SEED=1
   E15_P_SCAN_CLASSES=""
   E15_P_SCAN_CMD=""
+  E15_P_FALLBACK=1
   case "$1" in
-  default) E15_P_ARMS="sbx resident-inf resident-300 control" ;;
+  default)
+    E15_P_ARMS="sbx resident-inf resident-300 control"
+    E15_P_FALLBACK=0
+    ;;
   short) E15_P_ARMS="sbx resident-inf" ;;
   long | no-infra | no-chains) E15_P_ARMS="sbx resident-inf resident-300" ;;
   # smoke: the bring-up point, a dense subset of the default corpus, every arm.
@@ -44,7 +57,6 @@ e15_point() {
   mem512)
     E15_P_ARMS="sbx resident-inf"
     E15_P_CORPUS=default
-    E15_P_LIBRARY=$E15_SRC/commands/library-mem512.json
     E15_P_TEMPLATE=$E15_ROOT/template-mem512/workspace.img
     E15_P_TEMPLATE_STAMP=template-mem512
     E15_P_IMAGE_MB=1024
@@ -52,9 +64,18 @@ e15_point() {
     E15_P_DATASET_SEED=1
     E15_P_SCAN_CLASSES=$E15_MEM512_SCAN_CLASSES
     E15_P_SCAN_CMD=$E15_MEM512_SCAN_CMD
+    E15_P_FALLBACK=0
     ;;
   *) return 1 ;;
   esac
+  E15_P_SETTINGS="point=$1 corpus=$E15_P_CORPUS library=${E15_P_LIBRARY#"$E15_ROOT"/} template=${E15_P_TEMPLATE#"$E15_ROOT"/}"
+  E15_P_SETTINGS+=" image_mb=$E15_P_IMAGE_MB dataset_mib=$E15_P_DATASET_MIB dataset_seed=$E15_P_DATASET_SEED"
+  E15_P_SETTINGS+=" scan_classes=$E15_P_SCAN_CLASSES scan_cmd=$E15_P_SCAN_CMD"
+}
+
+e15_point_sig() {
+  e15_point "$1" || return 1
+  printf '%s' "$E15_P_SETTINGS" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
 
 e15_point_arms() {

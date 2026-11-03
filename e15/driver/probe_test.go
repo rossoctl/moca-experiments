@@ -28,7 +28,7 @@ func TestProbeCorporaValidate(t *testing.T) {
 		if err != nil || len(ss) != 1 || ss[0].User != "probe" || len(ss[0].Calls) != 5 {
 			t.Fatalf("%s: %v %+v", f, err, ss)
 		}
-		if err := validatePlans(ss, lib, 1); err != nil {
+		if err := validatePlans(ss, lib, 1, Scan{}); err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
 	}

@@ -1,5 +1,4 @@
-"""Checks for the memory-pressure point mem512 (SPEC §10.3): make_point_library.py and
-build_workspace.sh's --dataset-mib.
+"""Checks for build_workspace.sh's --dataset-mib (SPEC §10.3, the memory-pressure point mem512).
 
 Run: PYTHONPATH=/tmp/kagenti/pylibs python3 -m pytest -q e15/commands
 
@@ -14,69 +13,11 @@ import json
 import os
 import pathlib
 import subprocess
-import sys
+
 
 import pytest
 
 HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-
-import make_point_library as mpl  # noqa: E402
-
-SCAN = "cat /workspace/data.bin >/dev/null"
-SCAN_CLASSES = ("read", "shell_read", "search", "test", "interpreter", "lint_check")
-
-
-def tiny_lib():
-    inv = lambda i, cmd, ex=0: {"id": i, "cmd": cmd, "exit": ex, "nominal_ms": 30, "run_ms": 3, "cpu_ms": 2}
-    return {"version": 1,
-            "classes": {"read": [inv("r1", "cd project && cat a"), inv("r2", "cd project && head b")],
-                        "shell_read": [inv("g", "cd project && grep x .", 1)],
-                        "vcs": [inv("v", "cd project && git status")]},
-            "standin": {"interpreter_class": "read", "infra_sleep_frac": 0.5}}
-
-
-def test_prefixes_only_listed_classes():
-    src = tiny_lib()
-    out = mpl.point_library(src, ["read", "shell_read"], SCAN)
-    for cls in ("read", "shell_read"):
-        for a, b in zip(src["classes"][cls], out["classes"][cls]):
-            assert b["cmd"] == SCAN + " && " + a["cmd"]
-            assert b["id"] == a["id"] + "+scan"
-            for k in ("exit", "nominal_ms", "run_ms", "cpu_ms"):
-                assert b[k] == a[k]
-    assert out["classes"]["vcs"] == src["classes"]["vcs"]
-    assert out["standin"] == src["standin"] and out["version"] == src["version"]
-    assert src["classes"]["read"][0]["cmd"] == "cd project && cat a", "source left untouched"
-
-
-def test_unknown_class_refused():
-    with pytest.raises(SystemExit):
-        mpl.point_library(tiny_lib(), ["read", "nosuch"], SCAN)
-
-
-def test_cli_writes_dst(tmp_path):
-    src = tmp_path / "lib.json"
-    src.write_text(json.dumps(tiny_lib()))
-    dst = tmp_path / "out.json"
-    subprocess.run([sys.executable, str(HERE / "make_point_library.py"), str(src), str(dst),
-                    "--scan-classes", "read,shell_read", "--scan-cmd", SCAN], check=True)
-    out = json.loads(dst.read_text())
-    assert [v["id"] for v in out["classes"]["read"]] == ["r1+scan", "r2+scan"]
-    assert out["classes"]["shell_read"][0]["exit"] == 1
-
-
-def test_committed_mem512_library_is_generated_from_library_json():
-    """library-mem512.json tracks library.json: regenerate it when library.json changes."""
-    src = json.loads((HERE / "library.json").read_text())
-    got = json.loads((HERE / "library-mem512.json").read_text())
-    assert got == mpl.point_library(src, list(SCAN_CLASSES), SCAN)
-    ids = [v["id"] for vs in got["classes"].values() for v in vs]
-    assert len(ids) == len(set(ids))
-    n_scan = sum(len(got["classes"][c]) for c in SCAN_CLASSES)
-    assert sum(v["cmd"].startswith(SCAN + " && ") for vs in got["classes"].values() for v in vs) == n_scan
-
-
 LOCK = json.loads((HERE / "project.lock").read_text())
 
 

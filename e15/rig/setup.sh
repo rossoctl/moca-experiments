@@ -24,6 +24,7 @@
 #      --guest-ram-mb 1024 --image e15 --out /srv/e15/snapshots/e15; pytest checked in a VM
 #   8. workspace templates (commands/build_workspace.sh, points.sh): /srv/e15/template/workspace.img
 #      (256 MiB) and /srv/e15/template-mem512/workspace.img (1024 MiB, 512 MiB data.bin, seed 1)
+#   8b. disk_read_max_mbs in /srv/e15/state: dd iflag=direct read of a 2 GiB file, once
 #   9. Redis (podman, 127.0.0.1:6400, --save '') and the relay (127.0.0.1:9643 attach, :9644 exec)
 #
 # Built artifacts (step 5-8) are stamped in /srv/e15/state and skipped when unchanged; they are
@@ -246,6 +247,14 @@ while read -r tpoint; do
     m_note "built $E15_P_TEMPLATE ($(tail -1 "$wlog"))"
   fi
 done < <(e15_templates)
+
+# --- 8b. the volume's sequential read throughput (record.py's disk_io binding), once -----------
+if [ ! -s "$E15_STATE/disk_read_max_mbs" ]; then
+  log "measuring sequential direct-I/O read throughput of the /srv/e15 volume (2 GiB file)"
+  mbs=$(measure_disk_read "$E15_STATE/.disk-read-probe" 2048) || die "disk read measurement failed"
+  printf '%s\n' "$mbs" >"$E15_STATE/disk_read_max_mbs"
+  m_note "disk_read_max_mbs=$mbs (dd iflag=direct bs=4M, 2 GiB under $E15_STATE; file removed)"
+fi
 
 # Listed leftovers: things outside /srv/e15 E15's builds touch that no UNDO removes.
 for left in "npm cache ~/.npm (pi-fork npm ci; shared with other users of npm on this host)" \

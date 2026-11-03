@@ -53,6 +53,7 @@ var (
 	stepRE = regexp.MustCompile(`(?s)\(\n(.*?)\n\); __rc=\$\?; \[ "\$__rc" -eq (\d+) \] \|\| \{ echo "E15_FAILED_STEP=\d+ RC=\$__rc" >&2; exit (\d+); \}\n`)
 	loopRE = regexp.MustCompile(`(?s)^for __i in \$\(seq (\d+)\); do \(\n(.*?)\n\); __rc=\$\?; \[ "\$__rc" -eq (\d+) \] \|\| \{ __k=\$\(\((\d+) \+ __i - 1\)\); [^\n]*; \}; done\n`)
 	tailRE = regexp.MustCompile(`\nsleep ([0-9.]+)\nexit 0\n$`)
+	scanRE = regexp.MustCompile(`(?s)^\(\n(.*?)\n\); __rc=\$\?; \[ "\$__rc" -eq 0 \] \|\| \{ echo "E15_FAILED_STEP=scan RC=\$__rc" >&2; exit 89; \}\n`)
 )
 
 func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.ExecEvent]) error {
@@ -94,7 +95,14 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 		want, code int32
 	}
 	var steps []fstep
-	for rest := script; ; {
+	rest0 := script
+	scanned := false
+	if m := scanRE.FindStringSubmatch(script); m != nil {
+		steps = append(steps, fstep{m[1], 0, 89})
+		rest0 = script[len(m[0]):]
+		scanned = true
+	}
+	for rest := rest0; ; {
 		if m := stepRE.FindStringSubmatchIndex(rest); m != nil && m[0] == 0 {
 			w, _ := strconv.Atoi(rest[m[4]:m[5]])
 			c, _ := strconv.Atoi(rest[m[6]:m[7]])
@@ -145,7 +153,14 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 			return end(rc)
 		}
 		if rc != st.want {
-			if err := stderr(fmt.Appendf(nil, "E15_FAILED_STEP=%d RC=%d\n", k, rc)); err != nil {
+			mark := strconv.Itoa(k)
+			if scanned {
+				mark = strconv.Itoa(k - 1)
+				if k == 0 {
+					mark = "scan"
+				}
+			}
+			if err := stderr(fmt.Appendf(nil, "E15_FAILED_STEP=%s RC=%d\n", mark, rc)); err != nil {
 				return err
 			}
 			return end(st.code)
@@ -398,7 +413,7 @@ func TestExitMismatchIsFailure(t *testing.T) {
 		if c.Status != tc.status || c.Cause != tc.cause || c.Exit == nil || *c.Exit != wantExit || c.ExpectedExit != 0 || c.Execs != 1 {
 			t.Fatalf("expect %d: got %+v", tc.expect, c)
 		}
-		if (tc.status == "err") != (c.FailedStep != nil) || (c.FailedStep != nil && *c.FailedStep != wantStep) {
+		if (tc.status == "err") != (c.FailedStep != nil) || (c.FailedStep != nil && *c.FailedStep != stepID(wantStep)) {
 			t.Fatalf("expect %d: failed_step %v, want step %d on a mismatch only", tc.expect, c.FailedStep, wantStep)
 		}
 	}

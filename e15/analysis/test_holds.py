@@ -620,3 +620,78 @@ def test_record_copies_n1_overhead(tmp_path):
     (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
     r = R.build(str(tmp_path), dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(bp)))
     assert r["n1_overhead_ms"] == 42
+
+
+# --- mem512 fix round 1: disk_io binding, read stats, point_sig in the baseline -------------------
+
+def SD(t, rd=None, aw=None, **kw):
+    d = S(t, **kw)
+    if rd is not None:
+        d["disk_read_mbs"] = rd
+    if aw is not None:
+        d["disk_await_ms"] = aw
+    return d
+
+
+def test_binding_disk_io(tmp_path):
+    # last 60 s of a 120 s window at 95 MB/s against a measured 100 MB/s -> disk_io
+    s = [SD(t, rd=10 if t < 60 else 95) for t in range(0, 121)]
+    assert _rung(tmp_path, s, disk_read_max_mbs=100.0)["binding"] == "disk_io"
+    # 89% of max: not disk_io
+    s = [SD(t, rd=89) for t in range(0, 121)]
+    assert _rung(tmp_path, s, disk_read_max_mbs=100.0)["binding"] == "none"
+    # exactly 90%: disk_io
+    s = [SD(t, rd=90) for t in range(0, 121)]
+    assert _rung(tmp_path, s, disk_read_max_mbs=100.0)["binding"] == "disk_io"
+    # high only before the last 60 s: not disk_io
+    s = [SD(t, rd=100 if t < 60 else 0) for t in range(0, 121)]
+    assert _rung(tmp_path, s, disk_read_max_mbs=100.0)["binding"] == "none"
+    # unknown maximum: never disk_io
+    s = [SD(t, rd=500) for t in range(0, 121)]
+    assert _rung(tmp_path, s)["binding"] == "none"
+
+
+def test_binding_disk_io_precedence(tmp_path):
+    s = [SD(t, rd=99, mem=1, cpu=95, disk=95) for t in range(0, 121)]
+    assert _rung(tmp_path, s, disk_read_max_mbs=100.0)["binding"] == "memory_floor"
+    s = [SD(t, rd=99, cpu=95, disk=95) for t in range(0, 121)]
+    assert _rung(tmp_path, s, disk_read_max_mbs=100.0)["binding"] == "cpu"
+    s = [SD(t, rd=99, disk=95) for t in range(0, 121)]
+    assert _rung(tmp_path, s, disk_read_max_mbs=100.0)["binding"] == "disk_io"
+    s = [SD(t, rd=10, disk=95) for t in range(0, 121)]
+    assert _rung(tmp_path, s, disk_read_max_mbs=100.0)["binding"] == "disk"
+
+
+def test_disk_read_stats_recorded(tmp_path):
+    s = [SD(t, rd=float(t), aw=2.0) for t in range(1, 101)] + [SD(0)]
+    r = _rung(tmp_path, s, window_s=120)
+    assert r["disk_read_mean_mbs"] == 50.5
+    assert r["disk_read_p95_mbs"] == 95.0
+    assert r["disk_await_mean_ms"] == 2.0
+    r = _rung(tmp_path, [S(1)])
+    assert r["disk_read_mean_mbs"] is None and r["disk_read_p95_mbs"] is None
+
+
+def test_baseline_refuses_mixed_point_sig(tmp_path):
+    import subprocess
+    dirs = [_rung_dir(tmp_path, "N1-s%d" % k, range(1, 11)) for k in (1, 2)]
+    rec = json.loads(open(os.path.join(dirs[1], "record.json")).read())
+    rec["point_sig"] = "other"
+    open(os.path.join(dirs[1], "record.json"), "w").write(json.dumps(rec))
+    r = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "baseline.py"),
+                        str(tmp_path / "b.json")] + dirs, capture_output=True, text=True)
+    assert r.returncode != 0 and "point_sig" in r.stderr
+
+
+def test_baseline_carries_point_sig(tmp_path):
+    import subprocess
+    dirs = [_rung_dir(tmp_path, "N1-s%d" % k, range(1, 11)) for k in (1, 2, 3)]
+    for d in dirs:
+        rec = json.loads(open(os.path.join(d, "record.json")).read())
+        rec["point_sig"] = "SIG"
+        open(os.path.join(d, "record.json"), "w").write(json.dumps(rec))
+    out = tmp_path / "b.json"
+    r = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "baseline.py"),
+                        str(out)] + dirs, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(out.read_text())["point_sig"] == "SIG"

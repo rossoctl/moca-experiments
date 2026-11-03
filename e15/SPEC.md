@@ -1,7 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
 Version: 0.7 (draft for review), 2026-11-03
-2026-11-03: memory-pressure point mem512 added (user decision after calibration).
+2026-11-03: memory-pressure point mem512 added (user decision after calibration): a 512 MiB per-session dataset, read once per recorded call of the scanning classes; its binding may be disk I/O, reported as a finding.
 2026-11-02: condition 4 class-matched (user decision before sealing): per-class N=1 medians, excess p95 ≤ max(3× baseline excess p95, 50 ms); medians from a per-class N=1 probe, 20 calls per class drawn from the corpus distribution (each class alone on an idle worker), every class is probed; a class with fewer than 5 ok probe calls is undercovered and uses the global median; absolute verdict B + 250 ms (user decision 2026-11-02); per-call N=1 overhead reported per arm.
 2026-11-02: §8 condition 4 factor 2× → 3× (user decision before sealing; calibration baselines unchanged, they do not depend on the factor).
 2026-11-01: §5.3–§5.6 numbers regenerated from e15/extract after fixing a cross-session chain join
@@ -509,7 +509,7 @@ median of class medians).
 | long gaps | 7200 s | all | SBX, resident ∞, resident 300 s |
 | no host infra | 1800 s | sessions that never call a host-infrastructure tool | SBX, resident ∞, resident 300 s |
 | no chains | 1800 s | sessions with no Codex polled command | SBX, resident ∞, resident 300 s |
-| **mem512** (memory pressure) | 1800 s | all (the default point's corpus) | SBX, resident ∞ |
+| **mem512** (memory pressure) | 1800 s | all (the default point's corpus); 512 MiB dataset per session, read once per call of the scanning classes | SBX, resident ∞ |
 
 (At `H` = 300 s no gap reaches 300 s, so resident 300 s equals resident ∞ there and is not run.)
 
@@ -517,13 +517,17 @@ median of class medians).
 arms meet the CPU wall of 4 vCPUs before memory binds, and SBX's memory advantage cannot show. At
 mem512 every session holds a large working set. Every workspace holds `/workspace/data.bin`, 512 MiB
 of incompressible bytes generated from a fixed seed, on a 1024 MiB workspace image; the file stays
-on the image in both arms. Every call of the classes read, shell read, search, test, interpreter and
-lint first reads the whole file (`cat /workspace/data.bin >/dev/null`), then runs its command as at
-the default point. In a resident VM the guest's page cache keeps the file after the first read, so
-each resident VM holds about 512 MiB more for as long as it lives. In SBX each such call reads the
-file again in a fresh VM, whose memory is freed when the call ends. Guest RAM stays 1024 MiB. The
-point has its own command library (the default one with the read prefixed to those classes; run
-times unchanged) and its own N = 1 baseline: the default point's baseline is never used here.
+on the image in both arms. Every recorded call of the classes read, shell read, search, test,
+interpreter and lint first reads the whole file once (`cat /workspace/data.bin >/dev/null`, one step
+at the head of the call's script, however many invocations the call repeats), then runs its
+commands as at the default point. In a resident VM the guest's page cache keeps the file after the
+first read, so each resident VM holds about 512 MiB more for as long as it lives. In SBX each such
+call reads the file again in a fresh VM, whose memory is freed when the call ends. Guest RAM stays
+1024 MiB. The command library is the default one; the point has its own N = 1 baseline, and the
+default point's baseline is never used here.
+mem512's binding may be disk I/O (`disk_io`: the volume's read throughput, measured once at setup,
+saturated): that is reported as a finding — the cost of a per-session dataset re-read for every
+command — not as an artefact.
 
 - The default point runs the full ladder.
 - Each other point starts its ladder two steps below that arm's default `N_max` and runs to failure.

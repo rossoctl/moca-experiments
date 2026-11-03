@@ -28,7 +28,7 @@ import holds as H  # noqa: E402
 from record import read_jsonl  # noqa: E402
 
 
-HASHES = ("library_sha256", "driver_bin_sha256", "corpus_sha256")
+HASHES = ("library_sha256", "driver_bin_sha256", "corpus_sha256", "point_sig")
 
 
 def run_hashes(dirs):

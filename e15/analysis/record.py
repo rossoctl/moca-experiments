@@ -87,18 +87,38 @@ def window_samples(samples, start, end):
     return [s for s in samples if "t" in s and start <= s["t"] <= end]
 
 
-def binding_resource(ws, floor_mb, window_end, refusals):
+def binding_resource(ws, floor_mb, window_end, refusals, disk_read_max_mbs=None):
+    """memory_floor, cpu, disk_io, disk, gate, none -- the first that applies, in that order.
+    disk_io: mean disk_read_mbs over the window's last 60 s >= 90% of the volume's measured
+    sequential read throughput (setup.sh disk_read_max_mbs; skipped when unknown)."""
     if any(s.get("mem_available_kb", 1 << 60) <= floor_mb * 1024 for s in ws):
         return "memory_floor"
     tail = [s["host_cpu_busy_pct"] for s in ws
             if s["t"] >= window_end - 60 and "host_cpu_busy_pct" in s]
     if tail and sum(tail) / len(tail) >= 90:
         return "cpu"
+    if disk_read_max_mbs:
+        rd = [s["disk_read_mbs"] for s in ws
+              if s["t"] >= window_end - 60 and s.get("disk_read_mbs") is not None]
+        if rd and sum(rd) / len(rd) >= 0.9 * disk_read_max_mbs:
+            return "disk_io"
     if any(s.get("disk_used_pct", 0) >= 90 for s in ws):
         return "disk"
     if refusals > 0:
         return "gate"
     return "none"
+
+
+def disk_read_stats(ws):
+    """Mean and p95 (nearest rank) of disk_read_mbs over the window's samples, and mean await."""
+    rd = sorted(s["disk_read_mbs"] for s in ws if s.get("disk_read_mbs") is not None)
+    aw = [s["disk_await_ms"] for s in ws if s.get("disk_await_ms") is not None]
+    if not rd:
+        return {"disk_read_mean_mbs": None, "disk_read_p95_mbs": None,
+                "disk_await_mean_ms": (sum(aw) / len(aw)) if aw else None}
+    k = max(0, -(-95 * len(rd) // 100) - 1)
+    return {"disk_read_mean_mbs": sum(rd) / len(rd), "disk_read_p95_mbs": rd[k],
+            "disk_await_mean_ms": (sum(aw) / len(aw)) if aw else None}
 
 
 def footprint_drift(ws):
@@ -170,7 +190,9 @@ def build(rung_dir, params):
     rec["probe_failed"] = baseline.get("probe_failed") if baseline else None
     rec["refusal_scope"] = scope
     rec["refusals_by_reason"] = by_reason
-    rec["binding"] = binding_resource(ws, p.get("floor_mb", 1536), end, refusals)
+    rec["binding"] = binding_resource(ws, p.get("floor_mb", 1536), end, refusals,
+                                      p.get("disk_read_max_mbs"))
+    rec.update(disk_read_stats(ws))
     rec["window_samples"] = len(ws)
     if arm in RESIDENT:
         d = footprint_drift(ws)

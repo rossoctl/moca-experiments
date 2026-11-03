@@ -35,9 +35,12 @@ type Config struct {
 	// MaxSessions > 0 caps the sessions started in total: once that many have started no slot
 	// starts another, and the run ends (exit 0) when every slot is idle. 0 = unlimited.
 	MaxSessions int
-	SandboxID   string
-	RunID       string
-	Token       string
+	// Scan (mem512): one data-scan step opens the joined script of every call of a listed class.
+	// Zero value: off.
+	Scan      Scan
+	SandboxID string
+	RunID     string
+	Token     string
 }
 
 // Replayer holds a population of N sessions, closed-loop inside each session (SPEC §3).
@@ -75,7 +78,10 @@ func NewReplayer(cfg Config, sessions []Session, lib *Library, client pb.Sandbox
 	if err != nil {
 		return nil, err
 	}
-	if err := validatePlans(sessions, lib, cfg.Seed); err != nil {
+	if err := cfg.Scan.Check(lib); err != nil {
+		return nil, err
+	}
+	if err := validatePlans(sessions, lib, cfg.Seed, cfg.Scan); err != nil {
 		return nil, err
 	}
 	r := &Replayer{cfg: cfg, lib: lib, client: client, rec: rec, sampler: s, liveUsers: map[string]int{}}
@@ -99,8 +105,9 @@ const maxJoinedBytes = 30 << 10
 
 // validatePlans plans and joins every call of every replayable session once, so a library that
 // cannot expand some call, or expands it into a script over maxJoinedBytes, fails the run before
-// it starts rather than mid-window.
-func validatePlans(sessions []Session, lib *Library, seed int64) error {
+// it starts rather than mid-window. The scan step, when the call's class carries one, is part of
+// the joined script and so of the encoded frame checked here.
+func validatePlans(sessions []Session, lib *Library, seed int64, scan Scan) error {
 	over, largest := 0, 0
 	var where string
 	for _, s := range sessions {
@@ -115,7 +122,7 @@ func validatePlans(sessions []Session, lib *Library, seed int64) error {
 			if len(p) == 0 {
 				return fmt.Errorf("planning %s call %d: no commands", s.ID, c.I)
 			}
-			script, err := JoinPlan(p, p[len(p)-1].SleepAfterMs)
+			script, err := JoinPlanScan(p, p[len(p)-1].SleepAfterMs, scan.For(c.Class))
 			if err != nil {
 				return fmt.Errorf("joining %s call %d: %w", s.ID, c.I, err)
 			}
@@ -381,7 +388,7 @@ func (r *Replayer) runCall(ctx context.Context, key string, s Session, c Call, p
 		Status: "ok", Cause: causeOK,
 		InWindow: !send.Before(r.warmEnd) && send.Before(r.end),
 	}
-	script, err := JoinPlan(plan, plan[len(plan)-1].SleepAfterMs)
+	script, err := JoinPlanScan(plan, plan[len(plan)-1].SleepAfterMs, r.cfg.Scan.For(c.Class))
 	if err != nil { // validatePlans makes this unreachable for a corpus it checked
 		rec.Status, rec.Cause, rec.Msg = "err", causeExecError, err.Error()
 		return rec, time.Now()
@@ -397,8 +404,18 @@ func (r *Replayer) runCall(ctx context.Context, key string, s Session, c Call, p
 	switch {
 	case res.cause == "" && *res.exit != 0:
 		res.cause = causeExitMismatch
-		if k, rc, ok := failedFromExit(*res.exit, res.stderr); ok && k < len(plan) {
-			rec.FailedStep, rec.FailedRC = &k, rc
+		if *res.exit == scanExit && r.cfg.Scan.For(c.Class) != "" {
+			k := scanStep
+			rec.FailedStep = &k
+			got := "?"
+			if _, rc, ok := ParseScanMarker(res.stderr); ok {
+				rec.FailedRC = &rc
+				got = strconv.Itoa(rc)
+			}
+			res.msg = fmt.Sprintf("exit %d: the scan step exited %s, expected 0: %s", *res.exit, got, r.cfg.Scan.Cmd)
+		} else if k, rc, ok := failedFromExit(*res.exit, res.stderr); ok && k < len(plan) {
+			sk := stepID(k)
+			rec.FailedStep, rec.FailedRC = &sk, rc
 			got := "?"
 			if rc != nil {
 				got = strconv.Itoa(*rc)

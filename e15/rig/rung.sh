@@ -88,6 +88,9 @@ if [ -n "${E15_CORPUS_OVERRIDE:-}" ]; then
 fi
 start_flag=()
 [ "${E15_START_ZERO:-0}" = 1 ] && start_flag+=(--start-at-zero)
+# mem512: the driver's once-per-call scan step (points.sh)
+scan_flag=()
+[ -z "$E15_P_SCAN_CMD" ] || scan_flag=(--scan-cmd "$E15_P_SCAN_CMD" --scan-classes "$E15_P_SCAN_CLASSES")
 [ -n "${E15_MAX_SESSIONS:-}" ] && start_flag+=(--max-sessions "$E15_MAX_SESSIONS")
 LIBRARY=$E15_P_LIBRARY
 TEMPLATE=$E15_P_TEMPLATE
@@ -101,8 +104,9 @@ DRIVER=$E15_BIN/e15-driver
 # (per-class medians from the class probe). It is this point's, or -- only when this point has no
 # pooled runs of its own -- the default point's. A baseline.json measured with another library or
 # driver binary (or, for this point's own, another corpus) is stale: the rung dies with the reason.
-# A point with its own library (mem512) never falls back to the default point's baseline (and the
-# library hash would refuse it anyway): it needs its own (baseline.sh mem512 ARM).
+# The point signature (points.sh e15_point_sig: point name, corpus, library, template, dataset and
+# scan settings) is checked too: mem512 shares default's library and corpus, so only it keeps the
+# two points' baselines apart. mem512 never falls back: it needs its own (baseline.sh mem512 ARM).
 # A rung without a baseline is a rig error, not a rung that "holds" with condition 4 unevaluated.
 # The control arm (null responder) is exempt at every N: it checks A2 and transport only.
 baseline_path=null
@@ -116,26 +120,29 @@ elif [ "$N" != 1 ]; then
   corpus_sha=$(sha_of "$CORPUS")
   cand="$E15_RUNS/$POINT/$ARM/N1/baseline.json"
   want_corpus=$corpus_sha
-  # A point with its own library (mem512) has no fallback: the default point's baseline was
-  # measured with another library, so it is skipped and the rung needs this point's own.
-  if [ ! -f "$cand" ] && [ "$POINT" != default ] && [ "$LIBRARY" = "$E15_SRC/commands/library.json" ] &&
+  want_sig=$(e15_point_sig "$POINT")
+  # Only a point with E15_P_FALLBACK=1 (points.sh) may borrow the default point's baseline; mem512
+  # (same library and corpus as default, plus the scan) never does, and the point signature would
+  # refuse it anyway.
+  if [ ! -f "$cand" ] && [ "$E15_P_FALLBACK" = 1 ] &&
     [ -z "$(compgen -G "$E15_RUNS/$POINT/$ARM/N1-s*" || true)" ]; then
     cand="$E15_RUNS/default/$ARM/N1/baseline.json"
     want_corpus="" # the default point's baseline is a different corpus on purpose
+    want_sig=$(e15_point_sig default)
   fi
   [ -f "$cand" ] || die "no N=1 baseline.json for $ARM matching point $POINT (run baseline.sh $POINT $ARM first)"
   stale=$(python3 -c '
 import json, sys
-cand, lib, drv, corpus = sys.argv[1:5]
+cand, lib, drv, corpus, sig = sys.argv[1:6]
 d = json.load(open(cand))
-for k, want in (("library_sha256", lib), ("driver_bin_sha256", drv), ("corpus_sha256", corpus)):
+for k, want in (("library_sha256", lib), ("driver_bin_sha256", drv), ("corpus_sha256", corpus), ("point_sig", sig)):
     if want and d.get(k) != want:
         print("%s %s, this rung has %s" % (k, d.get(k), want))
         sys.exit(0)
 for k in ("class_medians", "global_median_ms", "excess_p95_ms"):
     if k not in d:
         print("no %s (not a class-matched baseline)" % k)
-        sys.exit(0)' "$cand" "$lib_sha" "$drv_sha" "$want_corpus")
+        sys.exit(0)' "$cand" "$lib_sha" "$drv_sha" "$want_corpus" "$want_sig")
   [ -z "$stale" ] || die "stale N=1 baseline $cand: $stale; re-run baseline.sh $POINT $ARM"
   baseline_path=\"$cand\"
   baseline_src=$cand
@@ -210,7 +217,7 @@ sampler_pid=$!
 MOCA_RELAY_EXEC_TOKEN=$(cat "$E15_SECRETS/exec.token") "$E15_BIN/e15-driver" \
   --corpus "$CORPUS" --library "$LIBRARY" --seed "$SEED" --n "$N" \
   --warmup-s "$WARMUP" --window-s "$WINDOW" --spread-s "$SPREAD" --grace-s "$GRACE" \
-  --target "$TARGET" --sandbox-id e15 --run-id "$RUN_ID" --out "$DIR" "${end_flag[@]}" "${start_flag[@]}" \
+  --target "$TARGET" --sandbox-id e15 --run-id "$RUN_ID" --out "$DIR" "${end_flag[@]}" "${start_flag[@]}" "${scan_flag[@]}" \
   >"$DIR/driver.log" 2>&1 &
 driver_pid=$!
 driver_exit=0
@@ -338,6 +345,8 @@ p = {
     "template": "$TEMPLATE", "workspace_image_mb": $E15_P_IMAGE_MB,
     "dataset_mib": $E15_P_DATASET_MIB, "dataset_seed": $E15_P_DATASET_SEED,
     "scan_classes": [c for c in "$E15_P_SCAN_CLASSES".split(",") if c], "scan_cmd": "$E15_P_SCAN_CMD",
+    "point_sig": "$(e15_point_sig "$POINT")", "point_settings": "$E15_P_SETTINGS",
+    "disk_read_max_mbs": (lambda v: float(v) if v else None)(readf("$E15_STATE/disk_read_max_mbs")),
     "library": "$LIBRARY",
     "moca_commit": "$E15_MOCA_PIN",
     "moca_experiments_commit": readf("$commit_file"),

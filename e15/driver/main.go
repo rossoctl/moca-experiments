@@ -42,6 +42,8 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 		sandboxID = fs.String("sandbox-id", "e15", "sandbox_id on every ExecRequest")
 		runID     = fs.String("run-id", "", "run identifier, part of every workspace_key")
 		out       = fs.String("out", "", "output directory")
+		scanCmd   = fs.String("scan-cmd", "", "mem512: a command run ONCE at the start of every call of a --scan-classes class (exit 89 if it fails); default off")
+		scanCls   = fs.String("scan-classes", "", "mem512: comma-separated classes whose calls carry --scan-cmd")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -57,6 +59,10 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 	if *corpus == "" || *library == "" || *runID == "" || *out == "" || *n < 1 {
 		return fail(2, "--corpus, --library, --run-id, --out and --n >= 1 are required")
 	}
+	scan, err := ParseScan(*scanCmd, *scanCls)
+	if err != nil {
+		return fail(2, "%v", err)
+	}
 	ss, err := LoadCorpus(*corpus)
 	if err != nil {
 		return fail(1, "loading corpus: %v", err)
@@ -64,6 +70,9 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 	lib, err := LoadLibrary(*library)
 	if err != nil {
 		return fail(1, "loading library: %v", err)
+	}
+	if err := scan.Check(lib); err != nil {
+		return fail(2, "%v", err)
 	}
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		return fail(1, "%v", err)
@@ -106,7 +115,7 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 	r, err := NewReplayer(Config{
 		N: *n, Seed: *seed, UserCap: *userCap,
 		Warmup: time.Duration(*warmupS) * time.Second, Window: time.Duration(*windowS) * time.Second,
-		Spread: time.Duration(*spreadS) * time.Second, Grace: time.Duration(*graceS) * time.Second, EndSessionExec: *endSess, StartAtZero: *startZero, MaxSessions: *maxSess, SandboxID: *sandboxID, RunID: *runID, Token: token,
+		Spread: time.Duration(*spreadS) * time.Second, Grace: time.Duration(*graceS) * time.Second, EndSessionExec: *endSess, StartAtZero: *startZero, MaxSessions: *maxSess, Scan: scan, SandboxID: *sandboxID, RunID: *runID, Token: token,
 	}, ss, lib, pb.NewSandboxExecClient(cc), rec)
 	if err != nil {
 		_ = closeAll()

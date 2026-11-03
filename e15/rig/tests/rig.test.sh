@@ -367,17 +367,20 @@ check "rung.sh writes oom_kills into params" "$(grep -c '"oom_kills": \$oom_afte
 
 # stub_rec FILE KEY VALUE [k=v ...]: a record/baseline JSON whose library, driver and corpus hashes
 # match the test root's (as rung.sh computes them for POINT=default), with overrides.
+psig() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_point_sig "$3"' _ "$RIG/lib.sh" "$RIG/points.sh" "$1"; }
 sha_f() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
 stub_rec() {
   local f=$1 key=$2 val=$3
   shift 3
   mkdir -p "$(dirname "$f")"
+  local sp=${STUB_POINT:-default} cdir
+  cdir=$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_point "$3"; echo "$E15_P_CORPUS"' _ "$RIG/lib.sh" "$RIG/points.sh" "$sp")
   python3 - "$f" "$key" "$val" "$(sha_f "$TROOT/src/e15/commands/library.json")" "$(sha_f "$TROOT/bin/e15-driver")" \
-    "$(sha_f "$TROOT/corpora/${STUB_POINT:-default}/corpus.jsonl")" "$@" <<'PY2'
+    "$(sha_f "$TROOT/corpora/$cdir/corpus.jsonl")" "$(psig "$sp")" "$@" <<'PY2'
 import json, sys
-f, key, val, lib, drv, corpus = sys.argv[1:7]
-d = {key: float(val), "library_sha256": lib, "driver_bin_sha256": drv, "corpus_sha256": corpus}
-for kv in sys.argv[7:]:
+f, key, val, lib, drv, corpus, sig = sys.argv[1:8]
+d = {key: float(val), "library_sha256": lib, "driver_bin_sha256": drv, "corpus_sha256": corpus, "point_sig": sig}
+for kv in sys.argv[8:]:
     k, v = kv.split("=", 1)
     d[k] = v
 json.dump(d, open(f, "w"))
@@ -577,17 +580,21 @@ if [ -f "$RIG/points.sh" ]; then
   check "points: no-chains" "$(pt no-chains)" "sbx resident-inf resident-300|no-chains|$plain"
   check "points: smoke" "$(pt smoke)" "sbx resident-inf resident-300 control|smoke|$plain"
   check "points: mem512" "$(pt mem512)" \
-    "sbx resident-inf|default|src/e15/commands/library-mem512.json|template-mem512/workspace.img|template-mem512|1024|512|1|read,shell_read,search,test,interpreter,lint_check|cat /workspace/data.bin >/dev/null"
+    "sbx resident-inf|default|src/e15/commands/library.json|template-mem512/workspace.img|template-mem512|1024|512|1|read,shell_read,search,test,interpreter,lint_check|cat /workspace/data.bin >/dev/null"
   check "points: unknown point fails" "$(pt nowhere >/dev/null && echo pass || echo refused)" "refused"
   check "points: e15_point_arms mem512" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_point_arms mem512' _ "$RIG/lib.sh" "$RIG/points.sh")" "sbx resident-inf"
   check "points: setup builds the default and mem512 templates" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_templates' _ "$RIG/lib.sh" "$RIG/points.sh" | tr '\n' ' ')" "default mem512 "
-  check "points: the scan settings match the committed mem512 library" "$(python3 - "$RIG/../commands/library-mem512.json" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1]))
-scan = "cat /workspace/data.bin >/dev/null && "
-print(",".join(c for c, v in d["classes"].items() if v and all(i["cmd"].startswith(scan) for i in v)))
-PY
-)" "read,search,test,interpreter,lint_check,shell_read"
+  # the point signature: distinct per point, stable, and mem512's differs from default's
+  sigs=$(for p in default short long no-infra no-chains smoke mem512; do psig "$p"; echo; done | sort -u | grep -c .)
+  check "point_sig: seven points, seven signatures" "$sigs" "7"
+  check "point_sig: stable" "$(psig mem512)" "$(psig mem512)"
+  check "point_sig: 64 hex chars" "$(psig default | grep -cE '^[0-9a-f]{64}$')" "1"
+  check "point_sig: default and mem512 share library and corpus, not the signature" \
+    "$([ "$(psig default)" != "$(psig mem512)" ] && echo apart || echo same)" "apart"
+  check "points: only non-default, non-mem512 points may fall back" "$(for p in default short long no-infra no-chains smoke mem512; do
+    E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_point "$3"; printf "%s=%s " "$3" "$E15_P_FALLBACK"' _ "$RIG/lib.sh" "$RIG/points.sh" "$p"; done)" \
+    "default=0 short=1 long=1 no-infra=1 no-chains=1 smoke=1 mem512=0 "
+  check "rung.sh passes the scan flags to the driver" "$(grep -c 'scan_flag=(--scan-cmd "\$E15_P_SCAN_CMD" --scan-classes "\$E15_P_SCAN_CLASSES")' "$RIG/rung.sh")/$(grep -c '"\${scan_flag\[@\]}"' "$RIG/rung.sh")" "1/1"
   # worker_env follows the point's image size
   wenv() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; worker_env sbx "$2" $3; grep "^SH_WORKSPACE_IMAGE_MB=" "$2"' _ "$RIG/lib.sh" "$TMP/wenv" "${1:-}"; }
   check "worker_env: SH_WORKSPACE_IMAGE_MB default 256" "$(wenv)" "SH_WORKSPACE_IMAGE_MB=256"
@@ -596,53 +603,101 @@ PY
   check "rung.sh copies the point's template, not E15_TEMPLATE" "$(grep -c 'E15_TEMPLATE' "$RIG/rung.sh")/$(grep -c '"\$TEMPLATE" "\$RUN_ID"' "$RIG/rung.sh")" "0/1"
 fi
 
-# rung.sh at mem512: the default point's baseline is never accepted
+# rung.sh at mem512: the default point's baseline is never accepted (same library and corpus hashes;
+# the point signature keeps them apart)
 if [ -f "$RIG/rung.sh" ] && [ -f "$RIG/points.sh" ]; then
   printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
-  printf '%s\n' '{"version":1,"classes":{},"standin":{},"mem512":true}' >"$TROOT/src/e15/commands/library-mem512.json"
   rm -rf "$TROOT/runs"
   GOOD='class_medians={} global_median_ms=1 excess_p95_ms=2'
-  # a valid default-point baseline (default library, driver and corpus hashes)
   # shellcheck disable=SC2086
   STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 42.5 $GOOD
   check "mem512 control: the default baseline is valid for default" "$(base_at default | cut -d'|' -f2)" "$TROOT/runs/default/sbx/N1/baseline.json"
   base_at mem512 >/dev/null
   check "mem512: no own baseline -> the default point's is not taken (rung dies)" "$?" "1"
   check "mem512: the death says run baseline.sh mem512" "$(grep -c 'run baseline.sh mem512 sbx' "$TMP/base.err")" "1"
-  # a default-library baseline copied into mem512's own N1/ is stale by library hash
+  # default's baseline copied into mem512/N1: library, driver and corpus all match; point_sig does not
   mkdir -p "$TROOT/runs/mem512/sbx/N1"
   cp "$TROOT/runs/default/sbx/N1/baseline.json" "$TROOT/runs/mem512/sbx/N1/baseline.json"
   base_at mem512 >/dev/null
-  check "mem512: a default-library baseline in mem512/N1 -> stale, dies" "$?" "1"
-  check "mem512: the stale reason is the library hash" "$(grep -c 'stale N=1 baseline .*library_sha256' "$TMP/base.err")" "1"
-  # mem512's own baseline (mem512 library, default corpus) is accepted
-  libsha=$(sha_f "$TROOT/src/e15/commands/library-mem512.json")
+  check "mem512: default's baseline in mem512/N1 (same lib+corpus) -> stale, dies" "$?" "1"
+  check "mem512: the stale reason is point_sig" "$(grep -c 'stale N=1 baseline .*point_sig' "$TMP/base.err")" "1"
+  # and the reverse: mem512's baseline is never accepted at default
   # shellcheck disable=SC2086
-  STUB_POINT=default stub_rec "$TROOT/runs/mem512/sbx/N1/baseline.json" baseline_p95_ms 9 library_sha256="$libsha" $GOOD
-  check "mem512: its own baseline (mem512 library) is accepted" "$(base_at mem512 | cut -d'|' -f2)" "$TROOT/runs/mem512/sbx/N1/baseline.json"
+  STUB_POINT=mem512 stub_rec "$TROOT/runs/mem512/sbx/N1/baseline.json" baseline_p95_ms 9 $GOOD
+  check "mem512: its own baseline is accepted" "$(base_at mem512 | cut -d'|' -f2)" "$TROOT/runs/mem512/sbx/N1/baseline.json"
+  cp "$TROOT/runs/mem512/sbx/N1/baseline.json" "$TROOT/runs/default/sbx/N1/baseline.json"
+  base_at default >/dev/null
+  check "default: mem512's baseline in default/N1 -> stale on point_sig" "$?/$(grep -c 'stale N=1 baseline .*point_sig' "$TMP/base.err")" "1/1"
+  # a baseline without point_sig (pre-fix) is stale
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 1 point_sig=None class_medians={} global_median_ms=1 excess_p95_ms=2
+  base_at default >/dev/null
+  check "a baseline with no point_sig is stale" "$?" "1"
   : >"$CALLS"
   E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/rung.sh" resident-300 8 mem512 >"$TMP/r.out" 2>&1
   check "rung.sh: mem512 does not run resident-300 (exit 2)" "$?/$(grep -c 'does not run ARM resident-300' "$TMP/r.out")" "2/1"
-  rm -f "$TROOT/src/e15/commands/library-mem512.json"
   rm -rf "$TROOT/runs"
   printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
 fi
 
-# classprobe.sh mem512: the default corpus, the mem512 library; rung.sh is called with mem512
+# classprobe.sh mem512: the default corpus and library; the rung runs at mem512 (scan flags, template)
 if [ -f "$RIG/classprobe.sh" ] && [ -f "$RIG/points.sh" ]; then
-  python3 - "$TROOT/src/e15/commands/library.json" "$TROOT/src/e15/commands/library-mem512.json" <<'PY'
-import json, sys
-json.dump({"version": 1, "classes": {"read": [{"id": "r+scan", "cmd": "cat /workspace/data.bin >/dev/null && x", "exit": 0, "nominal_ms": 30, "run_ms": 3}],
-           "lint_check": [{"id": "l+scan", "cmd": "y", "exit": 0, "nominal_ms": 50, "run_ms": 9}]}, "standin": {}}, open(sys.argv[2], "w"))
-PY
   printf '%s\n' '{"session":"s","user":"u","provider":"claude","calls":[{"i":0,"class":"read","work_ms":5,"dur_ms":50,"chain":false}]}' >"$TROOT/corpora/default/corpus.jsonl"
+  printf '%s\n' '{"version":1,"classes":{"read":[{"id":"r","cmd":"x","exit":0,"nominal_ms":30,"run_ms":3}],"test":[{"id":"t","cmd":"y","exit":0,"nominal_ms":900,"run_ms":null}]},"standin":{}}' >"$TROOT/src/e15/commands/library.json"
   : >"$TMP/pcalls"
   env E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$PRUNG" P_SHORT=none P_CALLS="$TMP/pcalls" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/classprobe.sh" mem512 sbx >"$TMP/p.out" 2>"$TMP/p.err"
   check "classprobe.sh mem512 exits 0" "$?" "0"
-  check "classprobe.sh mem512: classes from the mem512 library, rung at mem512" "$(cut -d' ' -f1-4 "$TMP/pcalls" | tr '\n' '|')" "sbx 1 mem512 tag=probe-build|sbx 1 mem512 tag=probe-host_infra|sbx 1 mem512 tag=probe-lint_check|sbx 1 mem512 tag=probe-opaque|sbx 1 mem512 tag=probe-read|"
-  check "classprobe.sh mem512: lint_check falls back to the mem512 library's run_ms (9)" "$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["calls"][0]["work_ms"])' "$TROOT/runs/mem512/sbx/probe-corpora/lint_check/corpus.jsonl")" "9"
+  check "classprobe.sh mem512: library classes + stand-ins, rung at mem512" "$(cut -d' ' -f1-4 "$TMP/pcalls" | tr '\n' '|')" "sbx 1 mem512 tag=probe-build|sbx 1 mem512 tag=probe-host_infra|sbx 1 mem512 tag=probe-opaque|sbx 1 mem512 tag=probe-read|sbx 1 mem512 tag=probe-test|"
   check "classprobe.sh mem512: read drawn from the default corpus (work 5)" "$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["calls"][0]["work_ms"])' "$TROOT/runs/mem512/sbx/probe-corpora/read/corpus.jsonl")" "5"
-  rm -f "$TROOT/src/e15/commands/library-mem512.json"
+fi
+
+# sample.sh: disk_read_mbs and disk_await_ms from a fixture /proc/diskstats
+if [ -f "$RIG/sample.sh" ]; then
+  FP="$TMP/fproc"
+  mkdir -p "$FP/pressure"
+  printf 'MemTotal: 1 kB\nMemAvailable: 100 kB\nCached: 5 kB\n' >"$FP/meminfo"
+  printf 'cpu  1 0 1 10 0 0 0 0 0 0\n' >"$FP/stat"
+  # fields: major minor name reads_done reads_merged sectors_read ms_reading writes_done ...
+  ds() { printf '   8       0 sda 0 0 0 0 0 0 0 0 0 0 0\n 259       0 nvme0n1 %s 0 %s %s %s 0 0 %s 0 0 0\n' "$1" "$2" "$3" "$4" "$5" >"$FP/diskstats"; }
+  ds 100 0 0 0 0
+  OUTS="$TMP/samples.jsonl"
+  rm -f "$OUTS"
+  ( E15_PROC="$FP" E15_DISK_DEV=nvme0n1 E15_SLICE_DIR="$TMP/nocg" E15_STATS_URL=http://127.0.0.1:1/x \
+    bash "$RIG/sample.sh" "$OUTS" "$(date +%s)" 30 ) &
+  spid=$!
+  for _ in $(seq 50); do [ -s "$OUTS" ] && break; sleep 0.1; done
+  # +200 MB worth of sectors (390625 x 512 B), 10 more I/Os (1 read + 9 writes) taking 50 ms in all
+  ds 101 390625 20 9 30
+  for _ in $(seq 40); do [ "$(grep -c . "$OUTS" 2>/dev/null)" -ge 2 ] && break; sleep 0.1; done
+  kill "$spid" 2>/dev/null
+  wait "$spid" 2>/dev/null
+  check "sample.sh: first sample has no disk_read_mbs" "$(head -1 "$OUTS" | grep -c disk_read_mbs)" "0"
+  check "sample.sh: disk_read_mbs = 200 MB / the two samples' ts delta" \
+    "$(python3 -c 'import json,sys; a,b=[json.loads(l) for l in open(sys.argv[1]).readlines()[:2]]; w=200/(b["ts"]-a["ts"]); print("ok" if abs(b["disk_read_mbs"]-w) < 0.01*w else (b["disk_read_mbs"], w))' "$OUTS")" "ok"
+  check "sample.sh: disk_await_ms = 50 ms / 10 I/Os" "$(sed -n 2p "$OUTS" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["disk_await_ms"])')" "5.0"
+  rm -f "$OUTS"
+  E15_PROC="$FP" E15_DISK_DEV=nosuch E15_SLICE_DIR="$TMP/nocg" E15_STATS_URL=http://127.0.0.1:1/x \
+    bash "$RIG/sample.sh" "$OUTS" "$(date +%s)" 2.5 >/dev/null 2>&1
+  check "sample.sh: an unknown device gives samples, no disk_read_mbs" "$([ "$(grep -c . "$OUTS")" -ge 2 ] && echo n)/$(grep -c disk_read_mbs "$OUTS")" "n/0"
+fi
+
+# setup.sh: the volume's read throughput, measured once (dd direct I/O), kept in state
+if [ -f "$RIG/lib.sh" ]; then
+  ddout='2147483648 bytes (2.1 GB, 2.0 GiB) copied, 10.7374 s, 200 MB/s'
+  check "dd_mbs: bytes / seconds in MB/s" "$(printf '%s\n' "$ddout" | bash -c 'source "$1"; dd_mbs' _ "$RIG/lib.sh")" "200.0"
+  check "dd_mbs: GNU 'seconds' spelling" "$(printf '1000000 bytes (1 MB) copied, 0.5 seconds, 2 MB/s\n' | bash -c 'source "$1"; dd_mbs' _ "$RIG/lib.sh")" "2.0"
+  check "dd_mbs: no summary -> fails" "$(echo junk | bash -c 'source "$1"; dd_mbs' _ "$RIG/lib.sh" >/dev/null 2>&1 && echo pass || echo fail)" "fail"
+  # measure_disk_read with a stub dd: writes with oflag=direct, reads with iflag=direct, removes the file
+  DDS="$TMP/ddstub"
+  mkdir -p "$DDS"
+  printf '#!/usr/bin/env bash\necho "dd $*" >>"%s"\ncase "$*" in *iflag=direct*) echo "%s" >&2 ;; *of=*) for a; do case "$a" in of=*) : >"${a#of=}" ;; esac; done ;; esac\n' "$TMP/dd.calls" "$ddout" >"$DDS/dd"
+  chmod +x "$DDS/dd"
+  : >"$TMP/dd.calls"
+  got=$(PATH="$DDS:$PATH" bash -c 'source "$1"; measure_disk_read "$2" 2048' _ "$RIG/lib.sh" "$TMP/probe.bin")
+  check "measure_disk_read: MB/s from the direct read" "$got" "200.0"
+  check "measure_disk_read: write 512 x 4M direct, then read direct" "$(grep -c 'bs=4M count=512 oflag=direct' "$TMP/dd.calls")/$(grep -c 'bs=4M iflag=direct' "$TMP/dd.calls")" "1/1"
+  check "measure_disk_read: the probe file is removed" "$([ -e "$TMP/probe.bin" ] && echo left || echo removed)" "removed"
+  check "setup.sh measures once into state/disk_read_max_mbs" "$(grep -c 'if \[ ! -s "\$E15_STATE/disk_read_max_mbs" \]' "$RIG/setup.sh")/$(grep -c 'measure_disk_read "\$E15_STATE/.disk-read-probe" 2048' "$RIG/setup.sh")" "1/1"
+  check "rung.sh puts disk_read_max_mbs into params" "$(grep -c '"disk_read_max_mbs": ' "$RIG/rung.sh")" "1"
 fi
 
 # setup.sh keeps the cycle's first PRESTATE (a setup while E15 is up must not record E15's own stops)

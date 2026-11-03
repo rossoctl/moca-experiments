@@ -198,6 +198,27 @@ e15_goenv() {
 
 sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
 
+# dd_mbs: from dd's summary on stdin ("<bytes> bytes (...) copied, <secs> s, ..."), MB/s
+# (10^6 bytes per second) computed from bytes and seconds (dd's own rate is rounded and unit-varied).
+dd_mbs() {
+  awk '/ bytes .* copied, / {b=$1; for (i=1;i<=NF;i++) if ($i=="s," || $i=="seconds,") s=$(i-1); sub(",","",s)}
+    END {if (b>0 && s>0) printf "%.1f\n", b/1e6/s; else exit 1}'
+}
+
+# measure_disk_read FILE [MIB]: the volume's sequential read throughput (SPEC §10.3, mem512's
+# disk_io binding): write MIB (default 2048) MiB to FILE with direct I/O, read it back with direct
+# I/O (no page cache), remove it, print MB/s. FILE must be on the volume holding /srv/e15.
+measure_disk_read() {
+  local f=$1 mib=${2:-2048} out
+  dd if=/dev/zero of="$f" bs=4M count=$((mib / 4)) oflag=direct conv=fsync status=none || {
+    rm -f "$f"
+    return 1
+  }
+  out=$(dd if="$f" of=/dev/null bs=4M iflag=direct 2>&1)
+  rm -f "$f"
+  printf '%s\n' "$out" | dd_mbs
+}
+
 # unit_active UNIT: systemctl is-active, quiet (reading state needs no sudo).
 unit_active() {
   refuse_units "$1"
