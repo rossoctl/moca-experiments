@@ -441,9 +441,14 @@ e15_storage_check() {
 # e15_root_purge_cmd: the PURGE command that removes E15's files. aws-prelim: rm -rf of the root,
 # as before. fresh-metal: when the root is a mount point (the E15 data volume), its contents only
 # -- the mount and its fstab line are bootstrap.sh's own PURGE lines, replayed after this one.
+# e15_root_purge_mount_aware_cmd: that command, whatever the profile (teardown.sh replays it in
+# place of an older `sudo -n rm -rf <root>` line when the root is a mount point).
+e15_root_purge_mount_aware_cmd() {
+  printf '%s\n' "sudo -n bash -c 'if mountpoint -q \"\$1\"; then find \"\$1\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +; else rm -rf \"\$1\"; fi' _ $E15_ROOT"
+}
 e15_root_purge_cmd() {
   if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
-    printf '%s\n' "sudo -n bash -c 'if mountpoint -q \"\$1\"; then find \"\$1\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +; else rm -rf \"\$1\"; fi' _ $E15_ROOT"
+    e15_root_purge_mount_aware_cmd
   else
     printf '%s\n' "sudo -n rm -rf $E15_ROOT"
   fi

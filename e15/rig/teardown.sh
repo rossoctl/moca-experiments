@@ -54,6 +54,12 @@ results=()
 failed=()
 replay() {
   local cmd=$1 r
+  # Never `rm -rf` the root when it is a mount point (an older manifest's PURGE line, written before
+  # the mount-aware one, on a host where /srv/e15 is now the data volume): remove its contents only.
+  if [ "$cmd" = "sudo -n rm -rf $E15_ROOT" ] && mountpoint -q "$E15_ROOT" 2>/dev/null; then
+    log "replay: $E15_ROOT is a mount point; its contents only, not: $cmd"
+    cmd=$(e15_root_purge_mount_aware_cmd)
+  fi
   log "replay: $cmd"
   bash -c "$cmd"
   r=$?

@@ -1195,6 +1195,25 @@ SH
     bash "$RIG/teardown.sh" --purge >"$TMP/td.out" 2>&1
   check "teardown --purge: a mounted root is emptied, the mount point kept, verify passes" \
     "$?/$(find "$DR" -mindepth 1 | grep -c .)/$(grep -c "$DR /dev/e15fake xfs" "$DV/mounts")/$(grep -c 'emptied (still a mount point: no recorded umount)' "$TMP/boot-o.md")" "0/0/1/1"
+  # L2: an older manifest's `rm -rf <root>` PURGE line is never replayed on a mount point
+  for prof in fresh-metal aws-prelim; do
+    mkdir -p "$DR/state" "$DR/junk/deep"
+    echo "$DR /dev/e15fake xfs" >"$DV/mounts"
+    printf -- '## Bootstrap 1\n- t created %s | PURGE: sudo -n rm -rf %s\n- t created %s | PURGE: %s\n' "$DR" "$DR" "$DR" \
+      "$(E15_HOST_PROFILE=fresh-metal E15_ROOT="$DR" E15_TEST_ROOT="$DR" bash -c 'source "$1"; e15_root_purge_cmd' _ "$RIG/lib.sh")" >"$TMP/legacy.md"
+    E15_HOST_PROFILE=$prof E15_TEARDOWN_VERIFY=0 E15_ROOT="$DR" E15_TEST_ROOT="$DR" E15_MANIFEST="$TMP/legacy.md" PATH="$DS:$BS:$SPATH" \
+      bash "$RIG/teardown.sh" --purge >"$TMP/td.out" 2>&1
+    check "teardown --purge ($prof): a legacy rm -rf of a mounted root empties it instead (exit 0, mount point kept)" \
+      "$?/$([ -d "$DR" ] && echo kept)/$(find "$DR" -mindepth 1 | grep -c .)/$(grep -c "is a mount point; its contents only, not: sudo -n rm -rf $DR" "$TMP/td.out")" "0/kept/0/1"
+  done
+  : >"$DV/mounts"
+  mkdir -p "$DR/x"
+  printf -- '- t created | PURGE: sudo -n rm -rf %s\n' "$DR" >"$TMP/legacy.md"
+  E15_HOST_PROFILE=aws-prelim E15_TEARDOWN_VERIFY=0 E15_ROOT="$DR" E15_TEST_ROOT="$DR" E15_MANIFEST="$TMP/legacy.md" PATH="$DS:$BS:$SPATH" \
+    bash "$RIG/teardown.sh" --purge >"$TMP/td.out" 2>&1
+  check "teardown --purge (aws-prelim): rm -rf of a root that is not a mount point is replayed as is" \
+    "$?/$([ -e "$DR" ] && echo present || echo gone)/$(grep -c 'replay: sudo -n rm -rf ' "$TMP/td.out")/$(grep -c 'is a mount point' "$TMP/td.out")" "0/gone/1/0"
+  mkdir -p "$DR"
   : >"$DV/mounts"
   mkdir -p "$DR/leftover"
   E15_ROOT="$DR" E15_TEST_ROOT="$DR" E15_MANIFEST="$TMP/boot-o.md" PATH="$DS:$BS:$SPATH" E15_HOST_PROFILE=fresh-metal \
