@@ -29,6 +29,8 @@ unset E15_MAX_SESSIONS E15_START_ZERO
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
+# shellcheck source=points.sh
+. "$HERE/points.sh"
 
 usage() {
   echo "usage: ladder.sh POINT ARM [START_N]   (ARM: ${E15_ARMS[*]}; START_N on: ${E15_LADDER[*]})" >&2

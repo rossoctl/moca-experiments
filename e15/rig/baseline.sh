@@ -19,6 +19,8 @@ E15_PROG=baseline.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
+# shellcheck source=points.sh
+. "$HERE/points.sh"
 
 usage() {
   echo "usage: baseline.sh POINT ARM   (ARM: ${E15_ARMS[*]})" >&2
@@ -31,7 +33,7 @@ e15_is_arm "$ARM" || {
   echo "baseline.sh: unknown ARM '$ARM'" >&2
   usage
 }
-e15_point_arms "$POINT" >/dev/null || {
+e15_point "$POINT" || {
   echo "baseline.sh: unknown POINT '$POINT'" >&2
   usage
 }
@@ -90,7 +92,7 @@ while IFS= read -r line; do
   [ -z "$line" ] || probes+=("$line")
 done <<<"$probe_out"
 [ "${#probes[@]}" -gt 0 ] || die "classprobe.sh $POINT $ARM produced no probe runs"
-p95=$(E15_BASELINE_CORPUS="$E15_CORPORA/$POINT/corpus.jsonl" E15_BASELINE_ARM="$ARM" E15_BASELINE_SEEDS="${seeds[*]}" E15_BASELINE_SKIPPED="${skipped[*]}" \
+p95=$(E15_BASELINE_CORPUS="$E15_CORPORA/$E15_P_CORPUS/corpus.jsonl" E15_BASELINE_ARM="$ARM" E15_BASELINE_SEEDS="${seeds[*]}" E15_BASELINE_SKIPPED="${skipped[*]}" \
   python3 "$E15_SRC/analysis/baseline.py" "$OUT" "${dirs[@]}" --probe "${probes[@]}") || die "baseline.py failed for ${dirs[*]}"
 log "baseline $ARM probe_failed: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["probe_failed"] or "none")' "$OUT")"
 log "baseline $ARM point=$POINT: p95 added ${p95} ms over ${#dirs[@]} evaluable N=1 runs, $calls calls, ${#probes[@]} class probes (seeds ${seeds[*]}; skipped ${skipped[*]:-none}) ($OUT)"

@@ -22,7 +22,8 @@
 #   6. builds: stock microvm-worker, null-responder, e15-driver; resident build (resident/apply.sh)
 #   7. rootfs = /srv/snapshots/default's rootfs tree + pytest wheels; build-snapshot.sh
 #      --guest-ram-mb 1024 --image e15 --out /srv/e15/snapshots/e15; pytest checked in a VM
-#   8. workspace template /srv/e15/template/workspace.img (commands/build_workspace.sh)
+#   8. workspace templates (commands/build_workspace.sh, points.sh): /srv/e15/template/workspace.img
+#      (256 MiB) and /srv/e15/template-mem512/workspace.img (1024 MiB, 512 MiB data.bin, seed 1)
 #   9. Redis (podman, 127.0.0.1:6400, --save '') and the relay (127.0.0.1:9643 attach, :9644 exec)
 #
 # Built artifacts (step 5-8) are stamped in /srv/e15/state and skipped when unchanged; they are
@@ -33,6 +34,8 @@ E15_PROG=setup.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
+# shellcheck source=points.sh
+. "$HERE/points.sh"
 
 [ "$(id -u)" != 0 ] || die "run as the login user, not root (sudo -n is used per step)"
 sudo -n true 2>/dev/null || die "needs passwordless sudo"
@@ -62,14 +65,14 @@ m_section Setup
 log "setup: manifest $E15_MANIFEST (already_up=$already_up)"
 
 # --- 2. pause the host's own worker and the bench containers ---------------------------------
-# The pre-setup state teardown.sh verifies against (one PRESTATE line per setup section; a
-# second setup in the same cycle sees E15's own stops, so only the first one counts).
+# The pre-setup state teardown.sh verifies against: one PRESTATE line per cycle (m_prestate). A
+# second setup in the same cycle sees E15's own stops, so only the first one is written.
 if unit_active "$E15_HOST_WORKER"; then hw=active; else hw=inactive; fi
 bench=()
 for c in "${E15_BENCH_CTRS[@]}"; do
   bench+=("$c=$(sudo -n docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null || echo absent)")
 done
-m_note "PRESTATE: $E15_HOST_WORKER=$hw ${bench[*]}"
+m_prestate "$E15_HOST_WORKER=$hw ${bench[*]}"
 if unit_active "$E15_HOST_WORKER"; then
   sctl stop "$E15_HOST_WORKER"
   m_change "stopped $E15_HOST_WORKER (SPEC §4: paused for the run)" "sudo -n systemctl start $E15_HOST_WORKER"
@@ -89,7 +92,7 @@ done
 
 # --- 3. tree and secrets ---------------------------------------------------------------------
 for d in "$E15_BIN" "$E15_SECRETS" "$E15_STATE" "$E15_LOGS" "$E15_RUNS" "$E15_WORKSPACES" \
-  "$E15_JAIL" "$E15_ROOT/go" "$E15_ROOT/template"; do
+  "$E15_JAIL" "$E15_ROOT/go" "$E15_ROOT/template" "$E15_ROOT/template-mem512"; do
   if [ ! -d "$d" ]; then
     sudo -n mkdir -p "$d"
     sudo -n chown "$(id -un):$(id -gn)" "$d"
@@ -223,17 +226,26 @@ if ! stamp_ok snapshot "$snap_key" || [ ! -f "$E15_SNAPDIR/$E15_SNAPIMG/manifest
   m_note "built snapshot $E15_SNAPDIR/$E15_SNAPIMG ($(sudo -n python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["hash"], "guest", m["guest_ram_mb"], "MiB", ",".join(m["capabilities"]))' "$E15_SNAPDIR/$E15_SNAPIMG/manifest.json"))"
 fi
 
-# --- 8. workspace template -------------------------------------------------------------------
+# --- 8. workspace templates (points.sh): default, and mem512's (1024 MiB, 512 MiB data.bin) ------
 k=$(src_key commands)
-if ! stamp_ok template "$k" || [ ! -f "$E15_TEMPLATE" ]; then
-  sudo -n rm -f "$E15_TEMPLATE"
-  psrc=()
-  [ -d "$E15_ROOT/project-src" ] && psrc=(E15_PROJECT_SRC="$E15_ROOT/project-src")
-  sudo -n env "${psrc[@]}" PATH="/usr/bin:/usr/sbin:/bin:/sbin" bash "$E15_SRC/commands/build_workspace.sh" "$E15_TEMPLATE" \
-    >"$E15_LOGS/build_workspace.log" 2>&1 || die "build_workspace.sh failed; see $E15_LOGS/build_workspace.log"
-  stamp_set template "$k"
-  m_note "built $E15_TEMPLATE ($(tail -1 "$E15_LOGS/build_workspace.log"))"
-fi
+while read -r tpoint; do
+  e15_point "$tpoint" || die "points.sh: unknown template point $tpoint"
+  tkey="$k-$E15_P_IMAGE_MB-$E15_P_DATASET_MIB-$E15_P_DATASET_SEED"
+  [ "$tpoint" = default ] && tkey=$k # the default template's stamp as before (e2e check key)
+  if ! stamp_ok "$E15_P_TEMPLATE_STAMP" "$tkey" || [ ! -f "$E15_P_TEMPLATE" ]; then
+    sudo -n rm -f "$E15_P_TEMPLATE"
+    psrc=()
+    [ -d "$E15_ROOT/project-src" ] && psrc=(E15_PROJECT_SRC="$E15_ROOT/project-src")
+    wsopts=(--image-mb "$E15_P_IMAGE_MB")
+    [ "$E15_P_DATASET_MIB" = 0 ] || wsopts+=(--dataset-mib "$E15_P_DATASET_MIB" --dataset-seed "$E15_P_DATASET_SEED")
+    wlog=$E15_LOGS/build_workspace-$tpoint.log
+    [ "$tpoint" = default ] && wlog=$E15_LOGS/build_workspace.log
+    sudo -n env "${psrc[@]}" PATH="/usr/bin:/usr/sbin:/bin:/sbin" bash "$E15_SRC/commands/build_workspace.sh" \
+      "${wsopts[@]}" "$E15_P_TEMPLATE" >"$wlog" 2>&1 || die "build_workspace.sh ($tpoint) failed; see $wlog"
+    stamp_set "$E15_P_TEMPLATE_STAMP" "$tkey"
+    m_note "built $E15_P_TEMPLATE ($(tail -1 "$wlog"))"
+  fi
+done < <(e15_templates)
 
 # Listed leftovers: things outside /srv/e15 E15's builds touch that no UNDO removes.
 for left in "npm cache ~/.npm (pi-fork npm ci; shared with other users of npm on this host)" \

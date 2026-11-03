@@ -16,7 +16,7 @@
 set -uo pipefail
 
 RIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPTS=(lib.sh setup.sh teardown.sh rung.sh ladder.sh sample.sh baseline.sh classprobe.sh tests/rig.test.sh)
+SCRIPTS=(lib.sh points.sh setup.sh teardown.sh rung.sh ladder.sh sample.sh baseline.sh classprobe.sh tests/rig.test.sh)
 fails=0
 check() {
   if [ "$2" = "$3" ]; then
@@ -393,8 +393,8 @@ if [ -f "$RIG/rung.sh" ]; then
   echo short-corpus >"$TROOT/corpora/short/corpus.jsonl"
   base_at() { # POINT [ARM] [N]
     E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash -c '
-      set -e; source "$1"; E15_PROG=t
-      N=${4:-8} POINT=$3 ARM=${5:-sbx}
+      set -e; source "$1"; source "${1%/lib.sh}/points.sh"; E15_PROG=t
+      N=${4:-8} POINT=$3 ARM=${5:-sbx}; e15_point "$POINT"
       eval "$(sed -n "/^WINDOW=\${E15_WINDOW_S:-900}/,/^# end baseline resolution/p" "$2")"
       echo "$baseline_path|$baseline_src"' _ "$RIG/lib.sh" "$RIG/rung.sh" "$1" "${2:-8}" "${3:-sbx}" 2>"$TMP/base.err"
   }
@@ -558,6 +558,116 @@ SH
   check "baseline.sh bad usage exits 2" "$?" "2"
   PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/baseline.sh" default bogus >"$TMP/b.out" 2>&1
   check "baseline.sh unknown ARM exits 2" "$?" "2"
+fi
+
+# --- Task 8c: points.sh, mem512, PRESTATE kept -------------------------------------------------
+
+# points.sh: every point's corpus, library, template, image size and scan settings
+if [ -f "$RIG/points.sh" ]; then
+  pt() {
+    E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_point "$3" || exit 1
+      echo "$E15_P_ARMS|$E15_P_CORPUS|${E15_P_LIBRARY#"$E15_ROOT"/}|${E15_P_TEMPLATE#"$E15_ROOT"/}|$E15_P_TEMPLATE_STAMP|$E15_P_IMAGE_MB|$E15_P_DATASET_MIB|$E15_P_DATASET_SEED|$E15_P_SCAN_CLASSES|$E15_P_SCAN_CMD"' \
+      _ "$RIG/lib.sh" "$RIG/points.sh" "$1" 2>&1
+  }
+  plain='src/e15/commands/library.json|template/workspace.img|template|256|0|1||'
+  check "points: default" "$(pt default)" "sbx resident-inf resident-300 control|default|$plain"
+  check "points: short" "$(pt short)" "sbx resident-inf|short|$plain"
+  check "points: long" "$(pt long)" "sbx resident-inf resident-300|long|$plain"
+  check "points: no-infra" "$(pt no-infra)" "sbx resident-inf resident-300|no-infra|$plain"
+  check "points: no-chains" "$(pt no-chains)" "sbx resident-inf resident-300|no-chains|$plain"
+  check "points: smoke" "$(pt smoke)" "sbx resident-inf resident-300 control|smoke|$plain"
+  check "points: mem512" "$(pt mem512)" \
+    "sbx resident-inf|default|src/e15/commands/library-mem512.json|template-mem512/workspace.img|template-mem512|1024|512|1|read,shell_read,search,test,interpreter,lint_check|cat /workspace/data.bin >/dev/null"
+  check "points: unknown point fails" "$(pt nowhere >/dev/null && echo pass || echo refused)" "refused"
+  check "points: e15_point_arms mem512" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_point_arms mem512' _ "$RIG/lib.sh" "$RIG/points.sh")" "sbx resident-inf"
+  check "points: setup builds the default and mem512 templates" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_templates' _ "$RIG/lib.sh" "$RIG/points.sh" | tr '\n' ' ')" "default mem512 "
+  check "points: the scan settings match the committed mem512 library" "$(python3 - "$RIG/../commands/library-mem512.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+scan = "cat /workspace/data.bin >/dev/null && "
+print(",".join(c for c, v in d["classes"].items() if v and all(i["cmd"].startswith(scan) for i in v)))
+PY
+)" "read,search,test,interpreter,lint_check,shell_read"
+  # worker_env follows the point's image size
+  wenv() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; worker_env sbx "$2" $3; grep "^SH_WORKSPACE_IMAGE_MB=" "$2"' _ "$RIG/lib.sh" "$TMP/wenv" "${1:-}"; }
+  check "worker_env: SH_WORKSPACE_IMAGE_MB default 256" "$(wenv)" "SH_WORKSPACE_IMAGE_MB=256"
+  check "worker_env: SH_WORKSPACE_IMAGE_MB follows the point (1024)" "$(wenv 1024)" "SH_WORKSPACE_IMAGE_MB=1024"
+  check "rung.sh starts the worker with the point's image size" "$(grep -c 'start_worker "\$ARM" "\$DIR" "\$E15_P_IMAGE_MB"' "$RIG/rung.sh")" "1"
+  check "rung.sh copies the point's template, not E15_TEMPLATE" "$(grep -c 'E15_TEMPLATE' "$RIG/rung.sh")/$(grep -c '"\$TEMPLATE" "\$RUN_ID"' "$RIG/rung.sh")" "0/1"
+fi
+
+# rung.sh at mem512: the default point's baseline is never accepted
+if [ -f "$RIG/rung.sh" ] && [ -f "$RIG/points.sh" ]; then
+  printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
+  printf '%s\n' '{"version":1,"classes":{},"standin":{},"mem512":true}' >"$TROOT/src/e15/commands/library-mem512.json"
+  rm -rf "$TROOT/runs"
+  GOOD='class_medians={} global_median_ms=1 excess_p95_ms=2'
+  # a valid default-point baseline (default library, driver and corpus hashes)
+  # shellcheck disable=SC2086
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 42.5 $GOOD
+  check "mem512 control: the default baseline is valid for default" "$(base_at default | cut -d'|' -f2)" "$TROOT/runs/default/sbx/N1/baseline.json"
+  base_at mem512 >/dev/null
+  check "mem512: no own baseline -> the default point's is not taken (rung dies)" "$?" "1"
+  check "mem512: the death says run baseline.sh mem512" "$(grep -c 'run baseline.sh mem512 sbx' "$TMP/base.err")" "1"
+  # a default-library baseline copied into mem512's own N1/ is stale by library hash
+  mkdir -p "$TROOT/runs/mem512/sbx/N1"
+  cp "$TROOT/runs/default/sbx/N1/baseline.json" "$TROOT/runs/mem512/sbx/N1/baseline.json"
+  base_at mem512 >/dev/null
+  check "mem512: a default-library baseline in mem512/N1 -> stale, dies" "$?" "1"
+  check "mem512: the stale reason is the library hash" "$(grep -c 'stale N=1 baseline .*library_sha256' "$TMP/base.err")" "1"
+  # mem512's own baseline (mem512 library, default corpus) is accepted
+  libsha=$(sha_f "$TROOT/src/e15/commands/library-mem512.json")
+  # shellcheck disable=SC2086
+  STUB_POINT=default stub_rec "$TROOT/runs/mem512/sbx/N1/baseline.json" baseline_p95_ms 9 library_sha256="$libsha" $GOOD
+  check "mem512: its own baseline (mem512 library) is accepted" "$(base_at mem512 | cut -d'|' -f2)" "$TROOT/runs/mem512/sbx/N1/baseline.json"
+  : >"$CALLS"
+  E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/rung.sh" resident-300 8 mem512 >"$TMP/r.out" 2>&1
+  check "rung.sh: mem512 does not run resident-300 (exit 2)" "$?/$(grep -c 'does not run ARM resident-300' "$TMP/r.out")" "2/1"
+  rm -f "$TROOT/src/e15/commands/library-mem512.json"
+  rm -rf "$TROOT/runs"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
+fi
+
+# classprobe.sh mem512: the default corpus, the mem512 library; rung.sh is called with mem512
+if [ -f "$RIG/classprobe.sh" ] && [ -f "$RIG/points.sh" ]; then
+  python3 - "$TROOT/src/e15/commands/library.json" "$TROOT/src/e15/commands/library-mem512.json" <<'PY'
+import json, sys
+json.dump({"version": 1, "classes": {"read": [{"id": "r+scan", "cmd": "cat /workspace/data.bin >/dev/null && x", "exit": 0, "nominal_ms": 30, "run_ms": 3}],
+           "lint_check": [{"id": "l+scan", "cmd": "y", "exit": 0, "nominal_ms": 50, "run_ms": 9}]}, "standin": {}}, open(sys.argv[2], "w"))
+PY
+  printf '%s\n' '{"session":"s","user":"u","provider":"claude","calls":[{"i":0,"class":"read","work_ms":5,"dur_ms":50,"chain":false}]}' >"$TROOT/corpora/default/corpus.jsonl"
+  : >"$TMP/pcalls"
+  env E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$PRUNG" P_SHORT=none P_CALLS="$TMP/pcalls" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/classprobe.sh" mem512 sbx >"$TMP/p.out" 2>"$TMP/p.err"
+  check "classprobe.sh mem512 exits 0" "$?" "0"
+  check "classprobe.sh mem512: classes from the mem512 library, rung at mem512" "$(cut -d' ' -f1-4 "$TMP/pcalls" | tr '\n' '|')" "sbx 1 mem512 tag=probe-build|sbx 1 mem512 tag=probe-host_infra|sbx 1 mem512 tag=probe-lint_check|sbx 1 mem512 tag=probe-opaque|sbx 1 mem512 tag=probe-read|"
+  check "classprobe.sh mem512: lint_check falls back to the mem512 library's run_ms (9)" "$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["calls"][0]["work_ms"])' "$TROOT/runs/mem512/sbx/probe-corpora/lint_check/corpus.jsonl")" "9"
+  check "classprobe.sh mem512: read drawn from the default corpus (work 5)" "$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["calls"][0]["work_ms"])' "$TROOT/runs/mem512/sbx/probe-corpora/read/corpus.jsonl")" "5"
+  rm -f "$TROOT/src/e15/commands/library-mem512.json"
+fi
+
+# setup.sh keeps the cycle's first PRESTATE (a setup while E15 is up must not record E15's own stops)
+if [ -f "$RIG/setup.sh" ]; then
+  check "setup.sh records PRESTATE through m_prestate only" "$(grep -c 'm_prestate "\$E15_HOST_WORKER=' "$RIG/setup.sh")/$(grep -c 'm_note "PRESTATE' "$RIG/setup.sh")" "1/0"
+  mp() { E15_MANIFEST="$1" bash -c 'source "$1"; m_prestate "$2"' _ "$RIG/lib.sh" "$2"; }
+  M6="$TMP/m6.md"
+  printf -- '# m\n\n## Setup 1\n' >"$M6"
+  mp "$M6" "microvm-worker.service=active bench-cp=true bench-redis=true"
+  printf -- '\n## Setup 2\n' >>"$M6"
+  mp "$M6" "microvm-worker.service=inactive bench-cp=false bench-redis=false"
+  check "m_prestate: first setup of a cycle writes PRESTATE" "$(grep -c ' PRESTATE: microvm-worker.service=active' "$M6")" "1"
+  check "m_prestate: a second setup in the cycle writes no PRESTATE" "$(grep -c ' PRESTATE: ' "$M6")" "1"
+  check "m_prestate: the second setup notes what it saw" "$(grep -c 'PRESTATE kept: .*microvm-worker.service=inactive' "$M6")" "1"
+  # teardown then verifies against the first setup's state (worker was active, is active again)
+  printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && [ "$3" = microvm-worker.service ] && exit 0\nexit 1\n' >"$STUB/systemctl"
+  printf '#!/usr/bin/env bash\ncase "$*" in *"docker inspect"*) echo true; exit 0 ;; esac\nexit 1\n' >"$STUB/sudo"
+  PATH="$SPATH" E15_MANIFEST="$M6" bash "$RIG/teardown.sh" >"$TMP/t6.out" 2>&1
+  check "teardown after two setups verifies against the first PRESTATE (exit 0)" "$?" "0"
+  # the next cycle (after that Teardown) records its own PRESTATE again
+  printf -- '\n## Setup 3\n' >>"$M6"
+  mp "$M6" "microvm-worker.service=inactive bench-cp=true bench-redis=true"
+  check "m_prestate: a new cycle after teardown writes PRESTATE again" "$(grep -c ' PRESTATE: ' "$M6")" "2"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
+  printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s"\n' "$CALLS" >"$STUB/sudo"
 fi
 
 # (2) a retry-only teardown verifies against the last PRESTATE anywhere in the manifest

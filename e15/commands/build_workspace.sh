@@ -5,12 +5,21 @@
 # /workspace, holding
 #   project/   the repository in project.lock, at its locked commit, with its .git
 #   scripts/   the generated script set (scripts/gen_scripts.py)
+#   data.bin   only with --dataset-mib W: W MiB of incompressible bytes, deterministic from
+#              --dataset-seed S (SHAKE-256 of "e15-data.bin/<S>/<block>" per MiB block), the
+#              memory-pressure point's per-session working set (SPEC §10.3, mem512)
 # The rig copies the template once per session key; the worker reuses any workspace.img that is
 # already ext4, so no worker change is needed.
 #
 # Usage:
-#   sudo e15/commands/build_workspace.sh OUT_IMG       256 MiB sparse ext4 image (Linux, root)
-#   e15/commands/build_workspace.sh --dir OUTDIR       stage the tree only (any OS, no root)
+#   sudo e15/commands/build_workspace.sh [OPTS] OUT_IMG   sparse ext4 image (Linux, root)
+#   e15/commands/build_workspace.sh [OPTS] --dir OUTDIR   stage the tree only (any OS, no root)
+#
+# Options (before OUT_IMG / --dir):
+#   --image-mb M        image size in MiB (default 256); must match the rung's SH_WORKSPACE_IMAGE_MB
+#   --dataset-mib W     write /workspace/data.bin, W MiB (W + 128 <= M: room for the project and
+#                       ext4's own metadata)
+#   --dataset-seed S    data.bin's seed (default 1)
 #
 # Environment:
 #   E15_PROJECT_SRC   clone from here instead of project.lock's url (a local clone or bundle;
@@ -25,9 +34,26 @@ IMG_MIB=256
 WS_UID="${E15_WS_UID:-0}"
 WS_GID="${E15_WS_GID:-0}"
 
+DATA_MIB=0
+DATA_SEED=1
+
 usage() {
-  echo "usage: $0 OUT_IMG | --dir OUTDIR" >&2
+  echo "usage: $0 [--image-mb M] [--dataset-mib W] [--dataset-seed S] OUT_IMG | --dir OUTDIR" >&2
   exit 1
+}
+
+# write_dataset ROOT: ROOT/data.bin, DATA_MIB MiB, one SHAKE-256 stream per 1 MiB block.
+write_dataset() {
+  [ "$DATA_MIB" -gt 0 ] || return 0
+  python3 - "$1/data.bin" "$DATA_MIB" "$DATA_SEED" <<'PY'
+import hashlib, os, sys
+out, mib, seed = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+with open(out + ".tmp", "wb") as f:
+    for i in range(mib):
+        f.write(hashlib.shake_256(b"e15-data.bin/%d/%d" % (seed, i)).digest(1 << 20))
+os.chmod(out + ".tmp", 0o444)
+os.rename(out + ".tmp", out)
+PY
 }
 
 lock_field() {
@@ -78,6 +104,38 @@ stage() {
   fi
 }
 
+while [ $# -gt 0 ]; do
+  case "$1" in
+  --image-mb | --dataset-mib | --dataset-seed)
+    [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+$ ]] || {
+      echo "build_workspace.sh: $1 needs a non-negative integer" >&2
+      usage
+    }
+    case "$1" in
+    --image-mb) IMG_MIB=$((10#$2)) ;;
+    --dataset-mib)
+      DATA_MIB=$((10#$2))
+      [ "$DATA_MIB" -gt 0 ] || {
+        echo "build_workspace.sh: --dataset-mib must be >= 1" >&2
+        exit 1
+      }
+      ;;
+    --dataset-seed) DATA_SEED=$((10#$2)) ;;
+    esac
+    shift 2
+    ;;
+  *) break ;;
+  esac
+done
+if [ "$IMG_MIB" -lt 64 ]; then
+  echo "build_workspace.sh: --image-mb $IMG_MIB is too small (>= 64)" >&2
+  exit 1
+fi
+if [ "$DATA_MIB" -gt 0 ] && [ $((DATA_MIB + 128)) -gt "$IMG_MIB" ]; then
+  echo "build_workspace.sh: --dataset-mib $DATA_MIB does not fit a $IMG_MIB MiB image (need W + 128 <= M)" >&2
+  exit 1
+fi
+
 [ $# -ge 1 ] || usage
 case "$1" in
 --dir)
@@ -89,7 +147,10 @@ case "$1" in
   fi
   mkdir -p "$OUT"
   stage "$OUT"
-  echo "staged $OUT ($(lock_field commit))"
+  write_dataset "$OUT"
+  ds=""
+  [ "$DATA_MIB" = 0 ] || ds=", data.bin $DATA_MIB MiB seed $DATA_SEED"
+  echo "staged $OUT ($(lock_field commit)$ds)"
   exit 0
   ;;
 -h | --help) usage ;;
@@ -119,14 +180,21 @@ cleanup() {
 trap cleanup EXIT
 
 truncate -s "${IMG_MIB}M" "$TMP_IMG"
-mkfs.ext4 -F -q "$TMP_IMG"
+# A data.bin image (mem512) is 1 GiB: initialise its inode tables and journal now, so no guest's
+# ext4lazyinit writes them later -- each such write would un-share blocks of a reflinked per-session
+# copy. The default image is built as before.
+mkfs_opts=()
+[ "$DATA_MIB" = 0 ] || mkfs_opts=(-E "lazy_itable_init=0,lazy_journal_init=0")
+mkfs.ext4 -F -q "${mkfs_opts[@]}" "$TMP_IMG"
 mount -o loop "$TMP_IMG" "$MNT"
 stage "$MNT"
+write_dataset "$MNT"
 chown -R "$WS_UID:$WS_GID" "$MNT/project" "$MNT/scripts"
+[ ! -e "$MNT/data.bin" ] || chown "$WS_UID:$WS_GID" "$MNT/data.bin"
 # The ownership change touched every inode; refresh the index so the first `git status` in a
 # session is not an index rewrite.
 git -c safe.directory="$MNT/project" -C "$MNT/project" update-index -q --refresh
 sync
 umount "$MNT"
 mv "$TMP_IMG" "$OUT_IMG"
-echo "built $OUT_IMG ($(lock_field commit), ${IMG_MIB} MiB sparse, $(du -k "$OUT_IMG" | cut -f1) KiB used)"
+echo "built $OUT_IMG ($(lock_field commit), ${IMG_MIB} MiB sparse, data.bin ${DATA_MIB} MiB seed ${DATA_SEED}, $(du -k "$OUT_IMG" | cut -f1) KiB used)"

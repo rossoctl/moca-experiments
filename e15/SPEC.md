@@ -1,6 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
-Version: 0.6 (draft for review), 2026-11-02
+Version: 0.7 (draft for review), 2026-11-03
+2026-11-03: memory-pressure point mem512 added (user decision after calibration).
 2026-11-02: condition 4 class-matched (user decision before sealing): per-class N=1 medians, excess p95 ≤ max(3× baseline excess p95, 50 ms); medians from a per-class N=1 probe, 20 calls per class drawn from the corpus distribution (each class alone on an idle worker), every class is probed; a class with fewer than 5 ok probe calls is undercovered and uses the global median; absolute verdict B + 250 ms (user decision 2026-11-02); per-call N=1 overhead reported per arm.
 2026-11-02: §8 condition 4 factor 2× → 3× (user decision before sealing; calibration baselines unchanged, they do not depend on the factor).
 2026-11-01: §5.3–§5.6 numbers regenerated from e15/extract after fixing a cross-session chain join
@@ -508,8 +509,21 @@ median of class medians).
 | long gaps | 7200 s | all | SBX, resident ∞, resident 300 s |
 | no host infra | 1800 s | sessions that never call a host-infrastructure tool | SBX, resident ∞, resident 300 s |
 | no chains | 1800 s | sessions with no Codex polled command | SBX, resident ∞, resident 300 s |
+| **mem512** (memory pressure) | 1800 s | all (the default point's corpus) | SBX, resident ∞ |
 
 (At `H` = 300 s no gap reaches 300 s, so resident 300 s equals resident ∞ there and is not run.)
+
+**mem512.** Calibration measured a resident VM at a median of 74 MiB, so at the default point both
+arms meet the CPU wall of 4 vCPUs before memory binds, and SBX's memory advantage cannot show. At
+mem512 every session holds a large working set. Every workspace holds `/workspace/data.bin`, 512 MiB
+of incompressible bytes generated from a fixed seed, on a 1024 MiB workspace image; the file stays
+on the image in both arms. Every call of the classes read, shell read, search, test, interpreter and
+lint first reads the whole file (`cat /workspace/data.bin >/dev/null`), then runs its command as at
+the default point. In a resident VM the guest's page cache keeps the file after the first read, so
+each resident VM holds about 512 MiB more for as long as it lives. In SBX each such call reads the
+file again in a fresh VM, whose memory is freed when the call ends. Guest RAM stays 1024 MiB. The
+point has its own command library (the default one with the read prefixed to those classes; run
+times unchanged) and its own N = 1 baseline: the default point's baseline is never used here.
 
 - The default point runs the full ladder.
 - Each other point starts its ladder two steps below that arm's default `N_max` and runs to failure.
@@ -541,6 +555,7 @@ The direction of each prediction is fixed now:
    reverses the default result.
 6. **The driver uses less than 1% of host CPU at every `N`** (A2).
 8. **The metal rig shows the largest SBX gain.** On the metal run (§13), SBX's N_max divided by resident ∞'s N_max is larger than on this nested instance. Falsified by a metal ratio no larger than the preliminary one.
+9. **At mem512, resident ∞ is bound by memory and SBX holds more sessions than resident ∞.** Falsified by resident ∞'s first failed mem512 rung not bound by memory, or by n_max(SBX) ≤ n_max(resident ∞) at mem512.
 
 Prediction 3 matters most for SBX: an idle-reclaiming resident VM is the strongest baseline, and on a
 4-vCPU host both may meet the same CPU wall. If it holds, the metal run, where CPU is not scarce, is

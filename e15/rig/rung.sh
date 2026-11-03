@@ -4,7 +4,8 @@
 #
 #   ARM    sbx | resident-inf | resident-300 | control
 #   N      session population (>= 1)
-#   POINT  default | short | long | no-infra | no-chains | smoke   (corpus /srv/e15/corpora/POINT)
+#   POINT  default | short | long | no-infra | no-chains | smoke | mem512   (points.sh: corpus
+#          /srv/e15/corpora/<its corpus>, library, workspace template, image size)
 #
 # Environment (defaults are SPEC §10.2's):
 #   E15_WARMUP_S 600   E15_WINDOW_S 900   E15_SPREAD_S 60   E15_GRACE_S 300   E15_SEED 1
@@ -36,6 +37,8 @@ E15_PROG=rung.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
+# shellcheck source=points.sh
+. "$HERE/points.sh"
 
 usage() {
   echo "usage: rung.sh ARM N POINT   (ARM: ${E15_ARMS[*]})" >&2
@@ -53,11 +56,11 @@ e15_is_arm "$ARM" || {
   echo "rung.sh: N must be a positive integer, got '$N'" >&2
   usage
 }
-arms=$(e15_point_arms "$POINT") || {
+e15_point "$POINT" || {
   echo "rung.sh: unknown POINT '$POINT'" >&2
   usage
 }
-case " $arms " in *" $ARM "*) ;; *)
+case " $E15_P_ARMS " in *" $ARM "*) ;; *)
   echo "rung.sh: POINT $POINT does not run ARM $ARM (SPEC §10.3)" >&2
   exit 2
   ;;
@@ -75,7 +78,7 @@ SPREAD=${E15_SPREAD_S:-60}
 GRACE=${E15_GRACE_S:-300}
 SEED=${E15_SEED:-1}
 TAG=${E15_TAG:-}
-CORPUS_DIR=$E15_CORPORA/$POINT
+CORPUS_DIR=$E15_CORPORA/$E15_P_CORPUS
 CORPUS=$CORPUS_DIR/corpus.jsonl
 # E15_CORPUS_OVERRIDE: a probe corpus.jsonl (classprobe.sh); its directory holds the matching
 # corpus-report.json. E15_START_ZERO=1 makes every session start at call 0 (driver --start-at-zero).
@@ -86,7 +89,8 @@ fi
 start_flag=()
 [ "${E15_START_ZERO:-0}" = 1 ] && start_flag+=(--start-at-zero)
 [ -n "${E15_MAX_SESSIONS:-}" ] && start_flag+=(--max-sessions "$E15_MAX_SESSIONS")
-LIBRARY=$E15_SRC/commands/library.json
+LIBRARY=$E15_P_LIBRARY
+TEMPLATE=$E15_P_TEMPLATE
 DRIVER=$E15_BIN/e15-driver
 [ -f "$CORPUS" ] || die "no corpus $CORPUS"
 [ -f "$LIBRARY" ] || die "no library $LIBRARY"
@@ -97,6 +101,8 @@ DRIVER=$E15_BIN/e15-driver
 # (per-class medians from the class probe). It is this point's, or -- only when this point has no
 # pooled runs of its own -- the default point's. A baseline.json measured with another library or
 # driver binary (or, for this point's own, another corpus) is stale: the rung dies with the reason.
+# A point with its own library (mem512) never falls back to the default point's baseline (and the
+# library hash would refuse it anyway): it needs its own (baseline.sh mem512 ARM).
 # A rung without a baseline is a rig error, not a rung that "holds" with condition 4 unevaluated.
 # The control arm (null responder) is exempt at every N: it checks A2 and transport only.
 baseline_path=null
@@ -110,7 +116,10 @@ elif [ "$N" != 1 ]; then
   corpus_sha=$(sha_of "$CORPUS")
   cand="$E15_RUNS/$POINT/$ARM/N1/baseline.json"
   want_corpus=$corpus_sha
-  if [ ! -f "$cand" ] && [ "$POINT" != default ] && [ -z "$(compgen -G "$E15_RUNS/$POINT/$ARM/N1-s*" || true)" ]; then
+  # A point with its own library (mem512) has no fallback: the default point's baseline was
+  # measured with another library, so it is skipped and the rung needs this point's own.
+  if [ ! -f "$cand" ] && [ "$POINT" != default ] && [ "$LIBRARY" = "$E15_SRC/commands/library.json" ] &&
+    [ -z "$(compgen -G "$E15_RUNS/$POINT/$ARM/N1-s*" || true)" ]; then
     cand="$E15_RUNS/default/$ARM/N1/baseline.json"
     want_corpus="" # the default point's baseline is a different corpus on purpose
   fi
@@ -132,7 +141,7 @@ for k in ("class_medians", "global_median_ms", "excess_p95_ms"):
   baseline_src=$cand
 fi
 # end baseline resolution
-[ -f "$E15_TEMPLATE" ] || die "no workspace template $E15_TEMPLATE (run setup.sh)"
+[ -f "$TEMPLATE" ] || die "no workspace template $TEMPLATE for point $POINT (run setup.sh)"
 if [ "$ARM" != control ]; then
   unit_active "$E15_UNIT_RELAY" || die "$E15_UNIT_RELAY is not running (run setup.sh)"
 fi
@@ -175,7 +184,7 @@ sudo -n bash -c '
       cp --reflink=always "$tpl" "$d/workspace.img"
       chmod 0600 "$d/workspace.img"
     done
-  done' _ "$E15_WORKSPACES" "$E15_TEMPLATE" "$RUN_ID" "$N" "$K"
+  done' _ "$E15_WORKSPACES" "$TEMPLATE" "$RUN_ID" "$N" "$K"
 
 # OOM kills anywhere in e15.slice over the rung (SPEC §7.2: an OOM kill fails the rung).
 oom_count() { awk '$1=="oom_kill"{print $2; f=1} END{if(!f) print 0}' "$E15_CG/memory.events" 2>/dev/null || echo 0; }
@@ -186,7 +195,7 @@ if [ "$ARM" = control ]; then
   start_null "$DIR"
   TARGET=127.0.0.1:$E15_PORT_NULL
 else
-  start_worker "$ARM" "$DIR"
+  start_worker "$ARM" "$DIR" "$E15_P_IMAGE_MB"
   TARGET=127.0.0.1:$E15_PORT_EXEC
 fi
 
@@ -325,7 +334,11 @@ p = {
     "corpus": "$CORPUS", "corpus_sha256": sha("$CORPUS"), "H_s": report.get("H_s"),
     "corpus_exclude": report.get("exclude"), "corpus_mean_span_min": report["table"]["mean_span_min"],
     "library_sha256": sha("$LIBRARY"),
-    "template_sha256": readf("$E15_STATE/template"),
+    "template_sha256": readf("$E15_STATE/$E15_P_TEMPLATE_STAMP"),
+    "template": "$TEMPLATE", "workspace_image_mb": $E15_P_IMAGE_MB,
+    "dataset_mib": $E15_P_DATASET_MIB, "dataset_seed": $E15_P_DATASET_SEED,
+    "scan_classes": [c for c in "$E15_P_SCAN_CLASSES".split(",") if c], "scan_cmd": "$E15_P_SCAN_CMD",
+    "library": "$LIBRARY",
     "moca_commit": "$E15_MOCA_PIN",
     "moca_experiments_commit": readf("$commit_file"),
     "resident_patch_sha256": sha("$E15_SRC/resident/resident.patch") if arm.startswith("resident") else None,

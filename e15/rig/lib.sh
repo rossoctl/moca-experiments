@@ -69,17 +69,7 @@ E15_ARMS=(sbx resident-inf resident-300 control)
 E15_LADDER=(1 8 16 24 32 40 48 56 64 80 96 128)
 E15_FLOOR_MB=1536
 
-# Points (SPEC §10.3): corpus directory under $E15_ROOT/corpora and the arms each point runs.
-# "smoke" is the bring-up point: a dense subset of the default corpus, every arm.
-e15_point_arms() {
-  case "$1" in
-  default) echo "sbx resident-inf resident-300 control" ;;
-  short) echo "sbx resident-inf" ;;
-  long | no-infra | no-chains) echo "sbx resident-inf resident-300" ;;
-  smoke) echo "sbx resident-inf resident-300 control" ;;
-  *) return 1 ;;
-  esac
-}
+# Points (SPEC §10.3): points.sh (sourced after this file).
 
 e15_is_arm() {
   local a
@@ -178,6 +168,23 @@ m_change() { printf -- '- %s %s | UNDO: %s\n' "$(utc)" "$1" "$2" >>"$E15_MANIFES
 m_purge() { printf -- '- %s %s | PURGE: %s\n' "$(utc)" "$1" "$2" >>"$E15_MANIFEST"; }
 # m_has TEXT: the manifest already records TEXT (used to keep PURGE lines unique).
 m_has() { [ -f "$E15_MANIFEST" ] && grep -qF -- "$1" "$E15_MANIFEST"; }
+# m_cycle_has TEXT: a line after the manifest's last "## Teardown" header holds TEXT.
+m_cycle_has() {
+  [ -f "$E15_MANIFEST" ] || return 1
+  local last
+  last=$(grep -n '^## Teardown' "$E15_MANIFEST" | tail -1 | cut -d: -f1)
+  tail -n +"$((${last:-0} + 1))" "$E15_MANIFEST" | grep -qF -- "$1"
+}
+# m_prestate STATE: record the host's pre-setup state (teardown.sh verifies against the last
+# PRESTATE line) -- once per cycle. A setup run while E15 is already up would otherwise record
+# E15's own stops (microvm-worker inactive, bench containers stopped) as the state to restore.
+m_prestate() {
+  if m_cycle_has " PRESTATE: "; then
+    m_note "PRESTATE kept: this cycle's first setup recorded it (now: $1)"
+  else
+    m_note "PRESTATE: $1"
+  fi
+}
 
 # --- small helpers ---------------------------------------------------------------------------
 
@@ -270,9 +277,10 @@ stop_rung_units() {
   kill_vm_cgroups
 }
 
-# worker_env ARM OUT: write the worker's non-secret environment for ARM (SPEC §7.1-§7.2).
+# worker_env ARM OUT [IMAGE_MB]: write the worker's non-secret environment for ARM (SPEC §7.1-§7.2).
+# IMAGE_MB is the point's workspace image size (points.sh E15_P_IMAGE_MB; default 256).
 worker_env() {
-  local arm=$1 out=$2 depth
+  local arm=$1 out=$2 image_mb=${3:-256} depth
   case "$arm" in
   sbx) depth=2 ;;
   resident-inf | resident-300) depth=0 ;;
@@ -296,7 +304,7 @@ worker_env() {
     echo "SH_MAX_RUNS=512"
     echo "SH_MAX_COMMITTED_MB=1048576"
     echo "SH_HOST_MEM_FLOOR_MB=$E15_FLOOR_MB"
-    echo "SH_WORKSPACE_IMAGE_MB=256"
+    echo "SH_WORKSPACE_IMAGE_MB=$image_mb"
     echo "SH_WORKSPACE_IDLE=24h"
     echo "SH_DIAG_STATS_ADDR=127.0.0.1:$E15_PORT_STATS"
     echo "SH_DIAG_PHASES=1"
@@ -316,15 +324,15 @@ worker_bin() {
   esac
 }
 
-# start_worker ARM DIR: the arm's worker as transient e15-worker.service in e15-vms.slice, its
+# start_worker ARM DIR [IMAGE_MB]: the arm's worker as transient e15-worker.service in e15-vms.slice, its
 # stdout+stderr to DIR/worker.log, its settings in DIR/worker.env. Waits until it has attached.
 start_worker() {
-  local arm=$1 dir=$2 bin
+  local arm=$1 dir=$2 image_mb=${3:-256} bin
   bin=$(worker_bin "$arm")
   [ -x "$bin" ] || die "no worker binary $bin (run setup.sh)"
   unit_active "$E15_UNIT_WORKER" && die "$E15_UNIT_WORKER is already running"
   refuse_ports "$E15_PORT_STATS"
-  worker_env "$arm" "$dir/worker.env"
+  worker_env "$arm" "$dir/worker.env" "$image_mb"
   : >"$dir/worker.log"
   sctl start "$E15_VM_SLICE"
   sudo -n systemd-run --quiet --unit="$E15_UNIT_WORKER" --slice="$E15_VM_SLICE" \
