@@ -14,7 +14,10 @@
 # worker or bench containers to verify. A plain teardown stops E15's services and removes its unit
 # files; --purge then also undoes bootstrap.sh (the kvm group membership) and removes /srv/e15
 # (toolchain, Firecracker, podman storage, every artifact), leaving the OS as found apart from the
-# manifest's LEFTOVER lines (apt packages E15 installed, kept), which it lists at the end.
+# manifest's LEFTOVER lines (apt packages E15 installed, kept), which it lists at the end. When
+# /srv/e15 is the data volume's mount point its contents go, then bootstrap's PURGE lines umount
+# it, drop its fstab line and remove the mount point; the volume itself is never wiped. A mount
+# with no such lines (mounted by the operator) is left as an empty mount point, and verify accepts it.
 set -uo pipefail
 E15_PROG=teardown.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -127,14 +130,22 @@ if [ "${E15_TEARDOWN_VERIFY:-1}" = 1 ]; then
         ok=0
       fi
     done
+    root_note=", $E15_ROOT removed"
     if [ "$purge" = 1 ] && [ -e "$E15_ROOT" ]; then
-      log "VERIFY: $E15_ROOT still present after --purge"
-      ok=0
+      # The data volume's mount point (bootstrap.sh E15_DATA_DEV) is emptied, not removed; its
+      # umount and fstab line are their own PURGE lines (absent when the operator mounted it).
+      if mountpoint -q "$E15_ROOT" && [ -z "$(find "$E15_ROOT" -mindepth 1 -maxdepth 1 2>/dev/null | head -1)" ]; then
+        root_note=", $E15_ROOT emptied (still a mount point: no recorded umount)"
+        log "teardown: $E15_ROOT is an empty mount point, kept (umount it and drop its fstab line by hand if wanted)"
+      else
+        log "VERIFY: $E15_ROOT still present after --purge"
+        ok=0
+      fi
     fi
   fi
   if [ "$ok" = 1 ] && [ "$E15_HOST_PROFILE" = fresh-metal ]; then
     printf -- '- %s verified (fresh-metal): E15 units, unit files, container and ports gone%s\n' "$(utc)" \
-      "$([ "$purge" = 1 ] && echo ", $E15_ROOT removed")" >>"$E15_MANIFEST"
+      "$([ "$purge" = 1 ] && echo "$root_note")" >>"$E15_MANIFEST"
     log "teardown: verified"
   elif [ "$ok" = 1 ]; then
     printf -- '- %s verified: %s %s, bench as before setup (%s), E15 units/ports gone\n' "$(utc)" \

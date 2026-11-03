@@ -59,14 +59,16 @@ if [ -n "$_e15_rec_profile" ] && [ "$_e15_rec_profile" != "$E15_HOST_PROFILE" ];
 fi
 # shellcheck source=pins.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pins.sh"
-# rig.test.sh only: fixture pins (its own tarballs' checksums), honoured only under its named
-# scratch root (*/e15-rig-test.*, never /srv/e15 even if E15_TEST_ROOT names it).
+# rig.test.sh only: fixture pins (its own tarballs' checksums) and a scratch fstab, honoured only
+# under its named scratch root (*/e15-rig-test.*, never /srv/e15 even if E15_TEST_ROOT names it).
+E15_FSTAB=/etc/fstab
 case "$E15_ROOT" in
 */e15-rig-test.*)
   if [ -n "${E15_TEST_PINS:-}" ] && [ "${E15_TEST_ROOT:-}" = "$E15_ROOT" ]; then
     # shellcheck disable=SC1090
     . "$E15_TEST_PINS"
   fi
+  [ "${E15_TEST_ROOT:-}" = "$E15_ROOT" ] && E15_FSTAB=${E15_TEST_FSTAB:-/etc/fstab}
   ;;
 esac
 E15_SHARED=/opt/serverless-harness
@@ -391,6 +393,20 @@ probe_reflink() {
   cp --reflink=always "$d/.reflink-probe.src" "$d/.reflink-probe.dst" 2>/dev/null && r=reflink
   rm -f "$d/.reflink-probe.src" "$d/.reflink-probe.dst"
   echo "$r"
+}
+
+# e15_xfs_reflink MOUNTPOINT: the XFS filesystem mounted there has reflink=1 (xfs_info).
+e15_xfs_reflink() { sudo -n xfs_info "$1" 2>/dev/null | grep -q 'reflink=1'; }
+
+# e15_root_purge_cmd: the PURGE command that removes E15's files. aws-prelim: rm -rf of the root,
+# as before. fresh-metal: when the root is a mount point (the E15 data volume), its contents only
+# -- the mount and its fstab line are bootstrap.sh's own PURGE lines, replayed after this one.
+e15_root_purge_cmd() {
+  if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+    printf '%s\n' "sudo -n bash -c 'if mountpoint -q \"\$1\"; then find \"\$1\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +; else rm -rf \"\$1\"; fi' _ $E15_ROOT"
+  else
+    printf '%s\n' "sudo -n rm -rf $E15_ROOT"
+  fi
 }
 
 # workspace_copy_mode: the state setup.sh recorded (reflink | sparse); reflink when none (the

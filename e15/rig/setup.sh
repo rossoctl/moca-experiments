@@ -133,8 +133,10 @@ for d in "$E15_BIN" "$E15_SECRETS" "$E15_STATE" "$E15_LOGS" "$E15_RUNS" "$E15_WO
     sudo -n chown "$(id -un):$(id -gn)" "$d"
   fi
 done
-m_has "PURGE: sudo -n rm -rf $E15_ROOT" ||
-  m_purge "created $E15_ROOT (all E15 files)" "sudo -n rm -rf $E15_ROOT"
+# fresh-metal: the root may be the data volume's mount point; its contents go, not the mount.
+purge_root=$(e15_root_purge_cmd)
+m_has "PURGE: $purge_root" ||
+  m_purge "created $E15_ROOT (all E15 files)" "$purge_root"
 chmod 0700 "$E15_SECRETS"
 # fresh-metal: the profile is recorded (bootstrap.sh did already); lib.sh then defaults to it and
 # refuses another (rung, teardown). aws-prelim records nothing: it is the default.

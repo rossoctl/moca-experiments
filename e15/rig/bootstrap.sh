@@ -14,6 +14,11 @@
 #      cloud-init is done and with a 10-minute dpkg lock timeout. The exact packages apt added
 #      (dpkg before/after, recorded even when the install fails) and any unit they enabled are
 #      kept by teardown and listed as LEFTOVER with their undo (apt-get purge of that list)
+#   1b. optional, E15_DATA_DEV=/dev/<disk> (SPEC §13): the E15 data volume. A blank disk is
+#      formatted XFS (mkfs.xfs -m reflink=1) and mounted at /srv/e15, the WHOLE E15 root, with
+#      an fstab line (UUID, nofail); a staged tree already in /srv/e15 is moved onto it first.
+#      A disk with any filesystem or partition table is refused, unless it is already XFS
+#      reflink=1 mounted at /srv/e15. PURGE: umount, the fstab line removed; never wiped.
 #   2. /srv/e15 tree; podman storage under /srv/e15/containers (storage.conf)
 #   3. Go into /srv/e15/go-toolchain, Node into /srv/e15/node, pnpm via corepack (COREPACK_HOME
 #      /srv/e15/corepack, shim in /srv/e15/bin), Firecracker + jailer and grpcurl into /srv/e15/bin;
@@ -23,7 +28,7 @@
 # Files under /srv/e15 go with its PURGE line (teardown.sh --purge).
 #
 # Test hooks (rig.test.sh): E15_FETCH (downloader), E15_OS_RELEASE, E15_KVM_DEV; under a test root
-# only, E15_TEST_PINS (lib.sh).
+# only, E15_TEST_PINS and E15_TEST_FSTAB (lib.sh).
 set -euo pipefail
 E15_PROG=bootstrap.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -111,13 +116,90 @@ if [ ${#missing[@]} -gt 0 ]; then
   for p in "${missing[@]}"; do e15_pkg_installed "$p" || die "apt reported success but $p is not installed"; done
 fi
 
+# --- 1b. the E15 data volume (E15_DATA_DEV, optional): XFS reflink=1 at /srv/e15 ---------------
+# moca's worker hardlinks the snapshot and the workspace image into the jail (one device for
+# snapshots/, workspaces/, jail/), and rung.sh reflinks the template into workspaces/ (one
+# filesystem): so the volume holds the WHOLE root, not workspaces/ alone. Runs before anything is
+# written under /srv/e15. setup.sh checks the layout (e15_storage_check) whether or not this ran.
+# Entries the operator stages before bootstrap (setup.sh's inputs); anything else is E15's own.
+E15_STAGED=(src corpora wheels project-src)
+if [ -n "${E15_DATA_DEV:-}" ]; then
+  # canon PATH: PATH with symlinks resolved (a /dev/disk/by-id name), else PATH itself.
+  canon() {
+    local r
+    r=$(readlink -f "$1" 2>/dev/null) || r=""
+    printf '%s\n' "${r:-$1}"
+  }
+  dev=$(canon "$E15_DATA_DEV")
+  [ "$(lsblk -dno TYPE "$dev" 2>/dev/null)" = disk ] || die "E15_DATA_DEV=$E15_DATA_DEV is not a whole disk (lsblk TYPE disk)"
+  if mountpoint -q "$E15_ROOT"; then
+    # Already mounted at the root: accepted only as the volume this step would have made.
+    src=$(findmnt -no SOURCE --mountpoint "$E15_ROOT" 2>/dev/null || true)
+    [ -z "$src" ] || src=$(canon "$src")
+    fst=$(findmnt -no FSTYPE --mountpoint "$E15_ROOT" 2>/dev/null || true)
+    [ "$src" = "$dev" ] || die "$E15_ROOT is a mount point of ${src:-unknown}, not $dev"
+    { [ "$fst" = xfs ] && e15_xfs_reflink "$E15_ROOT"; } ||
+      die "$dev is mounted at $E15_ROOT but is not XFS with reflink=1 ($fst); refusing to touch it"
+    m_has "data volume $dev at $E15_ROOT" || m_has "mounted $dev (UUID=" ||
+      b_note "data volume $dev at $E15_ROOT: already XFS reflink=1 and mounted (by the operator; nothing changed, no undo)"
+  else
+    sig=$(sudo -n blkid -p -o export "$dev" 2>/dev/null | grep -E '^(TYPE|PTTYPE)=' | tr '\n' ' ' || true)
+    [ -z "$sig" ] || die "$dev is not blank (${sig% }); refusing to format it. Only an XFS reflink=1 filesystem already mounted at $E15_ROOT is accepted"
+    [ "$(lsblk -no NAME "$dev" 2>/dev/null | grep -c .)" -le 1 ] || die "$dev has partitions; refusing to format it"
+    where=$(findmnt -rno TARGET -S "$dev" 2>/dev/null || true)
+    [ -z "$where" ] || die "$dev is mounted at $where; refusing to format it"
+    # Nothing E15 writes may already be on the root filesystem: it would be shadowed by the mount.
+    extra=()
+    if [ -d "$E15_ROOT" ]; then
+      while IFS= read -r e; do
+        case " ${E15_STAGED[*]} " in *" $e "*) ;; *) extra+=("$e") ;; esac
+      done < <(find "$E15_ROOT" -mindepth 1 -maxdepth 1 -exec basename {} \;)
+    fi
+    [ ${#extra[@]} -eq 0 ] || die "$E15_ROOT already holds E15 files on the root filesystem (${extra[*]}): teardown.sh --purge first, then bootstrap with E15_DATA_DEV"
+    log "data volume: mkfs.xfs -m reflink=1 $dev, mounted at $E15_ROOT"
+    if [ ! -d "$E15_ROOT" ]; then
+      sudo -n mkdir -p "$E15_ROOT"
+      b_purge "created the mount point $E15_ROOT" "[ ! -e $E15_ROOT ] || sudo -n rmdir $E15_ROOT"
+    else
+      b_purge "the mount point $E15_ROOT (made by the operator to stage src/)" "[ ! -e $E15_ROOT ] || sudo -n rmdir $E15_ROOT"
+    fi
+    sudo -n mkfs.xfs -q -m reflink=1 "$dev" || die "mkfs.xfs -m reflink=1 $dev failed"
+    b_note "formatted $dev XFS (mkfs.xfs -m reflink=1); never wiped by E15's undo"
+    uuid=$(sudo -n blkid -p -o value -s UUID "$dev")
+    [ -n "$uuid" ] || die "no UUID on $dev after mkfs.xfs"
+    line="UUID=$uuid $E15_ROOT xfs defaults,nofail 0 2"
+    printf '%s\n' "$line" | sudo -n tee -a "$E15_FSTAB" >/dev/null
+    # The undo drops exactly that line (grep exit 1 = no other line left; 2 = error: fstab kept).
+    b_purge "added to $E15_FSTAB: $line" \
+      "sudo -n sh -c 'grep -v \"^UUID=\$2 \" \"\$1\" >\"\$1.e15-new\"; [ \$? -le 1 ] && cat \"\$1.e15-new\" >\"\$1\" && rm -f \"\$1.e15-new\"' _ $E15_FSTAB $uuid && sudo -n systemctl daemon-reload"
+    sctl daemon-reload
+    # The staged tree moves onto the volume: mounted at a transient place, copied, then removed from
+    # the root filesystem, so nothing E15's stays hidden under the mount point.
+    if [ -n "$(find "$E15_ROOT" -mindepth 1 -maxdepth 1)" ]; then
+      tmpm=$(mktemp -d /tmp/e15-data.XXXXXX)
+      sudo -n mount -t xfs "UUID=$uuid" "$tmpm" || die "mount $dev at $tmpm failed"
+      sudo -n cp -a "$E15_ROOT/." "$tmpm/" || die "copying the staged $E15_ROOT onto $dev failed (it is still at $E15_ROOT; $dev mounted at $tmpm)"
+      sudo -n umount "$tmpm"
+      rmdir "$tmpm"
+      sudo -n find "$E15_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      b_note "moved the staged ${E15_STAGED[*]} from the root filesystem onto $dev"
+    fi
+    sudo -n mount -t xfs -o defaults "UUID=$uuid" "$E15_ROOT" || die "mount $dev at $E15_ROOT failed"
+    b_purge "mounted $dev (UUID=$uuid) at $E15_ROOT" "! mountpoint -q $E15_ROOT || sudo -n umount $E15_ROOT"
+    e15_xfs_reflink "$E15_ROOT" || die "$E15_ROOT is mounted but xfs_info shows no reflink=1"
+    sudo -n chown "$(id -un):$(id -gn)" "$E15_ROOT"
+  fi
+fi
+
 # --- 2. tree, podman storage -----------------------------------------------------------------
 # The root may already exist, made by the operator (sudo) to stage src/: it must be the login user's.
 if [ ! -d "$E15_ROOT" ] || [ ! -w "$E15_ROOT" ]; then
   sudo -n mkdir -p "$E15_ROOT"
   sudo -n chown "$(id -un):$(id -gn)" "$E15_ROOT"
 fi
-m_has "PURGE: sudo -n rm -rf $E15_ROOT" || b_purge "created $E15_ROOT (all E15 files)" "sudo -n rm -rf $E15_ROOT"
+# A root that is a mount point loses its contents, not the mount point (lib.sh e15_root_purge_cmd).
+purge_root=$(e15_root_purge_cmd)
+m_has "PURGE: $purge_root" || b_purge "created $E15_ROOT (all E15 files)" "$purge_root"
 for d in "$DL" "$E15_STATE" "$E15_BIN" "$E15_LOGS" "$(dirname "$E15_PODMAN_CONF")"; do mkdir -p "$d"; done
 if [ "$(cat "$E15_STATE/host_profile" 2>/dev/null || true)" != fresh-metal ]; then
   echo fresh-metal >"$E15_STATE/host_profile"

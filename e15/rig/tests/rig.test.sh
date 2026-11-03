@@ -996,7 +996,7 @@ SH
   check "bootstrap: records each artifact's sha256 in state/artifacts" "$(awk '{print $1}' "$BR/state/artifacts" | sort | tr '\n' ' ')" "firecracker go grpcurl node pnpm "
   check "bootstrap: go's recorded sha256 is the tarball's" "$(awk '$1=="go"{print $2}' "$BR/state/artifacts")" "$(sh_ "$FIX/go.tgz")"
   check "bootstrap: records the host profile" "$(cat "$BR/state/host_profile")" "fresh-metal"
-  check "bootstrap: PURGE of the root and podman storage" "$(grep -c "PURGE: sudo -n rm -rf $BR\$" "$TMP/boot-m.md")/$(grep -c 'PURGE: .*podman system reset' "$TMP/boot-m.md")" "1/1"
+  check "bootstrap: PURGE of the root (contents only if a mount point) and podman storage" "$(grep -c "PURGE: sudo -n bash -c 'if mountpoint -q \"\$1\"; then find \"\$1\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +; else rm -rf \"\$1\"; fi' _ $BR\$" "$TMP/boot-m.md")/$(grep -c 'PURGE: .*podman system reset' "$TMP/boot-m.md")" "1/1"
   cp "$TMP/boot-m.md" "$TMP/boot-m.1"
   : >"$TMP/fetch.log"
   : >"$TMP/apt.log"
@@ -1026,6 +1026,142 @@ SH
     "$(sed -n '/^untar_into()/,/^install_tarball go/p' "$BR/src/e15/rig/bootstrap.sh" | grep -E '^\s+(tar|install|rm|mkdir|mv) ' | grep -cvE '\|\| return 1$|&&( r=0)?$|^\s+mv "\$dir.new" "\$dir"$|^\s+rm -rf "\$t"$')" "0"
   cp "$TMP/boot-m.pre-fail" "$TMP/boot-m.md"
 
+  # --- H1: the E15 data volume (E15_DATA_DEV): XFS reflink=1 mounted at the WHOLE root ---------
+  # Fake block device /dev/e15fake, state in $DV: sig (blkid), parts, uuid, reflink, mounts
+  # ("target source fstype"), vol/ (the filesystem's contents while unmounted), mkfs.log.
+  DS="$TMP/dstub"
+  mkdir -p "$DS"
+  cat >"$DS/lsblk" <<'SH'
+#!/usr/bin/env bash
+case "$*" in *TYPE*) echo disk ;; *NAME*) echo e15fake; cat "$DV/parts" 2>/dev/null ;; esac
+SH
+  cat >"$DS/blkid" <<'SH'
+#!/usr/bin/env bash
+case "$*" in *"-s UUID"*) cat "$DV/uuid" 2>/dev/null ;; *) cat "$DV/sig" 2>/dev/null ;; esac
+exit 0
+SH
+  cat >"$DS/mkfs.xfs" <<'SH'
+#!/usr/bin/env bash
+echo "mkfs.xfs $*" >>"$DV/mkfs.log"
+printf 'TYPE=xfs\n' >"$DV/sig"; echo fake-uuid-1 >"$DV/uuid"
+case "$*" in *"-m reflink=1"*) echo 1 >"$DV/reflink" ;; esac
+SH
+  cat >"$DS/mount" <<'SH'
+#!/usr/bin/env bash
+t=${!#}; echo "$t /dev/e15fake xfs" >>"$DV/mounts"
+mkdir -p "$DV/vol"; (shopt -s dotglob nullglob; for f in "$DV/vol"/*; do mv "$f" "$t/"; done)
+SH
+  cat >"$DS/umount" <<'SH'
+#!/usr/bin/env bash
+t=$1; mkdir -p "$DV/vol"; (shopt -s dotglob nullglob; for f in "$t"/*; do mv "$f" "$DV/vol/"; done)
+grep -v "^$t " "$DV/mounts" >"$DV/mounts.new"; mv "$DV/mounts.new" "$DV/mounts"
+SH
+  cat >"$DS/mountpoint" <<'SH'
+#!/usr/bin/env bash
+grep -q "^${!#} " "$DV/mounts" 2>/dev/null
+SH
+  cat >"$DS/findmnt" <<'SH'
+#!/usr/bin/env bash
+col="" src="" mp=""
+while [ $# -gt 0 ]; do case "$1" in -S) src=$2; shift ;; --mountpoint) mp=$2; shift ;; -*o|-no|-rno) ;; *) col=$1 ;; esac; shift; done
+[ -n "$src" ] && { awk -v s="$src" '$2==s{print $1}' "$DV/mounts" 2>/dev/null; exit 0; }
+awk -v m="$mp" -v c="$col" '$1==m{print (c=="SOURCE")?$2:$3}' "$DV/mounts" 2>/dev/null
+SH
+  cat >"$DS/xfs_info" <<'SH'
+#!/usr/bin/env bash
+echo "meta-data=${1} crc=1 finobt=1, sparse=1, rmapbt=0 reflink=$(cat "$DV/reflink" 2>/dev/null || echo 0)"
+SH
+  chmod +x "$DS"/*
+  dvreset() {
+    DV=$TMP/dv.$1
+    rm -rf "$DV"
+    mkdir -p "$DV/vol"
+    : >"$DV/mounts"
+    : >"$DV/fstab"
+    printf 'LABEL=cloudimg-rootfs / ext4 discard 0 1\n' >"$DV/fstab"
+    export DV
+  }
+  dboot() { # ROOT MANIFEST [VAR=...]: bootstrap with E15_DATA_DEV from ROOT's staged copy
+    local r=$1 m=$2
+    shift 2
+    env E15_HOST_PROFILE=fresh-metal E15_ROOT="$r" E15_TEST_ROOT="$r" E15_TEST_PINS="$TMP/test-pins.sh" \
+      E15_FETCH="$TMP/fetch.sh" E15_OS_RELEASE="$TMP/os-ubuntu" E15_KVM_DEV="$TMP/kvm-dev" CP_LOG="$TMP/cp.log" \
+      E15_DATA_DEV=/dev/e15fake E15_TEST_FSTAB="$DV/fstab" E15_MANIFEST="$m" PATH="$DS:$BS:$PATH" "$@" \
+      bash "$r/src/e15/rig/bootstrap.sh" >"$TMP/dboot.out" 2>&1
+  }
+  stage() { rm -rf "$1" && mkdir -p "$1/src/e15" && cp -R "$RIG" "$1/src/e15/rig"; }
+  # a blank disk: formatted, mounted at the root before anything is written there
+  DR="$TMP/e15-rig-test.data"
+  stage "$DR"
+  dvreset blank
+  rm -f "$TMP/boot-d.md"
+  dboot "$DR" "$TMP/boot-d.md"
+  check "data volume: a blank disk bootstraps (exit 0)" "$?" "0"
+  grep -q 'bootstrap.sh:' "$TMP/dboot.out" && sed 's/^/    /' "$TMP/dboot.out" | tail -5
+  check "data volume: mkfs.xfs -m reflink=1 on the disk, once" "$(cat "$DV/mkfs.log")" "mkfs.xfs -q -m reflink=1 /dev/e15fake"
+  check "data volume: mounted at the WHOLE root (not workspaces/)" "$(cat "$DV/mounts")" "$DR /dev/e15fake xfs"
+  check "data volume: fstab line by UUID, nofail" "$(grep -c "^UUID=fake-uuid-1 $DR xfs defaults,nofail 0 2\$" "$DV/fstab")/$(grep -c . "$DV/fstab")" "1/2"
+  check "data volume: the staged tree moved onto the volume" "$([ -f "$DR/src/e15/rig/bootstrap.sh" ] && echo staged)" "staged"
+  check "data volume: everything bootstrap writes lands on the volume" "$([ -f "$DR/state/host_profile" ] && [ -x "$DR/bin/grpcurl" ] && echo on-volume)" "on-volume"
+  check "data volume: mounted before anything is written under the root (mount line before the root PURGE)" "$(awk '/mounted \/dev\/e15fake/{a=NR} /\(all E15 files\) \| PURGE/{b=NR} END{print (a && b && a<b) ? "before" : "after"}' "$TMP/boot-d.md")" "before"
+  check "data volume: PURGE lines for umount, the fstab line and the mount point; none wipes the disk" \
+    "$(grep -c 'PURGE: ! mountpoint -q .* || sudo -n umount ' "$TMP/boot-d.md")/$(grep -c "PURGE: sudo -n sh -c 'grep -v .* $DV/fstab fake-uuid-1 && sudo -n systemctl daemon-reload" "$TMP/boot-d.md")/$(grep -c 'PURGE: \[ ! -e .* \] || sudo -n rmdir ' "$TMP/boot-d.md")/$(grep -cE 'PURGE: .*(mkfs|wipefs|dd )' "$TMP/boot-d.md")" "1/1/1/0"
+  cp "$TMP/boot-d.md" "$TMP/boot-d.1"
+  : >"$TMP/fetch.log"
+  dboot "$DR" "$TMP/boot-d.md"
+  check "data volume: a second run (already XFS reflink=1 at the root) changes nothing" \
+    "$?/$(grep -c . "$DV/mkfs.log")/$(cmp -s "$TMP/boot-d.md" "$TMP/boot-d.1" && echo same)/$(grep -c . "$TMP/fetch.log")" "0/1/same/0"
+  # M3: --purge replays the root's contents removal, then umount, fstab line, mount point; verify passes
+  E15_ROOT="$DR" E15_TEST_ROOT="$DR" E15_TEST_FSTAB="$DV/fstab" E15_MANIFEST="$TMP/boot-d.md" PATH="$DS:$BS:$SPATH" \
+    bash "$RIG/teardown.sh" --purge >"$TMP/td.out" 2>&1
+  check "data volume purge: exit 0, verified" "$?/$(grep -c 'verified (fresh-metal)' "$TMP/boot-d.md")" "0/1"
+  grep -q 'VERIFY\|FAILED' "$TMP/td.out" && sed 's/^/    /' "$TMP/td.out" | grep 'VERIFY\|FAILED' | head -5
+  check "data volume purge: unmounted, fstab line gone (rest kept), mount point removed" \
+    "$(grep -c . "$DV/mounts")/$(cat "$DV/fstab")/$([ -e "$DR" ] && echo present || echo gone)" "0/LABEL=cloudimg-rootfs / ext4 discard 0 1/gone"
+  check "data volume purge: the disk is never wiped (still formatted, no second mkfs), contents removed" \
+    "$(cat "$DV/sig")/$(grep -c . "$DV/mkfs.log")/$(find "$DV/vol" -mindepth 1 | grep -c .)" "TYPE=xfs/1/0"
+  # refusals: a disk with a filesystem, a partitioned disk, E15 files already on the root fs
+  stage "$DR"
+  dvreset ext4
+  printf 'TYPE=ext4\n' >"$DV/sig"
+  dboot "$DR" "$TMP/boot-r.md"
+  check "data volume: a disk with a filesystem is refused, not formatted" "$?/$(grep -c '/dev/e15fake is not blank (TYPE=ext4); refusing to format it' "$TMP/dboot.out")/$([ -s "$DV/mkfs.log" ] && echo mkfs || echo none)" "1/1/none"
+  dvreset gpt
+  printf 'PTTYPE=gpt\n' >"$DV/sig"
+  dboot "$DR" "$TMP/boot-r.md"
+  check "data volume: a disk with a partition table is refused" "$?/$(grep -c 'not blank (PTTYPE=gpt)' "$TMP/dboot.out")/$([ -s "$DV/mkfs.log" ] && echo mkfs || echo none)" "1/1/none"
+  dvreset parts
+  echo e15fake1 >"$DV/parts"
+  dboot "$DR" "$TMP/boot-r.md"
+  check "data volume: a disk with partitions is refused" "$?/$(grep -c 'has partitions; refusing to format it' "$TMP/dboot.out")/$([ -s "$DV/mkfs.log" ] && echo mkfs || echo none)" "1/1/none"
+  dvreset e15files
+  mkdir -p "$DR/state"
+  dboot "$DR" "$TMP/boot-r.md"
+  check "data volume: E15 files already on the root filesystem are refused (would be hidden)" "$?/$(grep -c 'already holds E15 files on the root filesystem (state)' "$TMP/dboot.out")/$([ -s "$DV/mkfs.log" ] && echo mkfs || echo none)" "1/1/none"
+  rm -rf "$DR/state"
+  # mounted at the root already: accepted only as XFS reflink=1 (the operator's own mount)
+  dvreset ext4mounted
+  printf 'TYPE=ext4\n' >"$DV/sig"
+  echo "$DR /dev/e15fake ext4" >"$DV/mounts"
+  dboot "$DR" "$TMP/boot-r.md"
+  check "data volume: a non-XFS filesystem mounted at the root is refused" "$?/$(grep -c 'is mounted at .* but is not XFS with reflink=1 (ext4); refusing to touch it' "$TMP/dboot.out")" "1/1"
+  dvreset opmounted
+  printf 'TYPE=xfs\n' >"$DV/sig"; echo 1 >"$DV/reflink"
+  echo "$DR /dev/e15fake xfs" >"$DV/mounts"
+  rm -f "$TMP/boot-o.md"
+  dboot "$DR" "$TMP/boot-o.md"
+  check "data volume: the operator's XFS reflink=1 mount is accepted, untouched" "$?/$(grep -c . "$DV/mkfs.log" 2>/dev/null || echo 0)/$(grep -c 'already XFS reflink=1 and mounted (by the operator; nothing changed, no undo)' "$TMP/boot-o.md")/$(grep -c 'PURGE: .*umount' "$TMP/boot-o.md")" "0/0/1/0"
+  # M3: with no recorded umount, --purge empties the mount point and verify accepts it
+  E15_ROOT="$DR" E15_TEST_ROOT="$DR" E15_MANIFEST="$TMP/boot-o.md" PATH="$DS:$BS:$SPATH" \
+    bash "$RIG/teardown.sh" --purge >"$TMP/td.out" 2>&1
+  check "teardown --purge: a mounted root is emptied, the mount point kept, verify passes" \
+    "$?/$(find "$DR" -mindepth 1 | grep -c .)/$(grep -c "$DR /dev/e15fake xfs" "$DV/mounts")/$(grep -c 'emptied (still a mount point: no recorded umount)' "$TMP/boot-o.md")" "0/0/1/1"
+  : >"$DV/mounts"
+  mkdir -p "$DR/leftover"
+  E15_ROOT="$DR" E15_TEST_ROOT="$DR" E15_MANIFEST="$TMP/boot-o.md" PATH="$DS:$BS:$SPATH" E15_HOST_PROFILE=fresh-metal \
+    bash "$RIG/teardown.sh" --purge >"$TMP/td.out" 2>&1
+  check "teardown --purge: a root that is not a mount point is removed whole (rm -rf), verified" "$?/$([ -e "$DR" ] && echo present || echo gone)" "0/gone"
+  rm -rf "$DR"
   # a tarball that does not match its pin is refused and not installed
   printf 'E15_GRPCURL_SHA256=%064d\n' 0 >>"$TMP/test-pins.sh"
   rm -f "$BR/bin/grpcurl" "$BR/state/bootstrap-grpcurl" "$BR/downloads/grpcurl.tgz"
@@ -1150,10 +1286,11 @@ if [ -f "$RIG/teardown.sh" ]; then
   printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s"\n' "$CALLS" >"$STUB/sudo"
 fi
 
-# --- L3: E15_TEST_PINS only under a */e15-rig-test.* root ---------------------
+# --- L3: E15_TEST_PINS and E15_TEST_FSTAB only under a */e15-rig-test.* root ---------------------
 printf 'E15_GO_VERSION=evil\n' >"$TMP/evil-pins.sh"
 check "test pins: honoured under a test root" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_TEST_PINS="$TMP/evil-pins.sh" bash -c 'source "$1"; echo $E15_GO_VERSION' _ "$RIG/lib.sh")" "evil"
-check "test pins: ignored on /srv/e15 even when E15_TEST_ROOT names it" "$(E15_ROOT=/srv/e15 E15_TEST_ROOT=/srv/e15 E15_TEST_PINS="$TMP/evil-pins.sh" bash -c 'source "$1"; echo $E15_GO_VERSION' _ "$RIG/lib.sh")" "1.26.0"
+check "test pins: ignored on /srv/e15 even when E15_TEST_ROOT names it" "$(E15_ROOT=/srv/e15 E15_TEST_ROOT=/srv/e15 E15_TEST_PINS="$TMP/evil-pins.sh" E15_TEST_FSTAB="$TMP/f" bash -c 'source "$1"; echo $E15_GO_VERSION $E15_FSTAB' _ "$RIG/lib.sh")" "1.26.0 /etc/fstab"
+check "aws-prelim: the root PURGE is still rm -rf of the root" "$(E15_ROOT=/srv/e15 bash -c 'source "$1"; e15_root_purge_cmd' _ "$RIG/lib.sh")" "sudo -n rm -rf /srv/e15"
 check "aws-prelim: no missing workspace_copy state still means reflink" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; rm -f "$E15_STATE/workspace_copy"; workspace_copy_mode' _ "$RIG/lib.sh")" "reflink"
 
 # aws-prelim is unchanged where it matters: guards, PRESTATE, rootfs source, disk measurement
