@@ -1207,12 +1207,12 @@ if [ -f "$RIG/lib.sh" ]; then
   echo sparse >"$TROOT/state/workspace_copy"
   check "workspace copy: state sparse -> cp --sparse=always" "$(wcm)" "sparse --sparse=always"
   rm -f "$TROOT/state/workspace_copy"
-  check "setup.sh probes reflink and records workspace_copy (fresh-metal)" "$(grep -c 'mode=$(probe_reflink "$E15_STATE")' "$RIG/setup.sh")/$(grep -c '>"$E15_STATE/workspace_copy"' "$RIG/setup.sh")" "1/1"
+  check "setup.sh requires reflink from each template dir into workspaces, every run (fresh-metal)" "$(grep -c 'for d in "$E15_ROOT/template" "$E15_ROOT/template-mem512"; do e15_require_reflink "$E15_WORKSPACES" "$d"; done' "$RIG/setup.sh")/$(grep -c 'workspace_copy" ]' "$RIG/setup.sh")" "1/0"
   check "rung.sh copies with the recorded mode's flag" "$(grep -c 'cp "\$cpf" "\$tpl" "\$d/workspace.img"' "$RIG/rung.sh")/$(grep -c 'workspace_cp_flag "\$WS_COPY"' "$RIG/rung.sh")" "1/2"
   check "rung.sh keeps the K floor unchanged" "$(grep -c 'print(max(16, (int(math.ceil(w/s))+3)\*int(sys.argv\[3\])))' "$RIG/rung.sh")" "1"
   de() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; shift; workspace_disk_estimate "$@"' _ "$RIG/lib.sh" "$@"; }
   check "disk estimate: 128 x 16 images x 256 MiB worst case" "$(de 128 16 256 15000 104857600)" \
-    "N=128: 2048 images (K=16) x 256 MiB = 512.0 GiB worst case; 29.3 GiB at creation; 100.0 GiB free"
+    "N=128: 2048 images (K=16) x 256 MiB = 512.0 GiB worst case; 29.3 GiB estimated, 32.2 GiB with the 10% margin; 100.0 GiB free"
   check "disk estimate: creation cost above free space fails" "$(de 128 16 1024 600000 104857600 >/dev/null; echo $?)" "1"
   # rung.sh in sparse mode: prints the estimate and refuses a rung that cannot fit (before any unit)
   printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
@@ -1264,7 +1264,7 @@ print("yes" if len(starts) == 4 and max(starts) < min(ends) else "no")' "$TMP/pd
   PATH="$PDS:$PATH" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; measure_disk_read_parallel "$2" 4 2048' _ "$RIG/lib.sh" "$TMP/pprobe" >/dev/null 2>&1
   check "parallel disk read: a failed reader fails, files still removed" "$?/$(find "$TMP" -maxdepth 1 -name 'pprobe*' | grep -c .)" "1/0"
   check "setup.sh fresh-metal: max = parallel, single kept for reference" \
-    "$(grep -c 'par=$(measure_disk_read_parallel "$E15_STATE/.disk-read-probe-p" 4 2048)' "$RIG/setup.sh")/$(grep -c 'printf .%s\\n. "$par" >"$E15_STATE/disk_read_max_mbs"' "$RIG/setup.sh")/$(grep -c 'printf .%s\\n. "$one" >"$E15_STATE/disk_read_single_mbs"' "$RIG/setup.sh")" "1/1/1"
+    "$(grep -c 'par=$(measure_disk_read_parallel "$E15_WORKSPACES/.disk-read-probe-p" 4 2048)' "$RIG/setup.sh")/$(grep -c 'printf .%s\\n. "$par" >"$E15_STATE/disk_read_max_mbs"' "$RIG/setup.sh")/$(grep -c 'printf .%s\\n. "$one" >"$E15_STATE/disk_read_single_mbs"' "$RIG/setup.sh")" "1/1/1"
   check "setup.sh: the parallel measurement is fresh-metal only" "$(grep -B3 'par=$(measure_disk_read_parallel' "$RIG/setup.sh" | grep -c '^if \[ "\$METAL" = 1 \] && \[ ! -s "\$E15_STATE/disk_read_max_mbs" \]; then$')" "1"
   check "rung.sh records disk_read_single_mbs too" "$(grep -c '"disk_read_single_mbs": ' "$RIG/rung.sh")" "1"
 fi
@@ -1284,6 +1284,103 @@ if [ -f "$RIG/teardown.sh" ]; then
   rm -f "$TROOT/state/host_profile"
   printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
   printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s"\n' "$CALLS" >"$STUB/sudo"
+fi
+
+# --- H1/H2: fresh-metal storage preflight and required reflink (stubbed stat/findmnt/xfs_info/cp) --
+if [ -f "$RIG/lib.sh" ]; then
+  SS="$TMP/sstub"
+  mkdir -p "$SS"
+  # stat -c %d DIR: the device from $SDEV ("DIR DEV" lines; longest matching prefix), default 100
+  cat >"$SS/stat" <<'SH'
+#!/usr/bin/env bash
+d=${!#}
+awk -v d="$d" 'index(d, $1) == 1 && length($1) > l {l = length($1); v = $2} END {print (v == "" ? 100 : v)}' "$SDEV"
+SH
+  printf '#!/usr/bin/env bash\ncase "$*" in *FSTYPE*) echo "$SFS" ;; *TARGET*) echo /srv/e15 ;; *SOURCE*) echo /dev/nvme1n1 ;; esac\n' >"$SS/findmnt"
+  printf '#!/usr/bin/env bash\necho "meta-data=$1 reflink=$SREFLINK"\n' >"$SS/xfs_info"
+  printf '#!/usr/bin/env bash\n[ "$1" = -n ] && shift\nexec "$@"\n' >"$SS/sudo"
+  chmod +x "$SS"/*
+  SR="$TMP/e15-rig-test.store"
+  mkdir -p "$SR"/{snapshots,workspaces,jail,template,template-mem512,state}
+  sc() { # storage check over the five dirs setup.sh checks; prints pass|refused, message in $TMP/sc.out
+    (PATH="$SS:$PATH" E15_HOST_PROFILE=fresh-metal E15_ROOT="$SR" E15_TEST_ROOT="$SR" E15_MANIFEST="$TMP/m.md" \
+      bash -c 'source "$1"; e15_storage_check "$E15_SNAPDIR" "$E15_WORKSPACES" "$E15_JAIL" "$E15_ROOT/template" "$E15_ROOT/template-mem512"' _ "$RIG/lib.sh" \
+      >"$TMP/sc.out" 2>&1) && echo pass || echo refused
+  }
+  export SDEV="$TMP/sdev" SFS=xfs SREFLINK=1
+  printf '%s 100\n' "$SR" >"$SDEV"
+  check "storage: one device, XFS reflink=1 -> passes" "$(sc)/$(grep -c 'on one device, XFS reflink=1 at /srv/e15 (/dev/nvme1n1)' "$TMP/sc.out")" "pass/1"
+  # the review's split layout: only workspaces/ on the second volume
+  printf '%s 100\n%s/workspaces 200\n' "$SR" "$SR" >"$SDEV"
+  check "storage: workspaces/ alone on another device -> refused, naming each dir's device" \
+    "$(sc)/$(grep -c "are not on one filesystem device" "$TMP/sc.out")/$(grep -c "$SR/workspaces=200" "$TMP/sc.out")/$(grep -c "$SR/snapshots=100" "$TMP/sc.out")" "refused/1/1/1"
+  printf '%s 100\n%s/template-mem512 300\n' "$SR" "$SR" >"$SDEV"
+  check "storage: a template on another device -> refused" "$(sc)" "refused"
+  printf '%s 100\n' "$SR" >"$SDEV"
+  check "storage: one device but ext4 -> refused" "$(SFS=ext4 sc)/$(grep -c 'is on ext4 (/srv/e15), not XFS' "$TMP/sc.out")" "refused/1"
+  check "storage: XFS without reflink=1 -> refused" "$(SREFLINK=0 sc)/$(grep -c 'has no reflink=1 (mkfs.xfs -m reflink=1)' "$TMP/sc.out")" "refused/1"
+  # e15_require_reflink: probes from the template dir into workspaces/, every call; no fallback
+  CPR="$TMP/cprstub"
+  mkdir -p "$CPR"
+  printf '#!/usr/bin/env bash\necho "cp $*" >>"%s"\n[ "${CP_REFLINK:-1}" = 1 ] || { echo "cp: failed to clone: Invalid cross-device link" >&2; exit 1; }\nargs=(); for a; do [ "$a" = --reflink=always ] || args+=("$a"); done\nexec /bin/cp "${args[@]}"\n' "$TMP/cpr.log" >"$CPR/cp"
+  chmod +x "$CPR/cp"
+  rr() { (PATH="$CPR:$PATH" E15_HOST_PROFILE=fresh-metal E15_ROOT="$SR" E15_TEST_ROOT="$SR" E15_MANIFEST="$TMP/m.md" \
+    bash -c 'source "$1"; e15_require_reflink "$E15_WORKSPACES" "$E15_ROOT/template"' _ "$RIG/lib.sh" >"$TMP/rr.out" 2>&1) && echo pass || echo refused; }
+  : >"$TMP/cpr.log"
+  check "reflink required: works -> pass, state reflink" "$(rr)/$(cat "$SR/state/workspace_copy")" "pass/reflink"
+  check "reflink required: the probe copies template dir -> workspaces dir (not state/)" \
+    "$(grep -c "cp --reflink=always $SR/template/.reflink-probe.src $SR/workspaces/.reflink-probe.dst" "$TMP/cpr.log")" "1"
+  check "reflink required: probe files removed" "$(find "$SR/template" "$SR/workspaces" -name '.reflink-probe*' | grep -c .)" "0"
+  : >"$TMP/cpr.log"
+  check "reflink required: re-probed on every call (a recorded reflink is not trusted)" "$(rr)/$(grep -c . "$TMP/cpr.log")" "pass/1"
+  check "reflink required: fails -> refused, no sparse fallback, state removed" \
+    "$(CP_REFLINK=0 rr)/$(grep -c 'reflink is required (no sparse fallback)' "$TMP/rr.out")/$([ -e "$SR/state/workspace_copy" ] && echo kept || echo removed)" "refused/1/removed"
+  check "setup.sh: storage preflight before any build (fresh-metal)" \
+    "$(awk '/storage=\$\(e15_storage_check "\$E15_SNAPDIR" "\$E15_WORKSPACES" "\$E15_JAIL" "\$E15_ROOT\/template" "\$E15_ROOT\/template-mem512"\)/{a=NR} /^# --- 5\. moca/{b=NR} END{print (a && a<b) ? "before" : "missing"}' "$RIG/setup.sh")" "before"
+  check "setup.sh: no sparse fallback left on fresh-metal" "$(grep -c 'probe_reflink "\$E15_STATE"' "$RIG/setup.sh")/$(grep -c 'workspace_copy=sparse' "$RIG/setup.sh")" "0/0"
+  # M1: measured in workspaces/, re-measured when the workspaces device changes
+  check "setup.sh: disk read measured in workspaces/ (fresh-metal)" "$(grep -c 'measure_disk_read "\$E15_WORKSPACES/.disk-read-probe-1" 2048' "$RIG/setup.sh")/$(grep -c 'ws_src=$(findmnt -no SOURCE -T "\$E15_WORKSPACES"' "$RIG/setup.sh")/$(grep -c '>"\$E15_STATE/disk_read_source"' "$RIG/setup.sh")" "1/1/1"
+  check "setup.sh: aws-prelim's measurement is unchanged" "$(grep -c 'mbs=$(measure_disk_read "\$E15_STATE/.disk-read-probe" 2048)' "$RIG/setup.sh")" "1"
+  check "setup.sh: free space from the workspaces filesystem" "$(grep -c 'free_kb=$(df -Pk "\$E15_WORKSPACES"' "$RIG/setup.sh")/$(grep -c 'df -Pk "\$E15_ROOT"' "$RIG/setup.sh")" "1/0"
+  rm -rf "$SR"
+fi
+
+# --- H2: reflink disk estimate (per-session delta, 10% margin) and rung.sh's refusal -------------
+if [ -f "$RIG/lib.sh" ]; then
+  de() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; shift; workspace_disk_estimate "$@"' _ "$RIG/lib.sh" "$@"; }
+  # 100 copies x 1 GiB = 100 GiB; +10% = 110 GiB
+  check "disk estimate: fits only with the margin -> 0" "$(de 10 10 1024 1048576 115343360 >/dev/null; echo $?)" "0"
+  check "disk estimate: fits without the margin, not with it -> refused" "$(de 10 10 1024 1048576 110100480 >/dev/null; echo $?)" "1"
+  wd() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; shift; workspace_delta_kb "$@"' _ "$RIG/lib.sh" "$@"; }
+  head -c 3145728 /dev/urandom >"$TMP/tpl3m.img"
+  check "workspace delta: the template's allocated size minus data.bin" "$(wd "$TMP/tpl3m.img" 1)" "$(($(du -k "$TMP/tpl3m.img" | cut -f1) - 1024))"
+  check "workspace delta: floor 1 MiB; E15_WS_DELTA_MB overrides" "$(wd "$TMP/tpl3m.img" 512)/$(E15_WS_DELTA_MB=40 wd "$TMP/tpl3m.img" 0)" "1024/40960"
+  # rung.sh on fresh-metal: refuses without a reflink state, and when the N*K deltas + 10% do not fit
+  printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && exit 0\nexit 0\n' >"$STUB/systemctl"
+  printf '#!/usr/bin/env bash\necho "Filesystem 1024-blocks Used Available Capacity Mounted"\necho "/dev/x 100 1 ${DF_AVAIL:-10} 1%% /"\n' >"$STUB/df"
+  chmod +x "$STUB/df"
+  mkdir -p "$TROOT/corpora/default" "$TROOT/runs" "$TROOT/workspaces" "$TROOT/jail" "$TROOT/state" "$TROOT/template"
+  printf '{"table": {"mean_span_min": 30}}\n' >"$TROOT/corpora/default/corpus-report.json"
+  head -c 4096 /dev/zero >"$TROOT/template/workspace.img"
+  echo fresh-metal >"$TROOT/state/host_profile"
+  rm -f "$TROOT/state/workspace_copy"
+  mrung() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" env "$@" bash "$RIG/rung.sh" sbx 1 default >"$TMP/r.out" 2>&1; }
+  : >"$CALLS"
+  mrung
+  check "rung.sh fresh-metal: no reflink state -> refused (no sparse default)" "$?/$(grep -c 'state/workspace_copy is not reflink (run setup.sh; reflink is required)' "$TMP/r.out")" "1/1"
+  echo sparse >"$TROOT/state/workspace_copy"
+  mrung
+  check "rung.sh fresh-metal: a sparse state -> refused" "$?/$(grep -c 'is not reflink' "$TMP/r.out")" "1/1"
+  echo reflink >"$TROOT/state/workspace_copy"
+  # 16 copies x 1 MiB delta (floor) = 16384 kB; +10% = 18022 kB
+  mrung DF_AVAIL=17000
+  check "rung.sh fresh-metal: N*K deltas + 10% above free space -> refused before any unit" \
+    "$?/$(grep -c 'not enough disk for 16 reflinked workspaces (1 MiB delta each, +10%)' "$TMP/r.out")/$(grep -c 'systemd-run' "$CALLS")" "1/1/0"
+  rm -f "$TROOT/state/host_profile" "$TROOT/state/workspace_copy" "$STUB/df"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >>"%s"\n' "$CALLS" >"$STUB/systemctl"
+  check "rung.sh: the sampler measures the workspaces device on fresh-metal only" \
+    "$(grep -c 'if \[ "\$E15_HOST_PROFILE" = fresh-metal \]; then export E15_DISK_PATH=\${E15_DISK_PATH:-\$E15_WORKSPACES}; fi' "$RIG/rung.sh")" "1"
+  check "aws-prelim: the sparse branch in rung.sh is unchanged" "$(grep -c 'die "not enough disk for \$((N \* K)) sparse workspaces: \$est"' "$RIG/rung.sh")" "1"
 fi
 
 # --- L3: E15_TEST_PINS and E15_TEST_FSTAB only under a */e15-rig-test.* root ---------------------

@@ -386,17 +386,52 @@ e15_fetch() {
   mv -f "$out.part" "$out"
 }
 
-# probe_reflink DIR: "reflink" if `cp --reflink=always` works on DIR's filesystem, else "sparse".
+# probe_reflink DIR [SRCDIR]: "reflink" if `cp --reflink=always` of a file in SRCDIR (default DIR)
+# into DIR works, else "sparse".
 probe_reflink() {
-  local d=$1 r=sparse
-  printf 'e15 reflink probe\n' >"$d/.reflink-probe.src"
-  cp --reflink=always "$d/.reflink-probe.src" "$d/.reflink-probe.dst" 2>/dev/null && r=reflink
-  rm -f "$d/.reflink-probe.src" "$d/.reflink-probe.dst"
+  local d=$1 s=${2:-$1} r=sparse
+  printf 'e15 reflink probe\n' >"$s/.reflink-probe.src"
+  cp --reflink=always "$s/.reflink-probe.src" "$d/.reflink-probe.dst" 2>/dev/null && r=reflink
+  rm -f "$s/.reflink-probe.src" "$d/.reflink-probe.dst"
   echo "$r"
+}
+
+# e15_require_reflink WSDIR SRCDIR (fresh-metal, SPEC §13): reflink is required. Probes on every
+# call (never cached) a `cp --reflink=always` from SRCDIR (the template's directory) into WSDIR
+# (the workspaces directory) -- the copy rung.sh makes. Records state/workspace_copy=reflink, or
+# removes it and dies: no sparse fallback.
+e15_require_reflink() {
+  if [ "$(probe_reflink "$1" "$2")" != reflink ]; then
+    rm -f "$E15_STATE/workspace_copy"
+    die "fresh-metal: cp --reflink=always from $2 into $1 fails; reflink is required (no sparse fallback): mount an XFS reflink=1 volume at $E15_ROOT (bootstrap.sh E15_DATA_DEV=/dev/...)"
+  fi
+  mkdir -p "$E15_STATE"
+  printf 'reflink\n' >"$E15_STATE/workspace_copy"
 }
 
 # e15_xfs_reflink MOUNTPOINT: the XFS filesystem mounted there has reflink=1 (xfs_info).
 e15_xfs_reflink() { sudo -n xfs_info "$1" 2>/dev/null | grep -q 'reflink=1'; }
+
+# e15_storage_check DIR... (fresh-metal): every DIR on one filesystem device (stat -c %d), and that
+# filesystem XFS with reflink=1. moca's worker hardlinks the snapshot files and the workspace image
+# into the jail, so SH_SNAPSHOT_DIR, SH_WORKSPACE_ROOT and SH_CHROOT_BASE must share a device
+# (remote-worker vmpool devicecheck.go; it refuses to start otherwise), and a reflink cannot cross
+# filesystems, so the templates must be there too. Prints one line; dies naming each DIR's device.
+e15_storage_check() {
+  local d dev first="" same=1 devs=() fst mnt
+  for d in "$@"; do
+    dev=$(stat -c %d "$d" 2>/dev/null) || die "storage: cannot stat $d"
+    devs+=("$d=$dev")
+    [ -n "$first" ] || first=$dev
+    [ "$dev" = "$first" ] || same=0
+  done
+  [ "$same" = 1 ] || die "storage: ${devs[*]} are not on one filesystem device (moca's worker hardlinks snapshot and workspace files into the jail; reflink cannot cross filesystems): mount the XFS volume at $E15_ROOT, the whole E15 root (bootstrap.sh E15_DATA_DEV=/dev/...)"
+  fst=$(findmnt -no FSTYPE -T "$1" 2>/dev/null || true)
+  mnt=$(findmnt -no TARGET -T "$1" 2>/dev/null || true)
+  [ "$fst" = xfs ] || die "storage: $1 is on ${fst:-an unknown filesystem} ($mnt), not XFS: mount an XFS reflink=1 volume at $E15_ROOT (bootstrap.sh E15_DATA_DEV=/dev/...)"
+  e15_xfs_reflink "$mnt" || die "storage: the XFS filesystem at $mnt has no reflink=1 (mkfs.xfs -m reflink=1)"
+  echo "storage: ${devs[*]} on one device, XFS reflink=1 at $mnt ($(findmnt -no SOURCE -T "$1" 2>/dev/null || echo source unknown))"
+}
 
 # e15_root_purge_cmd: the PURGE command that removes E15's files. aws-prelim: rm -rf of the root,
 # as before. fresh-metal: when the root is a mount point (the E15 data volume), its contents only
@@ -422,16 +457,33 @@ workspace_cp_flag() {
   case "$1" in sparse) echo --sparse=always ;; *) echo --reflink=always ;; esac
 }
 
-# workspace_disk_estimate N K IMAGE_MB TEMPLATE_KB FREE_KB: one line for the operator -- a sparse
-# rung's N*K copies cost the template's allocated size each at creation, and at worst (every guest
-# writing its whole image) IMAGE_MB each. Exit 1 when the creation cost alone exceeds FREE_KB.
+# workspace_disk_estimate N K IMAGE_MB COPY_KB FREE_KB: one line for the operator, exit 1 when the
+# N*K copies' estimated cost plus a 10% margin exceeds FREE_KB. COPY_KB is what one copy is
+# estimated to cost: sparse, the template's allocated size (paid at creation); reflink, the
+# per-session delta (workspace_delta_kb). The worst case is every guest writing its whole image.
 workspace_disk_estimate() {
-  local n=$1 k=$2 mb=$3 tkb=$4 fkb=$5 imgs
+  local n=$1 k=$2 mb=$3 ckb=$4 fkb=$5 imgs
   imgs=$((n * k))
-  awk -v i="$imgs" -v mb="$mb" -v t="$tkb" -v f="$fkb" -v n="$n" -v k="$k" 'BEGIN {
-    init = i * t / 1048576; worst = i * mb / 1024; free = f / 1048576
-    printf "N=%d: %d images (K=%d) x %d MiB = %.1f GiB worst case; %.1f GiB at creation; %.1f GiB free\n", n, i, k, mb, worst, init, free
-    exit (i * t > f) ? 1 : 0 }'
+  awk -v i="$imgs" -v mb="$mb" -v c="$ckb" -v f="$fkb" -v n="$n" -v k="$k" 'BEGIN {
+    est = i * c / 1048576; worst = i * mb / 1024; free = f / 1048576
+    printf "N=%d: %d images (K=%d) x %d MiB = %.1f GiB worst case; %.1f GiB estimated, %.1f GiB with the 10%% margin; %.1f GiB free\n", n, i, k, mb, worst, est, est * 1.1, free
+    exit (i * c * 11 > f * 10) ? 1 : 0 }'
+}
+
+# workspace_delta_kb TEMPLATE DATASET_MIB: the estimated disk cost of one reflinked workspace copy
+# (fresh-metal). A reflinked copy costs nothing at creation; a guest un-shares the blocks it
+# writes. The estimate assumes a session rewrites everything its image holds (project tree, ext4
+# journal and metadata: the template's allocated size) except data.bin, which the mem512 scan only
+# reads. E15_WS_DELTA_MB overrides it. Floor 1 MiB.
+workspace_delta_kb() {
+  local kb
+  if [ -n "${E15_WS_DELTA_MB:-}" ]; then
+    echo $((E15_WS_DELTA_MB * 1024))
+    return
+  fi
+  kb=$(($(du -k "$1" | cut -f1) - ${2:-0} * 1024))
+  [ "$kb" -ge 1024 ] || kb=1024
+  echo "$kb"
 }
 
 # --- containers (Redis; fresh-metal also the rootfs image) -------------------------------------
@@ -482,7 +534,7 @@ dd_mbs() {
 
 # measure_disk_read FILE [MIB]: the volume's sequential read throughput (SPEC §10.3, mem512's
 # disk_io binding): write MIB (default 2048) MiB to FILE with direct I/O, read it back with direct
-# I/O (no page cache), remove it, print MB/s. FILE must be on the volume holding /srv/e15.
+# I/O (no page cache), remove it, print MB/s. FILE must be on the volume holding the workspaces.
 measure_disk_read() {
   local f=$1 mib=${2:-2048} out
   dd if=/dev/zero of="$f" bs=4M count=$((mib / 4)) oflag=direct conv=fsync status=none || {

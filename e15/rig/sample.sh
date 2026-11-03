@@ -30,7 +30,8 @@
 #   worker              the worker's /stats JSON (SH_DIAG_STATS_ADDR), when it answers
 #
 # Environment: E15_SLICE_DIR (default /sys/fs/cgroup/e15.slice), E15_STATS_URL
-# (default http://127.0.0.1:9646/stats), E15_DISK_PATH (default /srv/e15), E15_DISK_DEV (the
+# (default http://127.0.0.1:9646/stats), E15_DISK_PATH (default /srv/e15; rung.sh passes the
+# workspaces directory on fresh-metal, the device the guests read), E15_DISK_DEV (the
 # diskstats device name; default: the device findmnt names for E15_DISK_PATH), E15_PROC (default
 # /proc; tests point it at a fixture tree).
 set -uo pipefail

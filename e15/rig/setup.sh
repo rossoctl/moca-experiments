@@ -39,10 +39,16 @@
 #   7.   guest kernel = the pinned Firecracker CI kernel (pins.sh, sha256-checked); rootfs =
 #        moca v0.9.0's deploy/microvm/build-rootfs.sh over the pinned sandbox image (by digest),
 #        then the same pytest wheels and gitconfig; each artifact's sha256 in state/artifacts
-#   7b.  workspace copies: a reflink probe under /srv/e15; on a filesystem without reflink (ext4)
-#        sparse copies, state/workspace_copy=sparse
-#   8b.  disk read max: 4 parallel direct-I/O readers of separate 2 GiB files, summed
-#        (state/disk_read_max_mbs) and the single stream (state/disk_read_single_mbs)
+#   3.   storage preflight (before any build): snapshots/, workspaces/, jail/ and the template
+#        dirs on one filesystem device (moca's worker hardlinks across them; reflink cannot cross
+#        filesystems), that filesystem XFS with reflink=1 -- the data volume mounted at /srv/e15
+#        (bootstrap.sh E15_DATA_DEV). Then a cp --reflink=always probe from each template dir
+#        into workspaces/, on every run: reflink is required, there is no sparse fallback
+#   7b.  disk estimate per ladder rung: N*K reflinked copies x the per-session delta
+#        (lib.sh workspace_delta_kb) + 10%, against the workspaces filesystem's free space
+#   8b.  disk read max, on the workspaces device: 4 parallel direct-I/O readers of separate 2 GiB
+#        files in workspaces/, summed (state/disk_read_max_mbs) and the single stream
+#        (state/disk_read_single_mbs); measured again when that device changes
 #   9.   Redis by digest, in podman storage under /srv/e15/containers
 set -euo pipefail
 E15_PROG=setup.sh
@@ -126,6 +132,22 @@ done
 fi
 
 # --- 3. tree and secrets ---------------------------------------------------------------------
+# fresh-metal storage preflight, before anything is built: refuse a layout the worker or the
+# reflink copies cannot use (SPEC §13; lib.sh e15_storage_check, e15_require_reflink).
+if [ "$METAL" = 1 ]; then
+  for d in "$E15_SNAPDIR" "$E15_WORKSPACES" "$E15_JAIL" "$E15_ROOT/template" "$E15_ROOT/template-mem512"; do
+    if [ ! -d "$d" ]; then
+      sudo -n mkdir -p "$d"
+      sudo -n chown "$(id -un):$(id -gn)" "$d"
+    fi
+  done
+  storage=$(e15_storage_check "$E15_SNAPDIR" "$E15_WORKSPACES" "$E15_JAIL" "$E15_ROOT/template" "$E15_ROOT/template-mem512")
+  log "$storage"
+  m_note "$storage"
+  # Probed on every run, never cached: from each template's directory into workspaces/.
+  for d in "$E15_ROOT/template" "$E15_ROOT/template-mem512"; do e15_require_reflink "$E15_WORKSPACES" "$d"; done
+  m_note "workspace_copy=reflink (cp --reflink=always probe from the template dirs into $E15_WORKSPACES)"
+fi
 for d in "$E15_BIN" "$E15_SECRETS" "$E15_STATE" "$E15_LOGS" "$E15_RUNS" "$E15_WORKSPACES" \
   "$E15_JAIL" "$E15_ROOT/go" "$E15_ROOT/template" "$E15_ROOT/template-mem512"; do
   if [ ! -d "$d" ]; then
@@ -323,35 +345,39 @@ while read -r tpoint; do
   [ "$METAL" = 1 ] && e15_artifact "$E15_P_TEMPLATE_STAMP" "$(sha256_of "$E15_P_TEMPLATE")" "$E15_P_TEMPLATE"
 done < <(e15_templates)
 
-# --- 7b. workspace copies: reflink where the filesystem has it, else sparse (fresh-metal) -----
-# aws-prelim is XFS with reflink (rung.sh's default). fresh-metal probes once and records it.
-if [ "$METAL" = 1 ] && [ ! -s "$E15_STATE/workspace_copy" ]; then
-  mode=$(probe_reflink "$E15_STATE")
-  printf '%s\n' "$mode" >"$E15_STATE/workspace_copy"
-  m_note "workspace_copy=$mode (cp --reflink=always probe under $E15_STATE; $(stat -f -c %T "$E15_ROOT" 2>/dev/null || echo fs unknown))"
-fi
-if [ "$METAL" = 1 ] && [ "$(workspace_copy_mode)" = sparse ]; then
-  # Sparse copies share no blocks: the operator checks each rung's cost against the free space
-  # (rung.sh prints it again and refuses a rung whose copies alone do not fit). K = 16 is the floor.
-  free_kb=$(df -Pk "$E15_ROOT" | awk 'NR==2 {print $4}')
+# --- 7b. workspace disk estimate (fresh-metal: reflinked copies, the per-session delta) -------
+# aws-prelim is XFS with reflink (rung.sh's default); it has no estimate. fresh-metal: reflink was
+# required above; each copy is estimated at workspace_delta_kb, refused at rung time when N*K of
+# them + 10% exceed the free space (rung.sh). K = 16 is the floor, so these understate a larger K.
+if [ "$METAL" = 1 ]; then
+  free_kb=$(df -Pk "$E15_WORKSPACES" | awk 'NR==2 {print $4}')
   while read -r tpoint; do
     e15_point "$tpoint"
-    tkb=$(du -k "$E15_P_TEMPLATE" | cut -f1)
+    dkb=$(workspace_delta_kb "$E15_P_TEMPLATE" "$E15_P_DATASET_MIB")
     for n in "${E15_LADDER[@]}"; do
-      log "sparse workspaces, point $tpoint: $(workspace_disk_estimate "$n" 16 "$E15_P_IMAGE_MB" "$tkb" "$free_kb" || true)"
+      log "reflink workspaces, point $tpoint ($((dkb / 1024)) MiB delta each): $(workspace_disk_estimate "$n" 16 "$E15_P_IMAGE_MB" "$dkb" "$free_kb" || true)"
     done
-    m_note "sparse workspaces, point $tpoint at N=${E15_LADDER[-1]}: $(workspace_disk_estimate "${E15_LADDER[-1]}" 16 "$E15_P_IMAGE_MB" "$tkb" "$free_kb" || echo "(does not fit)")"
+    m_note "reflink workspaces, point $tpoint at N=${E15_LADDER[-1]} ($((dkb / 1024)) MiB delta each): $(workspace_disk_estimate "${E15_LADDER[-1]}" 16 "$E15_P_IMAGE_MB" "$dkb" "$free_kb" || echo "(does not fit)")"
   done < <(e15_templates)
 fi
 
 # --- 8b. the volume's sequential read throughput (record.py's disk_io binding), once -----------
+# fresh-metal: measured in workspaces/ (the device the guests' data.bin reads hit), again when that
+# device is not the one recorded with the figure (state/disk_read_source).
+if [ "$METAL" = 1 ]; then
+  ws_src=$(findmnt -no SOURCE -T "$E15_WORKSPACES" 2>/dev/null || echo unknown)
+  if [ -s "$E15_STATE/disk_read_max_mbs" ] && [ "$(cat "$E15_STATE/disk_read_source" 2>/dev/null || true)" != "$ws_src" ]; then
+    rm -f "$E15_STATE/disk_read_max_mbs" "$E15_STATE/disk_read_single_mbs"
+  fi
+fi
 if [ "$METAL" = 1 ] && [ ! -s "$E15_STATE/disk_read_max_mbs" ]; then
-  log "measuring direct-I/O read throughput of the /srv/e15 volume: 1 stream, then 4 parallel (2 GiB files)"
-  one=$(measure_disk_read "$E15_STATE/.disk-read-probe-1" 2048) || die "disk read measurement (single) failed"
-  par=$(measure_disk_read_parallel "$E15_STATE/.disk-read-probe-p" 4 2048) || die "disk read measurement (parallel) failed"
+  log "measuring direct-I/O read throughput of $ws_src (workspaces): 1 stream, then 4 parallel (2 GiB files)"
+  one=$(measure_disk_read "$E15_WORKSPACES/.disk-read-probe-1" 2048) || die "disk read measurement (single) failed"
+  par=$(measure_disk_read_parallel "$E15_WORKSPACES/.disk-read-probe-p" 4 2048) || die "disk read measurement (parallel) failed"
   printf '%s\n' "$one" >"$E15_STATE/disk_read_single_mbs"
   printf '%s\n' "$par" >"$E15_STATE/disk_read_max_mbs"
-  m_note "disk_read_max_mbs=$par (4 parallel dd iflag=direct bs=4M readers of separate 2 GiB files, summed); disk_read_single_mbs=$one (one stream); files removed"
+  printf '%s\n' "$ws_src" >"$E15_STATE/disk_read_source"
+  m_note "disk_read_max_mbs=$par (4 parallel dd iflag=direct bs=4M readers of separate 2 GiB files in $E15_WORKSPACES, $ws_src, summed); disk_read_single_mbs=$one (one stream); files removed"
 fi
 if [ ! -s "$E15_STATE/disk_read_max_mbs" ]; then
   log "measuring sequential direct-I/O read throughput of the /srv/e15 volume (2 GiB file)"

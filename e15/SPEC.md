@@ -1,7 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
 Version: 0.9 (draft for review), 2026-11-03
-2026-11-03: fresh-metal host profile for the metal run (§13): bootstrap, guest rootfs from moca v0.9.0's sandbox image, ext4 sparse workspace fallback, parallel disk read measurement; metal substrate table.
+2026-11-03: fresh-metal host profile for the metal run (§13): bootstrap, guest rootfs from moca v0.9.0's sandbox image, parallel disk read measurement; metal substrate table. Later the same day: the XFS reflink=1 data volume at /srv/e15 is required (no sparse fallback; review abbaa15 H1/H2).
 2026-11-03: condition 3 class-matched (user decision before sealing): a session's expected time = the driver's schedule with each call lengthened by its class's N=1 probe median added latency; class pace ≤ 10%; N=1 median pace reported.
 2026-11-03: condition 3 relative to the arm's own N=1 median pace (user decision before sealing; at mem512 SBX's N=1 pace is +19.3%); metal run moves to an AWS m7i.metal-24xl (EBS-only), the IBM metal rig being unavailable.
 2026-11-03: memory-pressure point mem512 added (user decision after calibration): a 512 MiB per-session dataset, read once per recorded call of the scanning classes; its binding may be disk I/O, reported as a finding; §9.3 lists disk_io.
@@ -619,12 +619,18 @@ moca v0.9.0 documents it: `deploy/microvm/build-rootfs.sh` exports the v0.9.0 sa
 (`ghcr.io/rossoctl/moca-remote-worker:0.9.0`, pinned by digest) as the rootfs tree. The same pytest
 wheels are then added, and `build-snapshot.sh --guest-ram-mb 1024` runs with the pinned Firecracker CI
 kernel `vmlinux-6.18.44`, the version the preliminary rig ran. Every artifact's sha256 goes in
-`/srv/e15/state/artifacts`. The root volume is ext4 and has no reflink, so setup probes for reflink
-support. Without it, workspaces are sparse copies (`workspace_copy=sparse`). They share no blocks, so
-setup and each rung print the disk cost, the image count × the image size in the worst case, and a rung
-whose copies do not fit at creation is refused. `disk_read_max_mbs` is the sum of 4 concurrent direct-I/O
-readers of separate 2 GiB files; one stream does not saturate an EBS volume. The single-stream figure is
-kept as `disk_read_single_mbs`.
+`/srv/e15/state/artifacts`. Workspaces need reflink, which the ext4 root volume lacks, so the host has
+a second EBS gp3 volume. `bootstrap.sh` (`E15_DATA_DEV`) formats it XFS (`mkfs.xfs -m reflink=1`) and
+mounts it at `/srv/e15`, the whole E15 root. Mounting it only at `workspaces/` is not enough: moca's
+worker hardlinks the snapshot files and each workspace image into the jail, so snapshots, workspaces
+and jail must share one device (it refuses to start otherwise), and a reflink of the template
+cannot cross filesystems. Setup refuses any other layout: the five directories must be on one
+device, and that device must be XFS with `reflink=1`. It probes a reflink copy from each template
+directory into `workspaces/` on every run, and there is no sparse fallback. Each rung's copies are
+estimated at the per-session delta: the template's allocated size, less the read-only `data.bin`. A
+rung is refused when N × K deltas plus 10% exceed the free space. `disk_read_max_mbs` is measured in
+`workspaces/` as the sum of 4 concurrent direct-I/O readers of separate 2 GiB files; one stream does not
+saturate an EBS volume. The single-stream figure is kept as `disk_read_single_mbs`.
 
 | | |
 |---|---|
@@ -632,7 +638,7 @@ kept as `disk_read_single_mbs`.
 | Virtualization | none; Firecracker runs directly on KVM (`/dev/kvm` root:kvm 0660) |
 | OS / kernel | Ubuntu 24.04.5 LTS, 7.0.0-1014-aws |
 | Firecracker | v1.17.0 (bootstrap.sh); guests have **1 vCPU** (`deploy/microvm/build-snapshot.sh`) |
-| Disk | one 200 GB EBS root volume (`/dev/nvme0n1`), ext4 assumed (setup probes reflink) |
+| Disk | 200 GB EBS root volume (`/dev/nvme0n1`, ext4) + an EBS gp3 data volume, XFS `reflink=1`, mounted at `/srv/e15` |
 | cgroups | v2 |
 | Software | fresh: no docker, podman, go, node, pnpm or firecracker before bootstrap; stock services only |
 | Access | user `ubuntu`, passwordless sudo |

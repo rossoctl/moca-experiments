@@ -18,7 +18,8 @@
 # Steps:
 #   1. stop any rung units left over; wipe /srv/e15/workspaces and /srv/e15/jail (E15's own)
 #   2. pre-create /srv/e15/workspaces/<key>/workspace.img by `cp --reflink=always` of the template
-#      (or `cp --sparse=always` where setup.sh recorded state/workspace_copy=sparse: ext4, no reflink)
+#      (or `cp --sparse=always` where state/workspace_copy=sparse; fresh-metal requires reflink and
+#      refuses a rung whose N*K per-session deltas + 10% exceed the workspaces' free space)
 #      for key = e15-<run>-<slot>-<seq>, slot 0..N-1, seq 0..K-1,
 #      K = max(16, ceil((warmup_s + window_s) / (corpus mean session span)) + 3) x K_MULT
 #   3. start the arm's worker (e15-worker.service in e15-vms.slice; SPEC §7 env; lib.sh worker_env)
@@ -186,7 +187,17 @@ sudo -n find "$E15_WORKSPACES" "$E15_JAIL" -mindepth 1 -maxdepth 1 -exec rm -rf 
 span_min=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["table"]["mean_span_min"])' "$CORPUS_DIR/corpus-report.json")
 K=$(python3 -c 'import math,sys; w,s=float(sys.argv[1]),float(sys.argv[2])*60; print(max(16, (int(math.ceil(w/s))+3)*int(sys.argv[3])))' "$((WARMUP + WINDOW))" "$span_min" "$K_MULT")
 WS_COPY=$(workspace_copy_mode)
-if [ "$WS_COPY" = sparse ]; then
+if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+  # Reflink is required there (setup.sh probes it on every run; no sparse fallback). Each copy is
+  # estimated at the per-session delta (lib.sh workspace_delta_kb); the N*K copies + 10% must fit.
+  [ "$WS_COPY" = reflink ] && [ -s "$E15_STATE/workspace_copy" ] ||
+    die "fresh-metal: state/workspace_copy is not reflink (run setup.sh; reflink is required)"
+  delta_kb=$(workspace_delta_kb "$TEMPLATE" "$E15_P_DATASET_MIB")
+  free_kb=$(df -Pk "$E15_WORKSPACES" | awk 'NR==2 {print $4}')
+  est=$(workspace_disk_estimate "$N" "$K" "$E15_P_IMAGE_MB" "$delta_kb" "$free_kb") ||
+    die "not enough disk for $((N * K)) reflinked workspaces ($((delta_kb / 1024)) MiB delta each, +10%): $est"
+  log "workspaces (reflink, $((delta_kb / 1024)) MiB delta each): $est"
+elif [ "$WS_COPY" = sparse ]; then
   # Sparse copies share nothing: each costs the template's allocated blocks now, and up to its
   # full image size if a guest writes it all. The operator checks the free space against this.
   tpl_kb=$(du -k "$TEMPLATE" | cut -f1)
@@ -227,6 +238,8 @@ case "$ARM" in resident-inf | resident-300) end_flag=(--end-session-exec) ;; esa
 launch_ts=$(date +%s.%N)
 # The sampler starts with the driver, its origin the epoch just before the driver is exec'd
 # (rung_start_ts as first taken). See "time origin" below for the re-base onto the driver's t0.
+# fresh-metal: disk_used/disk_read_mbs of the device holding the workspaces (the guests' reads).
+if [ "$E15_HOST_PROFILE" = fresh-metal ]; then export E15_DISK_PATH=${E15_DISK_PATH:-$E15_WORKSPACES}; fi
 bash "$HERE/sample.sh" "$DIR/samples.jsonl" "$launch_ts" "$((WARMUP + WINDOW + 120))" &
 sampler_pid=$!
 MOCA_RELAY_EXEC_TOKEN=$(cat "$E15_SECRETS/exec.token") "$E15_BIN/e15-driver" \
