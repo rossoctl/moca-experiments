@@ -978,3 +978,53 @@ def test_memory_abort_is_a_memory_floor_failure_not_a_rig_error(tmp_path):
     assert r["aborted"] is False          # a measured failure: the ladder records it, not a rig error
     r = _rung(tmp_path, [S(1)], memory_abort=None, driver_exit=143)
     assert r["aborted"] is True and r.get("memory_abort") is None   # a plain driver failure still aborts
+
+
+# --- binding memory_high: e15.slice MemoryHigh throttling (memory.events "high") ------------------
+
+def _ev(t, high, mx=0, oom=0, **kw):
+    d = S(t, **kw)
+    d["e15_mem_events"] = {"high": high, "max": mx, "oom_kill": oom}
+    return d
+
+
+def _failing(tmp_path):
+    (tmp_path / "calls.jsonl").write_text(json.dumps(call(status="error", cause="exec")) + "\n")
+
+
+def test_memory_high_binds_a_failed_rung_with_no_other_binding(tmp_path):
+    _failing(tmp_path)
+    r = _rung(tmp_path, [_ev(1, 10), _ev(60, 10), _ev(120, 25)])
+    assert not r["holds"] and r["binding"] == "memory_high"
+    assert r["memory_events_window"] == {"high": 15, "max": 0, "oom_kill": 0}
+
+
+def test_memory_high_not_without_a_high_delta_or_events(tmp_path):
+    _failing(tmp_path)
+    r = _rung(tmp_path, [_ev(1, 10), _ev(120, 10)])
+    assert not r["holds"] and r["binding"] == "none"
+    r = _rung(tmp_path, [S(1), S(120)])                      # no events data: as before
+    assert r["binding"] == "none" and r["memory_events_window"] is None
+    # counters before the window do not count (warmup_s=60: window is t 60..180)
+    (tmp_path / "samples.jsonl").write_text("\n".join(json.dumps(x) for x in [_ev(10, 0), _ev(60, 50), _ev(180, 50)]))
+    r = R.build(str(tmp_path), dict(arm="sbx", n=1, warmup_s=60, window_s=120, floor_mb=1536))
+    assert r["binding"] == "none" and r["memory_events_window"]["high"] == 0
+
+
+def test_memory_high_never_on_a_holding_rung(tmp_path):
+    (tmp_path / "calls.jsonl").write_text("\n".join(json.dumps(c) for c in good_calls()))
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
+    r = _rung(tmp_path, [_ev(1, 0), _ev(120, 99)])
+    assert r["holds"] and r["binding"] == "none" and r["memory_events_window"]["high"] == 99
+
+
+def test_memory_high_yields_to_other_bindings_and_memory_abort(tmp_path):
+    _failing(tmp_path)
+    assert _rung(tmp_path, [_ev(1, 0), _ev(120, 5, mem=1536 * 1024)])["binding"] == "memory_floor"
+    assert _rung(tmp_path, [_ev(1, 0, cpu=95.0), _ev(120, 5, cpu=95.0)])["binding"] == "cpu"
+    assert _rung(tmp_path, [_ev(1, 0), _ev(120, 5, disk=95.0)])["binding"] == "disk"
+    ab = {"reason": "memory_floor", "at": "2026-11-03T13:53:29Z", "mem_available_kb": 900000, "floor_mib": 1024}
+    r = _rung(tmp_path, [_ev(1, 0), _ev(120, 5)], memory_abort=ab, driver_exit=143)
+    assert r["binding"] == "memory_floor" and r["reason"] == "memory_floor"
+    r = _rung(tmp_path, [_ev(1, 0), _ev(120, 5)], driver_exit=2)   # a rig error gets no binding
+    assert r["aborted"] and r["binding"] == "none"

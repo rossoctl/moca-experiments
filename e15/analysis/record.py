@@ -106,6 +106,7 @@ def window_samples(samples, start, end):
 
 def binding_resource(ws, floor_mb, window_end, refusals, disk_read_max_mbs=None):
     """memory_floor, cpu, disk_io, disk, gate, none -- the first that applies, in that order.
+    (build() may then turn a failed rung's "none" into memory_high: memory_events_delta.)
     disk_io: mean disk_read_mbs over the window's last 60 s >= 90% of the volume's measured
     sequential read throughput (setup.sh disk_read_max_mbs; skipped when unknown)."""
     if any(s.get("mem_available_kb", 1 << 60) <= floor_mb * 1024 for s in ws):
@@ -124,6 +125,20 @@ def binding_resource(ws, floor_mb, window_end, refusals, disk_read_max_mbs=None)
     if refusals > 0:
         return "gate"
     return "none"
+
+
+def memory_events_delta(ws):
+    """e15.slice memory.events counters (sample.sh e15_mem_events) over the window: the delta
+    between the window's first and last sample carrying them, per counter, or None when no
+    sample carries them (a rung recorded before the field existed)."""
+    ev = [s["e15_mem_events"] for s in ws if isinstance(s.get("e15_mem_events"), dict)]
+    if not ev:
+        return None
+    out = {}
+    for k in ("high", "max", "oom_kill"):
+        a, b = ev[0].get(k), ev[-1].get(k)
+        out[k] = (b - a) if isinstance(a, int) and isinstance(b, int) else None
+    return out
 
 
 def disk_read_stats(ws):
@@ -243,6 +258,15 @@ def build(rung_dir, params):
     if aborted:
         rec["holds"] = False
         rec["holds_abs"] = False
+    # Under e15.slice's MemoryHigh, memory pressure shows as reclaim throttling (memory.events
+    # "high"), not as a floor hit: a failed rung with no other binding and throttling in the window
+    # is bound by memory_high. memory_floor (incl. memory_abort) and every other binding win; a
+    # rig error (aborted) is not given a binding; no events data leaves the binding as it was.
+    mev = memory_events_delta(ws)
+    rec["memory_events_window"] = mev
+    if (not rec["holds"] and not aborted and rec["binding"] == "none"
+            and mev and (mev.get("high") or 0) > 0):
+        rec["binding"] = "memory_high"
     return rec
 
 

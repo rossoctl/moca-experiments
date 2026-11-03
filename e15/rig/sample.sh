@@ -17,6 +17,10 @@
 #   e15_cpu_usec        cpu.stat usage_usec of e15.slice (cumulative)
 #   psi_cpu_some_avg10, psi_mem_some_avg10, psi_mem_full_avg10   host /proc/pressure
 #   slice_psi_mem_some_avg10                                     worker slice memory.pressure
+#   e15_mem_events      e15.slice memory.events {"high", "max", "oom_kill"} (cumulative counters;
+#                       record.py takes their window start/end delta: "high" counts MemoryHigh
+#                       reclaim throttling, which a memory_floor binding never sees). Absent when
+#                       the file is unreadable
 #   disk_used_pct, disk_used_kb   the filesystem holding /srv/e15 (df)
 #   disk_read_mbs       read throughput of the block device holding /srv/e15, MB/s (10^6 bytes),
 #                       /proc/diskstats sectors-read delta since the previous sample (absent on the
@@ -93,6 +97,17 @@ psi() {
 }
 
 num() { [ -n "$1" ] && printf '%s' "$1" || printf 'null'; }
+
+# mem_events FILE: {"high":N,"max":N,"oom_kill":N} from a cgroup memory.events, or empty.
+mem_events() {
+  local k v h="" m="" o=""
+  [ -r "$1" ] || return 0
+  while read -r k v; do
+    case "$k" in high) h=$v ;; max) m=$v ;; oom_kill) o=$v ;; esac
+  done <"$1"
+  [ -n "$h$m$o" ] || return 0
+  printf '{"high":%s,"max":%s,"oom_kill":%s}' "$(num "$h")" "$(num "$m")" "$(num "$o")"
+}
 
 prev_total=""
 prev_idle=""
@@ -179,6 +194,8 @@ while [ "$stop" -eq 0 ]; do
   line+=",\"psi_mem_some_avg10\":$(num "$(psi "$PROC/pressure/memory" some)")"
   line+=",\"psi_mem_full_avg10\":$(num "$(psi "$PROC/pressure/memory" full)")"
   line+=",\"slice_psi_mem_some_avg10\":$(num "$(psi "$VMS_DIR/memory.pressure" some)")"
+  mev=$(mem_events "$E15_DIR/memory.events")
+  [ -n "$mev" ] && line+=",\"e15_mem_events\":$mev"
   line+=",\"disk_used_pct\":$(num "$disk_pct"),\"disk_used_kb\":$(num "$disk_kb")"
   [ -n "$dread_field" ] && line+=",\"disk_read_mbs\":$dread_field"
   [ -n "$dawait_field" ] && line+=",\"disk_await_ms\":$dawait_field"

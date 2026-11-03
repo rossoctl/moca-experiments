@@ -703,6 +703,15 @@ if [ -f "$RIG/sample.sh" ]; then
   E15_PROC="$FP" E15_DISK_DEV=nosuch E15_SLICE_DIR="$TMP/nocg" E15_STATS_URL=http://127.0.0.1:1/x \
     bash "$RIG/sample.sh" "$OUTS" "$(date +%s)" 2.5 >/dev/null 2>&1
   check "sample.sh: an unknown device gives samples, no disk_read_mbs" "$([ "$(grep -c . "$OUTS")" -ge 2 ] && echo n)/$(grep -c disk_read_mbs "$OUTS")" "n/0"
+  # memory_high binding: e15.slice memory.events high/max/oom_kill in every sample (record.py deltas)
+  check "sample.sh: no memory.events -> no e15_mem_events" "$(grep -c e15_mem_events "$OUTS")" "0"
+  mkdir -p "$TMP/fcg"
+  printf 'low 0\nhigh 42\nmax 3\noom 1\noom_kill 1\noom_group_kill 0\n' >"$TMP/fcg/memory.events"
+  rm -f "$OUTS"
+  E15_PROC="$FP" E15_DISK_DEV=nosuch E15_SLICE_DIR="$TMP/fcg" E15_STATS_URL=http://127.0.0.1:1/x \
+    bash "$RIG/sample.sh" "$OUTS" "$(date +%s)" 1.5 >/dev/null 2>&1
+  check "sample.sh: e15_mem_events = e15.slice memory.events high, max, oom_kill" \
+    "$(head -1 "$OUTS" | python3 -c 'import json,sys; print(json.dumps(json.loads(sys.stdin.read())["e15_mem_events"], sort_keys=True))')" '{"high": 42, "max": 3, "oom_kill": 1}'
 fi
 
 # setup.sh: the volume's read throughput, measured once (dd direct I/O), kept in state
