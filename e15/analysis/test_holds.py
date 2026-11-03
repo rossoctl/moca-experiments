@@ -962,3 +962,19 @@ def test_n1_never_joins(tmp_path):
     (tmp_path / "sessions.jsonl").write_text(json.dumps(csess("a", 100)) + "\n")
     r = R.build(str(tmp_path), dict(arm="sbx", n=1, warmup_s=0, window_s=10))
     assert r["offset_join_misses"] == 0
+
+
+# --- Task 8 mem512 OOM incident: rung.sh's memory watchdog ---------------------------------
+
+def test_memory_abort_is_a_memory_floor_failure_not_a_rig_error(tmp_path):
+    (tmp_path / "calls.jsonl").write_text("\n".join(json.dumps(c) for c in good_calls()))
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0)) + "\n")
+    ab = {"reason": "memory_floor", "at": "2026-11-03T13:53:29Z", "mem_available_kb": 900000, "floor_mib": 1024}
+    r = _rung(tmp_path, [S(1)], memory_abort=ab, driver_exit=143)
+    assert not r["holds"] and not r["holds_abs"]
+    assert r["binding"] == "memory_floor" and r["reason"] == "memory_floor"
+    assert r["memory_abort"] == ab
+    assert r["refusals_by_reason"]["memory_floor_abort"] == 1 and r["conditions"]["no_refusals"] is False
+    assert r["aborted"] is False          # a measured failure: the ladder records it, not a rig error
+    r = _rung(tmp_path, [S(1)], memory_abort=None, driver_exit=143)
+    assert r["aborted"] is True and r.get("memory_abort") is None   # a plain driver failure still aborts

@@ -773,6 +773,50 @@ check "kill_vm_cgroups kills a populated pool only, never the worker's service c
 check "kill_vm_cgroups tests cgroup.procs by content, not size (cgroupfs reports size 0)" \
   "$(sed -n '/^kill_vm_cgroups() {/,/^}/p' "$RIG/lib.sh" | grep -c -- '-n "\$(cat "\$d/cgroup.procs"')/$(sed -n '/^kill_vm_cgroups() {/,/^}/p' "$RIG/lib.sh" | grep -c -- '-s "\$d/cgroup.procs"')" "1/0"
 
+# --- memory guards (Task 8 mem512 OOM incident, user decision a+b) ---------------------------
+# (a) e15.slice limits: MemoryMax = MemTotal - 3 GiB, MemoryHigh = MemoryMax - 1 GiB
+check "e15_slice_limits: 16082476 kB host -> MemoryMax MemTotal-3GiB, MemoryHigh 1 GiB below" \
+  "$(bash -c '. "$1" >/dev/null 2>&1; e15_slice_limits 16082476' _ "$RIG/lib.sh")" \
+  "$(((16082476 / 1024 - 3072) * 1048576)) $(((16082476 / 1024 - 4096) * 1048576))"
+check "setup.sh writes MemoryHigh into e15.slice and reads MemTotal through E15_MEMINFO" \
+  "$(grep -c 'MemoryMax=%s\\nMemoryHigh=%s' "$RIG/setup.sh")/$(grep -c 'e15_slice_limits "$mem_kb"' "$RIG/setup.sh")/$(grep -c "'/^MemTotal:/{print \$2}' \"\$E15_MEMINFO\"" "$RIG/setup.sh")" "1/1/1"
+check "setup.sh records MemoryMax and MemoryHigh in the manifest" "$(grep -c 'm_note "e15.slice MemoryMax=$slice_max MemoryHigh=$slice_high' "$RIG/setup.sh")" "1"
+# (b) the watchdog, against a fake meminfo: trips after 3 consecutive samples below the floor,
+# writes the marker and kills the E15 VMs; never trips when MemAvailable recovers in between
+wd_mem="$TMP/wd-meminfo"
+wd_run() { # SEQ (MemAvailable kB per sample) FLOOR_MIB -> "<marker word> <kill_vm_cgroups calls>"
+  # Each sample reads the real E15_MEMINFO path; the stubbed sleep rewrites that file with the next
+  # value, so the watchdog sees the sequence through the same file read it uses on the rig.
+  rm -f "$TMP/wd-marker" "$TMP/wd-kills"
+  tr ' ' '\n' <<<"$1" >"$TMP/wd-seq"
+  printf 'MemAvailable: %s kB\n' "$(head -1 "$TMP/wd-seq")" >"$wd_mem"
+  env E15_MEMINFO="$wd_mem" E15_MEMAVAIL_FLOOR_MIB="$2" PATH="$SPATH" bash -c '
+    . "$1" >/dev/null 2>&1
+    wd_seq=$2 wd_kills=$3 n=1
+    sleep() {
+      n=$((n + 1))
+      v=$(sed -n "${n}p" "$wd_seq")
+      [ -n "$v" ] || exit 0          # sequence exhausted without a trip
+      printf "MemAvailable: %s kB\n" "$v" >"$E15_MEMINFO"
+    }
+    kill_vm_cgroups() { echo kill >>"$wd_kills"; }
+    memavail_watchdog "$4"
+  ' _ "$RIG/lib.sh" "$TMP/wd-seq" "$TMP/wd-kills" "$TMP/wd-marker" >/dev/null 2>&1
+  printf '%s %s\n' "$(cut -d' ' -f1 "$TMP/wd-marker" 2>/dev/null || echo none)" "$(grep -c kill "$TMP/wd-kills" 2>/dev/null || echo 0)"
+}
+check "memavail_watchdog trips on 3 consecutive samples below the floor and kills the VMs" \
+  "$(wd_run '2000000 900000 800000 700000' 1024)" "memory_floor 1"
+check "memavail_watchdog does not trip when MemAvailable recovers between low samples" \
+  "$(wd_run '900000 900000 2000000 900000 900000 2000000' 1024)" "none 0"
+check "memavail_watchdog honours E15_MEMAVAIL_FLOOR_MIB" \
+  "$(wd_run '1500000 1500000 1500000' 2048)/$(wd_run '1500000 1500000 1500000' 1024)" "memory_floor 1/none 0"
+printf 'MemTotal:       16082476 kB\nMemFree:          100000 kB\nMemAvailable:     733400 kB\n' >"$wd_mem"
+check "memavail_kb reads MemAvailable from E15_MEMINFO (the fake path)" \
+  "$(env E15_MEMINFO="$wd_mem" bash -c '. "$1" >/dev/null 2>&1; memavail_kb' _ "$RIG/lib.sh")" "733400"
+check "rung.sh runs the watchdog beside the driver and kills it on a trip" \
+  "$(grep -c '(memavail_watchdog "$memabort_marker" && kill "$driver_pid"' "$RIG/rung.sh")/$(grep -c 'kill "$watchdog_pid"' "$RIG/rung.sh")" "1/2"
+check "rung.sh records memory_abort in params.json" "$(grep -c '"memory_abort": json.loads' "$RIG/rung.sh")" "1"
+
 # (2) a retry-only teardown verifies against the last PRESTATE anywhere in the manifest
 if [ -f "$RIG/teardown.sh" ]; then
   printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && [ "$3" = microvm-worker.service ] && exit 1\nexit 1\n' >"$STUB/systemctl"

@@ -189,6 +189,10 @@ def build(rung_dir, params):
     if oom > 0:
         refusals += oom
         by_reason["oom_kill"] = by_reason.get("oom_kill", 0) + oom
+    # rung.sh's memory watchdog aborted the rung: one host-memory refusal (SPEC §8 condition 2).
+    if p.get("memory_abort"):
+        refusals += 1
+        by_reason["memory_floor_abort"] = 1
 
     baseline = None
     if p.get("baseline_path"):
@@ -224,7 +228,17 @@ def build(rung_dir, params):
     if mismatch:
         rec["holds"] = False
         rec["holds_abs"] = False
-    aborted = p.get("driver_exit", 0) != 0
+    # rung.sh's memory watchdog (host MemAvailable below its floor for 3 s) killed the VMs and
+    # stopped the driver: the host could not hold N, bound by memory -- a measured result, not a
+    # rig error, so it is not "aborted" and the ladder reads it as a failed rung.
+    mem_abort = p.get("memory_abort")
+    rec["memory_abort"] = mem_abort
+    if mem_abort:
+        rec["holds"] = False
+        rec["holds_abs"] = False
+        rec["binding"] = "memory_floor"
+        rec["reason"] = "memory_floor"
+    aborted = p.get("driver_exit", 0) != 0 and not mem_abort
     rec["aborted"] = aborted
     if aborted:
         rec["holds"] = False

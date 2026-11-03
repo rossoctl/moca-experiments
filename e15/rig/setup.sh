@@ -16,7 +16,8 @@
 #   1. guards: ports 9643/9644/9645/9646/6400 free, nothing under /opt/serverless-harness
 #   2. stops microvm-worker.service and docker containers bench-cp, bench-redis (UNDO: start)
 #   3. /srv/e15 tree; tokens in /srv/e15/secrets (0600)
-#   4. e15.slice (MemoryMax = host RAM - 2 GiB) and e15-vms.slice, as unit files (UNDO: remove)
+#   4. e15.slice (MemoryMax = host RAM - 3 GiB, MemoryHigh = MemoryMax - 1 GiB) and e15-vms.slice,
+#      as unit files (UNDO: remove)
 #   5. moca v0.9.0 clone at /srv/e15/moca (+ pi-fork submodule, npm ci + build), pnpm install
 #      --frozen-lockfile
 #   6. builds: stock microvm-worker, null-responder, e15-driver; resident build (resident/apply.sh)
@@ -154,9 +155,9 @@ fi
 )
 
 # --- 4. slices -------------------------------------------------------------------------------
-mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
-slice_max=$(((mem_kb / 1024 - 2048) * 1024 * 1024))
-want_slice=$(printf '[Unit]\nDescription=E15 experiment (moca-experiments)\n\n[Slice]\nMemoryAccounting=yes\nCPUAccounting=yes\nIOAccounting=yes\nTasksAccounting=yes\nMemoryMax=%s\nMemorySwapMax=0\n' "$slice_max")
+mem_kb=$(awk '/^MemTotal:/{print $2}' "$E15_MEMINFO")
+read -r slice_max slice_high < <(e15_slice_limits "$mem_kb")
+want_slice=$(printf '[Unit]\nDescription=E15 experiment (moca-experiments)\n\n[Slice]\nMemoryAccounting=yes\nCPUAccounting=yes\nIOAccounting=yes\nTasksAccounting=yes\nMemoryMax=%s\nMemoryHigh=%s\nMemorySwapMax=0\n' "$slice_max" "$slice_high")
 want_vms=$(printf '[Unit]\nDescription=E15 worker and its microVMs\n\n[Slice]\nMemoryAccounting=yes\nCPUAccounting=yes\nTasksAccounting=yes\nMemorySwapMax=0\n')
 for pair in "$E15_SLICE:$want_slice" "$E15_VM_SLICE:$want_vms"; do
   unit=${pair%%:*}
@@ -172,7 +173,7 @@ for pair in "$E15_SLICE:$want_slice" "$E15_VM_SLICE:$want_vms"; do
 done
 sctl daemon-reload
 sctl start "$E15_SLICE" "$E15_VM_SLICE"
-m_note "e15.slice MemoryMax=$slice_max bytes (host RAM $((mem_kb / 1024)) MiB - 2 GiB)"
+m_note "e15.slice MemoryMax=$slice_max MemoryHigh=$slice_high bytes (host RAM $((mem_kb / 1024)) MiB - 3 GiB; MemoryMax - 1 GiB); undone with the slice unit's UNDO line"
 # Pool cgroups need the cpu/memory/pids controllers enabled below e15-vms.slice.
 sudo -n sh -c "echo '+memory +pids +cpu' > $E15_VMCG/cgroup.subtree_control" 2>/dev/null || true
 

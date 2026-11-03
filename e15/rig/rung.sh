@@ -173,6 +173,7 @@ log "rung $ARM N=$N point=$POINT warmup=${WARMUP}s window=${WINDOW}s -> $DIR"
 
 cleanup() {
   [ -n "${sampler_pid:-}" ] && kill "$sampler_pid" 2>/dev/null
+  [ -n "${watchdog_pid:-}" ] && kill "$watchdog_pid" 2>/dev/null
   [ -n "${driver_pid:-}" ] && kill "$driver_pid" 2>/dev/null
   stop_rung_units
 }
@@ -234,9 +235,25 @@ MOCA_RELAY_EXEC_TOKEN=$(cat "$E15_SECRETS/exec.token") "$E15_BIN/e15-driver" \
   --target "$TARGET" --sandbox-id e15 --run-id "$RUN_ID" --out "$DIR" "${end_flag[@]}" "${start_flag[@]}" "${scan_flag[@]}" \
   >"$DIR/driver.log" 2>&1 &
 driver_pid=$!
+# Memory watchdog (Task 8 mem512 OOM incident): host MemAvailable below E15_MEMAVAIL_FLOOR_MIB
+# (default 1024) for 3 consecutive 1 s samples kills every E15 VM and aborts the rung before the
+# host's global OOM killer can reach processes outside e15.slice. The rung then records
+# memory_abort and record.py reports holds=false, binding memory_floor.
+memabort_marker=$DIR/memory-abort
+rm -f "$memabort_marker"
+(memavail_watchdog "$memabort_marker" && kill "$driver_pid" 2>/dev/null) &
+watchdog_pid=$!
 driver_exit=0
 wait "$driver_pid" || driver_exit=$?
 driver_pid=""
+kill "$watchdog_pid" 2>/dev/null || true
+wait "$watchdog_pid" 2>/dev/null || true
+watchdog_pid=""
+memory_abort=null
+if [ -s "$memabort_marker" ]; then
+  memory_abort=$(python3 -c 'import json,sys; w=open(sys.argv[1]).read().split(); print(json.dumps({"reason": w[0], "at": w[1], "mem_available_kb": int(w[2]), "floor_mib": int(sys.argv[2])}))' "$memabort_marker" "${E15_MEMAVAIL_FLOOR_MIB:-1024}")
+  log "memory watchdog tripped: $(cat "$memabort_marker"); E15 VMs killed, rung aborted"
+fi
 kill "$sampler_pid" 2>/dev/null || true
 wait "$sampler_pid" 2>/dev/null || true
 sampler_pid=""
@@ -350,6 +367,7 @@ p = {
     "baseline_path": baseline_path, "baseline_source": "$baseline_src",
     "workspaces_per_slot": $K, "workspaces_k_mult": $K_MULT, "workspaces_precreated": len(pre),
     "oom_kills": $oom_after - $oom_before,
+    "memory_abort": json.loads("""$memory_abort"""),
     "unseeded_sessions": len(keys - pre), "sessions_started": len(keys),
     "workspace_seeding": "cp $(workspace_cp_flag "$WS_COPY") of the template per key before t0",
     "workspace_copy": "$WS_COPY", "host_profile": "$E15_HOST_PROFILE",

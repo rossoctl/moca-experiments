@@ -546,6 +546,45 @@ wait_for() {
 
 port_listening() { ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "^127\.0\.0\.1:$1\$"; }
 
+# --- memory guards (Task 8 mem512 OOM incident, user decision a+b) ---------------------------
+
+# E15_MEMINFO: the meminfo file the guards read (tests point it at a fake one).
+E15_MEMINFO=${E15_MEMINFO:-/proc/meminfo}
+# e15_slice_limits MEMTOTAL_KB: "MEMORYMAX MEMORYHIGH" in bytes for e15.slice. MemoryMax = MemTotal
+# - 3 GiB, so the slice's own OOM acts before the host's (2 GiB left the global OOM killer to run
+# first); MemoryHigh = MemoryMax - 1 GiB, so the slice is throttled and reclaimed before that.
+e15_slice_limits() {
+  local mib=$(($1 / 1024))
+  local max=$(((mib - 3072) * 1024 * 1024))
+  printf '%s %s\n' "$max" "$((max - 1024 * 1024 * 1024))"
+}
+
+# memavail_kb: MemAvailable in kB from $E15_MEMINFO (empty if unreadable).
+memavail_kb() { awk '$1=="MemAvailable:"{print $2; exit}' "$E15_MEMINFO" 2>/dev/null; }
+
+# memavail_watchdog MARKER [FLOOR_MIB] [N] [INTERVAL_S]: sample MemAvailable every INTERVAL_S (1);
+# when it is below FLOOR_MIB (E15_MEMAVAIL_FLOOR_MIB, default 1024) for N (3) consecutive samples,
+# write MARKER ("memory_floor <utc> <memavail_kb>"), kill every E15 VM (kill_vm_cgroups) and return
+# 0. Runs until killed otherwise. rung.sh runs it beside the driver and aborts the rung on MARKER.
+memavail_watchdog() {
+  local marker=$1 floor_mib=${2:-${E15_MEMAVAIL_FLOOR_MIB:-1024}} need=${3:-3} iv=${4:-1}
+  local below=0 kb
+  while :; do
+    kb=$(memavail_kb)
+    if [ -n "$kb" ] && [ "$kb" -lt $((floor_mib * 1024)) ]; then
+      below=$((below + 1))
+    else
+      below=0
+    fi
+    if [ "$below" -ge "$need" ]; then
+      printf 'memory_floor %s %s\n' "$(utc)" "$kb" >"$marker"
+      kill_vm_cgroups
+      return 0
+    fi
+    sleep "$iv"
+  done
+}
+
 # --- E15's own units -------------------------------------------------------------------------
 
 # kill_vm_cgroups: kill every process left in a VM cgroup under e15-vms.slice (never the worker's
