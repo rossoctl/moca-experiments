@@ -750,6 +750,29 @@ if [ -f "$RIG/setup.sh" ]; then
   printf '#!/usr/bin/env bash\necho "sudo $*" >>"%s"\n' "$CALLS" >"$STUB/sudo"
 fi
 
+# kill_vm_cgroups: on cgroupfs every file reports size 0, so `[ -s cgroup.procs ]` is always false
+# and a populated pool was never killed (Task 8: 27 Firecracker VMs left after an OOM-killed worker).
+# Behaviour (regular files stand in for cgroupfs): a populated pool gets cgroup.kill, an empty pool
+# does not, the worker's service cgroup is never touched. The cgroupfs property itself (size 0) is
+# pinned by the second check: the populated test reads the file's content.
+kv_root="$TMP/kvcg"
+rm -rf "$kv_root"
+mkdir -p "$kv_root/pool-a" "$kv_root/pool-b" "$kv_root/e15-worker.service"
+for d in pool-a pool-b e15-worker.service; do : >"$kv_root/$d/cgroup.kill"; : >"$kv_root/$d/cgroup.procs"; done
+echo 4242 >"$kv_root/pool-a/cgroup.procs"
+echo 4243 >"$kv_root/e15-worker.service/cgroup.procs"
+kv_out=$(env PATH="$SPATH" bash -c '
+  sudo() { [ "$1" = -n ] && shift; "$@"; }
+  export -f sudo
+  E15_VMCG=$1
+  eval "$(sed -n "/^kill_vm_cgroups() {/,/^}/p" "$2")"
+  kill_vm_cgroups
+  printf "a=%s b=%s svc=%s\n" "$(cat "$1/pool-a/cgroup.kill")" "$(cat "$1/pool-b/cgroup.kill")" "$(cat "$1/e15-worker.service/cgroup.kill")"
+' _ "$kv_root" "$RIG/lib.sh" 2>&1)
+check "kill_vm_cgroups kills a populated pool only, never the worker's service cgroup" "$kv_out" "a=1 b= svc="
+check "kill_vm_cgroups tests cgroup.procs by content, not size (cgroupfs reports size 0)" \
+  "$(sed -n '/^kill_vm_cgroups() {/,/^}/p' "$RIG/lib.sh" | grep -c -- '-n "\$(cat "\$d/cgroup.procs"')/$(sed -n '/^kill_vm_cgroups() {/,/^}/p' "$RIG/lib.sh" | grep -c -- '-s "\$d/cgroup.procs"')" "1/0"
+
 # (2) a retry-only teardown verifies against the last PRESTATE anywhere in the manifest
 if [ -f "$RIG/teardown.sh" ]; then
   printf '#!/usr/bin/env bash\n[ "$1" = is-active ] && [ "$3" = microvm-worker.service ] && exit 1\nexit 1\n' >"$STUB/systemctl"

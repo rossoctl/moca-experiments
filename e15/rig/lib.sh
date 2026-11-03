@@ -556,7 +556,8 @@ kill_vm_cgroups() {
     for d in "$1"/*/; do
       d=${d%/}; n=${d##*/}
       case "$n" in *.service|*.scope|*.slice) continue ;; esac
-      [ -f "$d/cgroup.kill" ] && [ -s "$d/cgroup.procs" ] && echo 1 >"$d/cgroup.kill"
+      # cgroupfs files report size 0, so test the content: [ -s cgroup.procs ] is always false
+      [ -f "$d/cgroup.kill" ] && [ -n "$(cat "$d/cgroup.procs" 2>/dev/null)" ] && echo 1 >"$d/cgroup.kill"
     done
     sleep 0.5
     for d in "$1"/*/; do
