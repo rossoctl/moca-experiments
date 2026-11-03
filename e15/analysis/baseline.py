@@ -2,7 +2,9 @@
 
 "n1_median_pace" / "n1_pace_sessions": the median per-session pace (holds.session_paces: observed /
 planned - 1, sessions with >= 3 window calls) over the seeded RUN_DIRs' sessions.jsonl only -- never
-the probe runs. Condition 3 is relative to it (SPEC §8).
+the probe runs. Condition 3 is relative to it (SPEC §8); with no such session baseline.py exits
+non-zero. The seeded runs set this N=1 pace median (and the evidence fields) and are not used for
+the class medians, which come from the probes alone.
 Two kinds of N=1 run go in:
   * RUN_DIR: the seeded single-session runs (baseline.sh). Their in-window ok calls give
     "baseline_p95_ms" and "calls" -- evidence and a pace sanity check, NOT used for medians.
@@ -137,6 +139,8 @@ def main(argv=None):
     for item in os.environ.get("E15_BASELINE_SKIPPED", "").split():
         seed, tag, reason = item.split(":", 2)
         b["skipped"].append({"seed": int(seed), "tag": tag, "reason": reason})
+    if b["n1_median_pace"] is None:
+        sys.exit("baseline.py: no seeded session with >= 3 window calls in %s: no N=1 pace" % " ".join(dirs))
     if not b["calls"]:
         sys.exit("baseline.py: no in-window ok calls in %s" % " ".join(dirs))
     if probes and b["excess_p95_ms"] is None:

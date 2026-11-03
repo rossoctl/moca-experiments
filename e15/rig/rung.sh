@@ -139,10 +139,13 @@ for k, want in (("library_sha256", lib), ("driver_bin_sha256", drv), ("corpus_sh
     if want and d.get(k) != want:
         print("%s %s, this rung has %s" % (k, d.get(k), want))
         sys.exit(0)
-for k in ("class_medians", "global_median_ms", "excess_p95_ms", "n1_median_pace"):
+for k in ("class_medians", "global_median_ms", "excess_p95_ms"):
     if k not in d:
         print("no %s (not a class-matched baseline)" % k)
-        sys.exit(0)' "$cand" "$lib_sha" "$drv_sha" "$want_corpus" "$want_sig")
+        sys.exit(0)
+if d.get("n1_median_pace") is None:
+    print("n1_median_pace missing or null \u2014 re-run baseline.sh")
+    sys.exit(0)' "$cand" "$lib_sha" "$drv_sha" "$want_corpus" "$want_sig")
   [ -z "$stale" ] || die "stale N=1 baseline $cand: $stale; re-run baseline.sh $POINT $ARM"
   baseline_path=\"$cand\"
   baseline_src=$cand

@@ -435,6 +435,18 @@ if [ -f "$RIG/rung.sh" ]; then
   base_at default >/dev/null
   check "stale guard: a baseline.json without class medians -> dies" "$?" "1"
   check "stale guard: names the missing key" "$(grep -c 'no class_medians' "$TMP/base.err")" "1"
+  # a null N=1 pace is refused (condition 3 cannot be evaluated)
+  # shellcheck disable=SC2086
+  STUB_POINT=default stub_rec "$TROOT/runs/default/sbx/N1/baseline.json" baseline_p95_ms 50 $GOOD
+  python3 - "$TROOT/runs/default/sbx/N1/baseline.json" <<'PY3'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["n1_median_pace"] = None
+json.dump(d, open(sys.argv[1], "w"))
+PY3
+  base_at default >/dev/null
+  check "stale guard: a null n1_median_pace -> rung dies" "$?" "1"
+  check "stale guard: names n1_median_pace" "$(grep -c 'n1_median_pace missing or null' "$TMP/base.err")" "1"
   # corpus: checked for this point's own baseline, not for the default point's fallback
   rm -rf "$TROOT/runs"
   # shellcheck disable=SC2086
@@ -486,6 +498,7 @@ holds=${!var:-true}
 printf '{"holds": %s, "seed": %s, "failed_calls": %s, "refusals": 0%s}\n' "$holds" "$E15_SEED" "${!fvar:-0}" \
   "${reason:+, \"reason\": \"$reason\"}" >"$d/record.json"
 add=$(( ${E15_SEED} * 10 ))
+echo '{"session": "s", "window_calls": 5, "planned_ms": 1000, "observed_ms": 1100}' >"$d/sessions.jsonl"
 : >"$d/calls.jsonl"
 for ((i = 0; i < ${!cvar:-${CALLS_ALL:-10}}; i++)); do
   printf '{"in_window": true, "status": "ok", "class": "a", "observed_ms": %s, "planned_dur_ms": 0, "tail_ms": 0}\n' "$add" >>"$d/calls.jsonl"

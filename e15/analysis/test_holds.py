@@ -349,6 +349,7 @@ def _rung_dir(tmp_path, name, added):
     (d / "calls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     (d / "record.json").write_text(json.dumps(
         dict(library_sha256="L", driver_bin_sha256="D", corpus_sha256="C")))
+    (d / "sessions.jsonl").write_text(json.dumps(sess(0.1)) + "\n")
     return str(d)
 
 
@@ -739,3 +740,19 @@ def test_record_carries_n1_pace_and_pace_excess(tmp_path):
     (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0.25)) + "\n")
     r = R.build(str(tmp_path), dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(bp)))
     assert r["n1_median_pace"] == 0.193 and abs(r["pace_excess"] - 0.057) < 1e-9 and r["holds"]
+
+
+def test_negative_n1_pace_boundary():
+    bl = BL(excess=1000, n1_median_pace=-0.033)
+    assert H.evaluate([call()], [sess(0.067)], bl)["holds"]
+    assert not H.evaluate([call()], [sess(0.0671)], bl)["holds"]
+
+
+def test_baseline_exits_without_pace_sessions(tmp_path):
+    s1 = _rung_dir(tmp_path, "N1-s1", [5] * 3)
+    _sessions_file(tmp_path / "N1-s1", [0.1], n=2)       # < 3 window calls: no pace session
+    px = _probe_dir(tmp_path, "p-x", "x", [10] * 5)
+    out = tmp_path / "b.json"
+    with pytest.raises(SystemExit) as e:
+        B.main([str(out), s1, "--probe", px])
+    assert "no N=1 pace" in str(e.value) and not out.exists()
