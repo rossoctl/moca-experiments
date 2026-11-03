@@ -64,14 +64,14 @@ def test_fails_on_refusal_line(tmp_path):
 
 
 def test_pace_boundary():
-    # relative to the arm's own N=1 median pace: inclusive at +0.10
+    # class pace (medians {}, global 0 here: expected = planned): inclusive at 0.10; the N=1 pace
+    # is reported but no longer enters the verdict
     bl = BL(excess=1000, n1_median_pace=0.193)
-    assert H.evaluate([call()], [sess(0.293)], bl)["holds"]
-    r = H.evaluate([call()], [sess(0.2931)], bl)
+    assert H.evaluate([call()], [sess(0.10)], bl)["holds"]
+    r = H.evaluate([call()], [sess(0.1001)], bl)
     assert not r["holds"] and not r["holds_abs"] and not r["conditions"]["pace"]
-    assert abs(r["pace_excess"] - 0.1001) < 1e-9 and r["n1_median_pace"] == 0.193
-    # a faster-than-N=1 rung is fine
-    assert H.evaluate([call()], [sess(0.0)], bl)["holds"]
+    assert abs(r["median_class_pace"] - 0.1001) < 1e-9 and r["n1_median_pace"] == 0.193
+    assert H.evaluate([call()], [sess(0.293)], BL(excess=1000, n1_median_pace=0.193))["holds"] is False
 
 
 def test_n1_skips_pace_and_holds_with_slow_pace():
@@ -739,13 +739,15 @@ def test_record_carries_n1_pace_and_pace_excess(tmp_path):
     (tmp_path / "calls.jsonl").write_text(json.dumps(call(added=100)) + "\n")
     (tmp_path / "sessions.jsonl").write_text(json.dumps(sess(0.25)) + "\n")
     r = R.build(str(tmp_path), dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(bp)))
-    assert r["n1_median_pace"] == 0.193 and abs(r["pace_excess"] - 0.057) < 1e-9 and r["holds"]
+    assert r["n1_median_pace"] == 0.193 and abs(r["pace_excess"] - 0.057) < 1e-9
+    # expected = 1000 planned + 100 (class x median); observed 1250 -> class pace 1250/1100 - 1
+    assert abs(r["median_class_pace"] - (1250 / 1100.0 - 1)) < 1e-9 and not r["holds"]
 
 
-def test_negative_n1_pace_boundary():
+def test_negative_n1_pace_does_not_move_the_verdict():
     bl = BL(excess=1000, n1_median_pace=-0.033)
-    assert H.evaluate([call()], [sess(0.067)], bl)["holds"]
-    assert not H.evaluate([call()], [sess(0.0671)], bl)["holds"]
+    assert H.evaluate([call()], [sess(0.10)], bl)["holds"]
+    assert not H.evaluate([call()], [sess(0.1001)], bl)["holds"]
 
 
 def test_baseline_exits_without_pace_sessions(tmp_path):
@@ -756,3 +758,73 @@ def test_baseline_exits_without_pace_sessions(tmp_path):
     with pytest.raises(SystemExit) as e:
         B.main([str(out), s1, "--probe", px])
     assert "no N=1 pace" in str(e.value) and not out.exists()
+
+
+# --- class-matched pace -------------------------------------------------------------------
+
+def csess(session, pace_obs, planned=1000, n=3):
+    return dict(session=session, window_calls=n, planned_ms=planned, observed_ms=pace_obs)
+
+
+def ccalls(session, classes, **kw):
+    return [dict(call(cls=c, **kw), session=session) for c in classes]
+
+
+def test_class_pace_zero_when_latency_equals_class_medians():
+    meds = {"x": 100, "y": 400}
+    cs = ccalls("a", ["x", "y", "x"])
+    expected = 1000 + 100 + 400 + 100
+    paces, ex, np_ = H.class_paces(cs, [csess("a", expected)], meds, 0)
+    assert paces == [0.0] and ex == 0 and np_ == 0
+
+
+def test_uniform_slowdown_raises_class_pace_by_x_calls_over_expected():
+    meds = {"x": 100}
+    cs = ccalls("a", ["x"] * 4)
+    expected = 1000 + 4 * 100
+    X = 50
+    paces, _, _ = H.class_paces(cs, [csess("a", expected + 4 * X, n=4)], meds, 0)
+    assert abs(paces[0] - X * 4 / float(expected)) < 1e-9
+
+
+def test_scan_heavy_session_fails_relative_rule_but_holds_class_pace():
+    # the scan class costs +600 ms per call at N=1; a scan-heavy session runs +19.4% over plan
+    meds = {"scan": 600, "read": 5}
+    cs = ccalls("a", ["scan"] * 3 + ["read"] * 2, added=600)
+    sessions = [csess("a", 1000 + 3 * 600 + 2 * 5, n=5)]
+    bl = BL(excess=1000, medians=meds, gmed=5, n1_median_pace=0.012)
+    r = H.evaluate(cs, sessions, bl)
+    assert r["median_pace"] > 0.19 and r["median_pace"] - r["n1_median_pace"] > 0.10   # old rule fails
+    assert abs(r["median_class_pace"]) < 1e-9 and r["holds"] and r["holds_abs"]
+
+
+def test_class_pace_join_and_window_match_sessions_jsonl():
+    meds = {"x": 100, "y": 1000}
+    cs = (ccalls("a", ["x", "x", "x"])
+          + [dict(c, in_window=False) for c in ccalls("a", ["y"] * 5)]            # out of window
+          + ccalls("a", ["y"], status="err", cause="cut_at_end")                   # cut: not in pace
+          + ccalls("b", ["y"] * 3))                                               # other session
+    p = H.class_paces(cs, [csess("a", 1300), csess("b", 4000)], meds, 0)
+    assert p[0] == [0.0, 0.0] and p[1:] == (0, 0)
+    # a failed (err, not cut) in-window call is part of the session's pace window
+    cs2 = ccalls("a", ["x", "x"]) + ccalls("a", ["x"], status="err", cause="rpc_error")
+    assert H.class_paces(cs2, [csess("a", 1300)], meds, 0)[0] == [0.0]
+
+
+def test_class_pace_nonpositive_expected_excluded_and_counted():
+    meds = {"x": -2000}
+    cs = ccalls("a", ["x"] * 3) + ccalls("b", ["x"])
+    paces, ex, nonpos = H.class_paces(cs, [csess("a", 500), csess("b", 900, n=1)], meds, 0)
+    assert paces == [] and ex == 1 and nonpos == 1
+    r = H.evaluate(cs, [csess("a", 500)], BL(excess=10, medians=meds))
+    assert r["pace_excluded_nonpositive"] == 1 and r["median_class_pace"] is None
+
+
+def test_global_median_for_unknown_class():
+    paces, _, _ = H.class_paces(ccalls("a", ["zzz"] * 3), [csess("a", 1300)], {}, 100)
+    assert paces == [0.0]
+
+
+def test_n1_and_control_skip_class_pace():
+    r = H.evaluate(ccalls("s", ["x"] * 3), [sess(5.0)], None)
+    assert r["holds"] and r["median_class_pace"] is None

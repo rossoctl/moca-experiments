@@ -1,6 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
-Version: 0.8 (draft for review), 2026-11-03
+Version: 0.9 (draft for review), 2026-11-03
+2026-11-03: condition 3 class-matched (user decision before sealing): a session's expected time = its planned time plus, for each call, that class's N=1 probe median added latency; class pace ≤ 10%; N=1 median pace reported.
 2026-11-03: condition 3 relative to the arm's own N=1 median pace (user decision before sealing; at mem512 SBX's N=1 pace is +19.3%); metal run moves to an AWS m7i.metal-24xl (EBS-only), the IBM metal rig being unavailable.
 2026-11-03: memory-pressure point mem512 added (user decision after calibration): a 512 MiB per-session dataset, read once per recorded call of the scanning classes; its binding may be disk I/O, reported as a finding; §9.3 lists disk_io.
 2026-11-02: condition 4 class-matched (user decision before sealing): per-class N=1 medians, excess p95 ≤ max(3× baseline excess p95, 50 ms); medians from a per-class N=1 probe, 20 calls per class drawn from the corpus distribution (each class alone on an idle worker), every class is probed; a class with fewer than 5 ok probe calls is undercovered and uses the global median; absolute verdict B + 250 ms (user decision 2026-11-02); per-call N=1 overhead reported per arm.
@@ -437,12 +438,13 @@ rung, all four conditions are true:
    for it.
 2. **No call is refused.** No `memory-budget`, host-floor, `busy` or `queue full` refusal, no
    `RESOURCE_EXHAUSTED`, and no OOM kill.
-3. **Sessions keep their pace.** For each session with at least 3 calls in the window, pace =
-   (observed time from its first to its last completed call in the window) ÷ (planned time for the
-   same calls and gaps) − 1. The **median pace is at most 10 percentage points above the arm's own median pace
-   at `N = 1`** (the pooled seeded `N = 1` sessions, §10.1; the `N = 1` rung itself skips this
-   condition). Sessions with fewer than 3 calls in the window are excluded from this condition and
-   counted.
+3. **Sessions keep their pace, class by class.** For each session with at least 3 calls in the
+   window, expected time = (planned time for the calls and gaps in the window) + (for each of those
+   calls, the `N = 1` probe median added latency of its command class, §8.4). Class pace = (observed
+   time from its first to its last completed call in the window) ÷ expected time − 1. The **median
+   class pace is at most 10%**. The `N = 1` rung skips this condition and reports its raw median pace.
+   Sessions with fewer than 3 calls in the window, or a non-positive expected time, are excluded from
+   this condition and counted.
 4. **Added latency stays bounded, class by class.** Per call, added latency = observed time from send
    to `End`, minus the planned duration. From the arm's per-class `N = 1` probe (§10.1: each class alone on an idle
    worker, 20 calls drawn from the corpus's distribution for that class) take the median added

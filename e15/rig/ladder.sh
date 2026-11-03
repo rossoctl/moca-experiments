@@ -118,10 +118,13 @@ for n in "${E15_LADDER[@]}"; do
   fi
   holds=$(rec_field "$dir/record.json" holds)
   holds_abs=$(rec_field "$dir/record.json" holds_abs)
+  cpace=$(rec_field "$dir/record.json" median_class_pace)
+  [ "$cpace" = false ] && cpace=null
+  [ -n "$cpace" ] || cpace=null
   errs=$(printf '"%s",' "${rig_errors[@]}")
   [ ${#rig_errors[@]} -gt 0 ] || errs=""
-  printf '{"n":%s,"holds":%s,"holds_abs":%s,"repeated":%s,"rig_errors":[%s],"dir":"%s"}\n' \
-    "$n" "$holds" "$holds_abs" "$repeated" "${errs%,}" "$dir" >>"$rungs_json"
+  printf '{"n":%s,"holds":%s,"holds_abs":%s,"repeated":%s,"median_class_pace":%s,"rig_errors":[%s],"dir":"%s"}\n' \
+    "$n" "$holds" "$holds_abs" "$repeated" "$cpace" "${errs%,}" "$dir" >>"$rungs_json"
   if [ "$alive" = 1 ]; then
     if [ "$holds" = true ]; then n_max=$n; else
       stopped=$n
