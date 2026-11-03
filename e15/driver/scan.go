@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -53,7 +52,7 @@ func (s Scan) For(cls string) string {
 func (s Scan) Check(l *Library) error {
 	var bad []string
 	for c := range s.Classes {
-		if len(l.Classes[c]) == 0 && c != "host_infra" && c != "opaque" && c != "build" {
+		if len(l.Classes[c]) == 0 && !isStandinClass(c) {
 			bad = append(bad, c)
 		}
 	}
@@ -120,12 +119,4 @@ func (k *stepID) UnmarshalJSON(b []byte) error {
 	}
 	*k = stepID(n)
 	return nil
-}
-
-func readFileOrEmpty(path string) ([]byte, error) {
-	b, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	return b, err
 }

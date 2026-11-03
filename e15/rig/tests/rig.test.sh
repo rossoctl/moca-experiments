@@ -656,6 +656,7 @@ if [ -f "$RIG/sample.sh" ]; then
   mkdir -p "$FP/pressure"
   printf 'MemTotal: 1 kB\nMemAvailable: 100 kB\nCached: 5 kB\n' >"$FP/meminfo"
   printf 'cpu  1 0 1 10 0 0 0 0 0 0\n' >"$FP/stat"
+  mkdir -p "$FP/101" "$FP/202" "$FP/303"
   # fields: major minor name reads_done reads_merged sectors_read ms_reading writes_done ...
   ds() { printf '   8       0 sda 0 0 0 0 0 0 0 0 0 0 0\n 259       0 nvme0n1 %s 0 %s %s %s 0 0 %s 0 0 0\n' "$1" "$2" "$3" "$4" "$5" >"$FP/diskstats"; }
   ds 100 0 0 0 0
@@ -673,6 +674,7 @@ if [ -f "$RIG/sample.sh" ]; then
   check "sample.sh: first sample has no disk_read_mbs" "$(head -1 "$OUTS" | grep -c disk_read_mbs)" "0"
   check "sample.sh: disk_read_mbs = 200 MB / the two samples' ts delta" \
     "$(python3 -c 'import json,sys; a,b=[json.loads(l) for l in open(sys.argv[1]).readlines()[:2]]; w=200/(b["ts"]-a["ts"]); print("ok" if abs(b["disk_read_mbs"]-w) < 0.01*w else (b["disk_read_mbs"], w))' "$OUTS")" "ok"
+  check "sample.sh: procs counted from E15_PROC (3 fixture pids)" "$(head -1 "$OUTS" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["procs"])')" "3"
   check "sample.sh: disk_await_ms = 50 ms / 10 I/Os" "$(sed -n 2p "$OUTS" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["disk_await_ms"])')" "5.0"
   rm -f "$OUTS"
   E15_PROC="$FP" E15_DISK_DEV=nosuch E15_SLICE_DIR="$TMP/nocg" E15_STATS_URL=http://127.0.0.1:1/x \

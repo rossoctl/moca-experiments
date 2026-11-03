@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -197,4 +199,32 @@ func countFile(t *testing.T, path, s string) int {
 		t.Fatal(err)
 	}
 	return strings.Count(string(b), s)
+}
+
+func readFileOrEmpty(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return b, err
+}
+
+func TestStandinClassesShared(t *testing.T) {
+	for _, c := range []string{"host_infra", "opaque", "build"} {
+		if !isStandinClass(c) {
+			t.Fatalf("%s is a stand-in class", c)
+		}
+	}
+	if isStandinClass("read") {
+		t.Fatal("read is not a stand-in class")
+	}
+	// Scan.Check accepts exactly the stand-in classes the planner accepts without a library entry
+	lib := testLib(nil, "q")
+	for _, c := range []string{"host_infra", "opaque", "build", "nosuch"} {
+		_, perr := lib.Plan(Call{Class: c, WorkMs: 100, DurMs: 100}, 1, "s")
+		cerr := scanFor(c).Check(lib)
+		if (perr == nil) != (cerr == nil) {
+			t.Fatalf("%s: Plan err %v, Check err %v", c, perr, cerr)
+		}
+	}
 }

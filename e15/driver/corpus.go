@@ -266,6 +266,16 @@ func groupSteps(ps []Planned) {
 	})
 }
 
+// Stand-in classes (SPEC §5.6): replayed without a library entry of their own. host_infra is a
+// sleep plus interpreter invocations; the interpreter-stand-in classes replay the interpreter
+// class for their recorded time. The one definition Plan, validatePlans and Scan.Check use.
+const classHostInfra = "host_infra"
+
+var interpStandinClasses = map[string]bool{"opaque": true, "build": true}
+
+// isStandinClass reports whether cls is a stand-in class (needs no library entry).
+func isStandinClass(cls string) bool { return cls == classHostInfra || interpStandinClasses[cls] }
+
 // Plan expands one call into the commands to send, deterministically for (seed, sessionID, c.I).
 // Classes without a library entry use the interpreter stand-in; host_infra is sleep plus
 // interpreter invocations.
@@ -274,7 +284,7 @@ func (l *Library) Plan(c Call, seed int64, sessionID string) ([]Planned, error) 
 	interp := l.Classes[l.Standin.InterpreterClass]
 	var steps []step
 	switch {
-	case c.Class == "host_infra":
+	case c.Class == classHostInfra:
 		sleepMs := int64(math.Round(float64(c.WorkMs)*l.Standin.InfraSleepFrac/100)) * 100
 		if sleepMs > 0 {
 			steps = append(steps, step{Planned{Cmd: fmt.Sprintf("sleep %.1f", float64(sleepMs)/1000)}, sleepMs})
@@ -284,7 +294,7 @@ func (l *Library) Plan(c Call, seed int64, sessionID string) ([]Planned, error) 
 		}
 	case len(l.Classes[c.Class]) > 0:
 		steps = fill(l.Classes[c.Class], c.WorkMs, rng)
-	case c.Class == "opaque" || c.Class == "build":
+	case interpStandinClasses[c.Class]:
 		steps = fill(interp, c.WorkMs, rng)
 	default:
 		return nil, fmt.Errorf("plan: class %q is neither in the library nor a stand-in class", c.Class)

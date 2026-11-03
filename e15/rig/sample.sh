@@ -23,7 +23,7 @@
 #                       first sample, or when the device is not found)
 #   disk_await_ms       mean time per completed I/O (reads + writes) over the same delta, ms
 #                       (absent when no I/O completed)
-#   procs               process count (/proc/<pid> directories)
+#   procs               process count ($E15_PROC/<pid> directories)
 #   vm_mem              {"<cgroup>": memory.current} for every VM cgroup in the worker slice that
 #                       holds a process (the worker's own service cgroup and idle pool cgroups are
 #                       left out, so a median over vm_mem is a median over live VMs)
@@ -140,7 +140,7 @@ while [ "$stop" -eq 0 ]; do
     done
   fi
 
-  pids=(/proc/[0-9]*)
+  pids=("$PROC"/[0-9]*)
   procs_n=${#pids[@]}
 
   disk=$(df -Pk "$DISK_PATH" 2>/dev/null | awk 'NR==2{gsub("%","",$5); print $5" "$3}')
