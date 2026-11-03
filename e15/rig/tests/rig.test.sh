@@ -953,6 +953,18 @@ EOF
 #!/usr/bin/env bash
 echo "apt-get \$*" >>"$TMP/apt.log"
 echo "apt-get \$*" >>"$TMP/order.log"
+# APT_LOCK_N=k: the first k updates fail on the lists lock; APT_UPDATE_FAIL=1: update fails otherwise
+case " \$* " in *" update "*)
+  if [ -n "\${APT_LOCK_N:-}" ]; then
+    n=\$(cat "$TMP/aptlock.n" 2>/dev/null || echo 0)
+    if [ "\$n" -lt "\$APT_LOCK_N" ]; then
+      echo \$((n + 1)) >"$TMP/aptlock.n"
+      echo "E: Could not get lock /var/lib/apt/lists/lock. It is held by process 4242 (apt-get)" >&2
+      exit 100
+    fi
+  fi
+  [ "\${APT_UPDATE_FAIL:-0}" = 1 ] && { echo "E: Failed to fetch http://archive.ubuntu.com/x  404" >&2; exit 100; } ;;
+esac
 inst=0
 for a; do
   case "\$a" in
@@ -1026,6 +1038,24 @@ SH
   check "bootstrap: the intent line precedes the install" "$(diff "$TMP/boot-m.pre-fail" "$TMP/boot-m.md" | grep -c 'apt: installing podman (the packages added are recorded next, even if this fails)')" "1"
   cp "$TMP/dpkg.full" "$TMP/dpkg.db"
   cp "$TMP/boot-m.pre-fail" "$TMP/boot-m.md"
+  # L1: apt-get update retries while the lists lock is held, and only then
+  printf 'git\ncurl\npython3\niproute2\nunzip\ne2fsprogs\nxfsprogs\n' >"$TMP/dpkg.db"
+  rm -f "$TMP/aptlock.n"; : >"$TMP/apt.log"
+  boot APT_LOCK_N=2 E15_APT_RETRY_S=0
+  check "bootstrap: apt-get update retries on the lists lock, then succeeds" \
+    "$?/$(grep -c ' update ' "$TMP/apt.log")/$(grep -c 'the lists lock is held' "$TMP/boot.out")" "0/3/2"
+  cp "$TMP/dpkg.full" "$TMP/dpkg.db"; cp "$TMP/boot-m.pre-fail" "$TMP/boot-m.md"
+  printf 'git\ncurl\npython3\niproute2\nunzip\ne2fsprogs\nxfsprogs\n' >"$TMP/dpkg.db"
+  rm -f "$TMP/aptlock.n"; : >"$TMP/apt.log"
+  boot APT_LOCK_N=9 E15_APT_RETRY_S=0 E15_APT_RETRIES=3
+  check "bootstrap: a lists lock held past the retries dies, without installing" \
+    "$?/$(grep -c 'the apt lists lock stayed held (3 tries' "$TMP/boot.out")/$(grep -c ' install ' "$TMP/apt.log")" "1/1/0"
+  rm -f "$TMP/aptlock.n"; : >"$TMP/apt.log"
+  boot APT_UPDATE_FAIL=1 E15_APT_RETRY_S=0
+  check "bootstrap: an update failure that is not the lock dies at once (no retry)" \
+    "$?/$(grep -c ' update ' "$TMP/apt.log")/$(grep -c 'apt-get update failed: E: Failed to fetch' "$TMP/boot.out")" "1/1/1"
+  check "bootstrap: no apt-update temp file is left" "$(find /tmp -maxdepth 1 -name 'e15-apt-update.*' -newer "$TMP/boot-m.pre-fail" 2>/dev/null | grep -c .)" "0"
+  cp "$TMP/dpkg.full" "$TMP/dpkg.db"; cp "$TMP/boot-m.pre-fail" "$TMP/boot-m.md"
   # L1: grpcurl's check is its version and its installed binary's sha256, not only -x
   printf '#!/bin/sh\necho "grpcurl 1.9.4"\n# another build\n' >"$BR/bin/grpcurl"
   : >"$TMP/fetch.log"
@@ -1327,6 +1357,16 @@ SH
   check "storage: a template on another device -> refused" "$(sc)" "refused"
   printf '%s 100\n' "$SR" >"$SDEV"
   check "storage: one device but ext4 -> refused" "$(SFS=ext4 sc)/$(grep -c 'is on ext4 (/srv/e15), not XFS' "$TMP/sc.out")" "refused/1"
+  # L4: xfs_info's output is captured before it is matched (no grep -q on a pipe under pipefail)
+  XS="$TMP/xstub"; mkdir -p "$XS"
+  printf '#!/usr/bin/env bash\n[ "$1" = -n ] && shift\nexec "$@"\n' >"$XS/sudo"
+  # a long xfs_info whose reflink=1 is on line 3 of 2000: a grep -q in a pipe could stop early
+  printf '#!/usr/bin/env bash\necho "meta-data=$1 isize=512"\necho "  = crc=1"\necho "  = reflink=1 bigtime=1"\nfor i in $(seq 2000); do echo "pad line $i padding padding padding padding"; done\nexit "${XFS_RC:-0}"\n' >"$XS/xfs_info"
+  chmod +x "$XS"/*
+  xr() { (PATH="$XS:$PATH" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'set -o pipefail; source "$1"; e15_xfs_reflink /x' _ "$RIG/lib.sh") && echo yes || echo no; }
+  check "e15_xfs_reflink: reflink=1 early in a long xfs_info output, under pipefail" "$(xr)" "yes"
+  check "e15_xfs_reflink: xfs_info failing is not reflink" "$(XFS_RC=1 xr)" "no"
+  check "e15_xfs_reflink: no grep -q on a pipe" "$(grep -v '^ *#' "$RIG/lib.sh" | grep -c 'xfs_info.*| *grep -q')" "0"
   check "storage: XFS without reflink=1 -> refused" "$(SREFLINK=0 sc)/$(grep -c 'has no reflink=1 (mkfs.xfs -m reflink=1)' "$TMP/sc.out")" "refused/1"
   # e15_require_reflink: probes from the template dir into workspaces/, every call; no fallback
   CPR="$TMP/cprstub"

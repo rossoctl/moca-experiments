@@ -100,8 +100,27 @@ if [ ${#missing[@]} -gt 0 ]; then
   fi
   log "apt: installing ${missing[*]}"
   # needrestart (Ubuntu) would otherwise restart the host's services after the install.
-  sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get "${APT_OPTS[@]}" update -q >/dev/null ||
-    die "apt-get update failed"
+  # DPkg::Lock::Timeout does not cover the lists lock apt-get update takes, and apt-daily can refresh
+  # the lists at any time: retry while the failure is that lock (E15_APT_RETRIES x E15_APT_RETRY_S,
+  # default 20 x 15 s). Any other failure dies at once. The output goes to a temporary file.
+  aptlog=$(mktemp /tmp/e15-apt-update.XXXXXX)
+  tries=0
+  until sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get "${APT_OPTS[@]}" update -q \
+    >"$aptlog" 2>&1; do
+    tries=$((tries + 1))
+    if ! grep -qiE 'could not get lock|unable to lock' "$aptlog"; then
+      msg=$(tail -3 "$aptlog" | tr '\n' ' ')
+      rm -f "$aptlog"
+      die "apt-get update failed: $msg"
+    fi
+    if [ "$tries" -ge "${E15_APT_RETRIES:-20}" ]; then
+      rm -f "$aptlog"
+      die "apt-get update: the apt lists lock stayed held ($tries tries; apt-daily or unattended-upgrades)"
+    fi
+    log "apt: the lists lock is held (apt-daily or unattended-upgrades?); retry $tries in ${E15_APT_RETRY_S:-15} s"
+    sleep "${E15_APT_RETRY_S:-15}"
+  done
+  rm -f "$aptlog"
   b_note "LEFTOVER: apt package lists refreshed (apt-get update)"
   # Recommends included: podman needs its network backend and runtime. Every package apt adds is
   # listed, not only the named ones.

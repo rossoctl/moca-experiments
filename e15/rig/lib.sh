@@ -410,7 +410,12 @@ e15_require_reflink() {
 }
 
 # e15_xfs_reflink MOUNTPOINT: the XFS filesystem mounted there has reflink=1 (xfs_info).
-e15_xfs_reflink() { sudo -n xfs_info "$1" 2>/dev/null | grep -q 'reflink=1'; }
+# The output is captured first: `xfs_info | grep -q` under pipefail can fail on SIGPIPE.
+e15_xfs_reflink() {
+  local out
+  out=$(sudo -n xfs_info "$1" 2>/dev/null) || return 1
+  case "$out" in *reflink=1*) return 0 ;; *) return 1 ;; esac
+}
 
 # e15_storage_check DIR... (fresh-metal): every DIR on one filesystem device (stat -c %d), and that
 # filesystem XFS with reflink=1. moca's worker hardlinks the snapshot files and the workspace image
