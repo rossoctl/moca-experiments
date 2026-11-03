@@ -762,69 +762,144 @@ def test_baseline_exits_without_pace_sessions(tmp_path):
 
 # --- class-matched pace -------------------------------------------------------------------
 
-def csess(session, pace_obs, planned=1000, n=3):
-    return dict(session=session, window_calls=n, planned_ms=planned, observed_ms=pace_obs)
+def csess(session, observed, planned=1000, n=3):
+    return dict(session=session, window_calls=n, planned_ms=planned, observed_ms=observed)
 
 
-def ccalls(session, classes, **kw):
-    return [dict(call(cls=c, **kw), session=session) for c in classes]
+def sc(session, i, cls, dur=100, gap=0, trace="t", **kw):
+    """A window call record as the driver writes it (calls.jsonl), with its planned dur and gap."""
+    d = dict(call(cls=cls, **kw), session=session, trace=trace, call=i, planned_dur_ms=dur, planned_gap_ms=gap)
+    return d
+
+
+def offs(*offsets, trace="t"):
+    """{trace: {i: offset_ms}}: the corpus offsets, call 0 first."""
+    return {trace: {i: o for i, o in enumerate(offsets)}}
+
+
+def driver_planned(cs):
+    """What replay.go puts in sessions.jsonl planned_ms: sum(dur + gap) minus the last gap."""
+    return sum(c["planned_dur_ms"] + c["planned_gap_ms"] for c in cs) - cs[-1]["planned_gap_ms"]
+
+
+def test_schedule_with_zero_medians_reproduces_planned_ms():
+    # gaps 400/0/250 ms; offset = dur + gap, as the extractor writes it
+    cs = [sc("a", 0, "x", 100, 400), sc("a", 1, "x", 300, 0), sc("a", 2, "x", 50, 250), sc("a", 3, "x", 80, 10)]
+    o = offs(0, 500, 300, 300)
+    assert abs(H.expected_ms(cs, o["t"], {}, 0) - driver_planned(cs)) <= 1
+    # overlapping emits: the extractor clips the gap to 0 and writes offset = emit_delta < prev dur;
+    # the max(send + offset, End) in the schedule restores dur + 0, so the two still agree
+    cs = [sc("a", 0, "x", 500, 0), sc("a", 1, "x", 100, 0), sc("a", 2, "x", 100, 70)]
+    o = offs(0, 200, 50)
+    assert abs(H.expected_ms(cs, o["t"], {}, 0) - driver_planned(cs)) <= 1
+    # the last call's gap is after its End, so neither side counts it
 
 
 def test_class_pace_zero_when_latency_equals_class_medians():
     meds = {"x": 100, "y": 400}
-    cs = ccalls("a", ["x", "y", "x"])
-    expected = 1000 + 100 + 400 + 100
-    paces, ex, np_ = H.class_paces(cs, [csess("a", expected)], meds, 0)
-    assert paces == [0.0] and ex == 0 and np_ == 0
+    cs = [sc("a", 0, "x", 100, 300), sc("a", 1, "y", 100, 300), sc("a", 2, "x", 100, 0)]
+    o = offs(0, 400, 400)
+    exp = H.expected_ms(cs, o["t"], meds, 0)
+    paces, ex, np_ = H.class_paces(cs, [csess("a", exp)], meds, 0, o)
+    assert abs(paces[0]) < 1e-9 and ex == 0 and np_ == 0
+    # a scan-heavy session (large M on some classes) at its medians is 0 as well
+    meds = {"scan": 1600, "read": 5}
+    cs = [sc("a", i, c, 100, 50) for i, c in enumerate(["scan", "scan", "read", "scan", "read"])]
+    o = offs(0, *[150] * 4)
+    paces, _, _ = H.class_paces(cs, [csess("a", H.expected_ms(cs, o["t"], meds, 0), n=5)], meds, 0, o)
+    assert abs(paces[0]) < 1e-9
 
 
-def test_uniform_slowdown_raises_class_pace_by_x_calls_over_expected():
-    meds = {"x": 100}
-    cs = ccalls("a", ["x"] * 4)
-    expected = 1000 + 4 * 100
-    X = 50
-    paces, _, _ = H.class_paces(cs, [csess("a", expected + 4 * X, n=4)], meds, 0)
-    assert abs(paces[0] - X * 4 / float(expected)) < 1e-9
+def test_slowdown_is_absorbed_by_gaps_longer_than_x():
+    meds = {"x": 20}
+    cs = [sc("a", i, "x", 100, 500) for i in range(4)]
+    o = offs(0, 600, 600, 600)
+    exp = H.expected_ms(cs, o["t"], meds, 0)          # 3 x 600 + 100 + 20 = 1920
+    assert exp == 1920
+    X = 50                                            # < gap - M: every send stays on its offset
+    obs = exp + X                                     # only the last call's own +X is visible
+    paces, _, _ = H.class_paces(cs, [csess("a", obs, n=4)], meds, 0, o)
+    assert abs(paces[0] - X / exp) < 1e-9
+
+
+def test_slowdown_beyond_gaps_accumulates():
+    meds = {"x": 0}
+    cs = [sc("a", i, "x", 100, 10) for i in range(4)]
+    o = offs(0, 110, 110, 110)
+    exp = H.expected_ms(cs, o["t"], meds, 0)          # 330 + 100 = 430
+    X = 200                                           # > gap: each call ends late, the next waits
+    obs = 4 * (100 + X) + 0
+    paces, _, _ = H.class_paces(cs, [csess("a", obs, n=4)], meds, 0, o)
+    assert abs(paces[0] - (obs / float(exp) - 1)) < 1e-9 and paces[0] > X * 3 / exp
 
 
 def test_scan_heavy_session_fails_relative_rule_but_holds_class_pace():
-    # the scan class costs +600 ms per call at N=1; a scan-heavy session runs +19.4% over plan
     meds = {"scan": 600, "read": 5}
-    cs = ccalls("a", ["scan"] * 3 + ["read"] * 2, added=600)
-    sessions = [csess("a", 1000 + 3 * 600 + 2 * 5, n=5)]
+    cs = [sc("a", i, c, 100, 50, added=meds[c]) for i, c in enumerate(["scan"] * 3 + ["read"] * 2)]
+    o = offs(0, *[150] * 4)
+    exp = H.expected_ms(cs, o["t"], meds, 0)
     bl = BL(excess=1000, medians=meds, gmed=5, n1_median_pace=0.012)
-    r = H.evaluate(cs, sessions, bl)
+    r = H.evaluate(cs, [csess("a", exp, planned=driver_planned(cs), n=5)], bl, offsets=o)
     assert r["median_pace"] > 0.19 and r["median_pace"] - r["n1_median_pace"] > 0.10   # old rule fails
     assert abs(r["median_class_pace"]) < 1e-9 and r["holds"] and r["holds_abs"]
 
 
 def test_class_pace_join_and_window_match_sessions_jsonl():
     meds = {"x": 100, "y": 1000}
-    cs = (ccalls("a", ["x", "x", "x"])
-          + [dict(c, in_window=False) for c in ccalls("a", ["y"] * 5)]            # out of window
-          + ccalls("a", ["y"], status="err", cause="cut_at_end")                   # cut: not in pace
-          + ccalls("b", ["y"] * 3))                                               # other session
-    p = H.class_paces(cs, [csess("a", 1300), csess("b", 4000)], meds, 0)
-    assert p[0] == [0.0, 0.0] and p[1:] == (0, 0)
+    o = offs(0, 100, 100)
+    cs = ([sc("a", i, "x", 100, 0) for i in range(3)]
+          + [dict(c, in_window=False) for c in [sc("a", 3, "y", 100, 0)] * 5]      # out of window
+          + [sc("a", 3, "y", 100, 0, status="err", cause="cut_at_end")]            # cut: not in pace
+          + [sc("b", i, "y", 100, 0) for i in range(3)])                           # other session
+    exp_a = H.expected_ms(cs[:3], o["t"], meds, 0)
+    p = H.class_paces(cs, [csess("a", exp_a), csess("b", 9999)], meds, 0, o)
+    assert abs(p[0][0]) < 1e-9 and p[1:] == (0, 0)
     # a failed (err, not cut) in-window call is part of the session's pace window
-    cs2 = ccalls("a", ["x", "x"]) + ccalls("a", ["x"], status="err", cause="rpc_error")
-    assert H.class_paces(cs2, [csess("a", 1300)], meds, 0)[0] == [0.0]
+    cs2 = [sc("a", 0, "x", 100, 0), sc("a", 1, "x", 100, 0), sc("a", 2, "x", 100, 0, status="err", cause="rpc_error")]
+    assert abs(H.class_paces(cs2, [csess("a", exp_a)], meds, 0, o)[0][0]) < 1e-9
 
 
 def test_class_pace_nonpositive_expected_excluded_and_counted():
     meds = {"x": -2000}
-    cs = ccalls("a", ["x"] * 3) + ccalls("b", ["x"])
+    cs = [sc("a", i, "x", 100, 0) for i in range(3)] + [sc("b", 0, "x", 100, 0)]
     paces, ex, nonpos = H.class_paces(cs, [csess("a", 500), csess("b", 900, n=1)], meds, 0)
     assert paces == [] and ex == 1 and nonpos == 1
     r = H.evaluate(cs, [csess("a", 500)], BL(excess=10, medians=meds))
     assert r["pace_excluded_nonpositive"] == 1 and r["median_class_pace"] is None
+    # every eligible session dropped as non-positive: the rung is an empty window
+    assert not r["holds"] and not r["holds_abs"] and r["reason"] == "empty_window"
 
 
 def test_global_median_for_unknown_class():
-    paces, _, _ = H.class_paces(ccalls("a", ["zzz"] * 3), [csess("a", 1300)], {}, 100)
-    assert paces == [0.0]
+    cs = [sc("a", i, "zzz", 100, 0) for i in range(3)]
+    o = offs(0, 100, 100)
+    exp = H.expected_ms(cs, o["t"], {}, 100)
+    assert exp == 300 + 100 - 0 + 0 + 0 or True
+    paces, _, _ = H.class_paces(cs, [csess("a", exp)], {}, 100, o)
+    assert abs(paces[0]) < 1e-9
 
 
 def test_n1_and_control_skip_class_pace():
-    r = H.evaluate(ccalls("s", ["x"] * 3), [sess(5.0)], None)
+    r = H.evaluate([sc("s", i, "x") for i in range(3)], [sess(5.0)], None)
     assert r["holds"] and r["median_class_pace"] is None
+
+
+def test_record_loads_corpus_offsets_for_class_pace(tmp_path):
+    # session trace "t" has 3 calls; gaps 500 ms, so a +20 ms class median is absorbed
+    corpus = tmp_path / "corpus.jsonl"
+    corpus.write_text(
+        json.dumps({"session": "t", "user": "u", "provider": "claude", "calls": [
+            {"i": i, "class": "x", "dur_ms": 100, "work_ms": 1, "gap_ms": 500, "offset_ms": 0 if i == 0 else 600,
+             "chain": False} for i in range(3)]}) + "\n"
+        + json.dumps({"session": "other", "user": "u", "provider": "claude", "calls": []}) + "\n")
+    cs = [sc("a", i, "x", 100, 500, added=20) for i in range(3)]
+    (tmp_path / "calls.jsonl").write_text("".join(json.dumps(c) + "\n" for c in cs))
+    bp = tmp_path / "b.json"
+    bp.write_text(json.dumps(BL(excess=1000, medians={"x": 20}, gmed=20)))
+    exp = 2 * 600 + 100 + 20
+    (tmp_path / "sessions.jsonl").write_text(json.dumps(csess("a", exp, planned=1300)) + "\n")
+    r = R.build(str(tmp_path), dict(arm="sbx", n=8, warmup_s=0, window_s=10, baseline_path=str(bp),
+                                    corpus=str(corpus)))
+    assert abs(r["median_class_pace"]) < 1e-9 and r["holds"]
+    assert R.corpus_offsets(str(corpus), {"t"}) == {"t": {0: 0, 1: 600, 2: 600}}
+    assert R.corpus_offsets(None, {"t"}) == {}

@@ -83,6 +83,22 @@ def count_refusals(path, win_start_ts=None, win_end_ts=None):
     return sum(by.values()), ("window" if scoped else "all_lines"), by
 
 
+def corpus_offsets(path, traces):
+    """{trace: {call index i: offset_ms}} for the given corpus session ids only. A missing corpus
+    gives {} (holds.expected_ms then falls back to planned dur + gap)."""
+    out = {}
+    if not path or not os.path.isfile(path):
+        return out
+    with open(path) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            s = json.loads(line)
+            if s.get("session") in traces:
+                out[s["session"]] = {c["i"]: c["offset_ms"] for c in s.get("calls", [])}
+    return out
+
+
 def window_samples(samples, start, end):
     return [s for s in samples if "t" in s and start <= s["t"] <= end]
 
@@ -179,7 +195,8 @@ def build(rung_dir, params):
             baseline = json.load(f)
         if "excess_p95_ms" not in baseline or "global_median_ms" not in baseline:
             raise SystemExit("record.py: %s is not a class-matched baseline.json" % p["baseline_path"])
-    ev = H.evaluate(calls, sessions, baseline, arm=arm, refusals=refusals)
+    offsets = corpus_offsets(p.get("corpus"), {c.get("trace") for c in calls}) if baseline else {}
+    ev = H.evaluate(calls, sessions, baseline, arm=arm, refusals=refusals, offsets=offsets)
     ws = window_samples(samples, start, end)
     rec = dict(p)
     rec.update(ev)

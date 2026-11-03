@@ -118,14 +118,40 @@ def session_paces(sessions):
     return paces, excluded
 
 
-def class_paces(calls, sessions, medians, global_median):
+def expected_ms(window_calls, trace_offsets, medians, global_median):
+    """Expected first-send-to-last-End time of one session's window calls: the driver's schedule
+    (replay.go runSession) with every call lengthened by its class's N=1 probe median. The first
+    window call is sent at 0; end_k = send_k + planned_dur_ms_k + M[class_k]; the next call is sent
+    at max(send_k + offset_{k+1}, end_k) -- runCall is synchronous, so a send never precedes the
+    previous End and added latency is absorbed by the gap. offset_{k+1} is the corpus session's
+    calls[i].offset_ms for the call's index i (trace_offsets: {i: offset_ms}); a call the corpus
+    lacks falls back to the previous call's planned_dur_ms + planned_gap_ms. With every M = 0 and
+    offsets equal to dur + gap this is the driver's planned_ms (first send to last End; the last
+    gap is after the last End, so it is not in either)."""
+    send = 0.0
+    end = 0.0
+    prev = None
+    for c in window_calls:
+        if prev is not None:
+            off = trace_offsets.get(c.get("call"))
+            if off is None:
+                off = prev.get("planned_dur_ms", 0) + prev.get("planned_gap_ms", 0)
+            send = max(send + off, end)
+        m = medians.get(c.get("class"), global_median)
+        end = send + c.get("planned_dur_ms", 0) + m
+        prev = c
+    return end
+
+
+def class_paces(calls, sessions, medians, global_median, offsets=None):
     """Class-matched pace per session (SPEC §8 condition 3). A session counts when it has >=
-    MIN_SESSION_CALLS window calls and planned_ms > 0. Its expected time is planned_ms plus, for
-    each call the driver put in that session's pace (record.go/replay.go: in_window and not
-    cut_at_end, ok or failed, joined on the replay-instance id `session`), that class's N=1 probe
-    median added latency (global median for a class without one). pace = observed / expected - 1.
+    MIN_SESSION_CALLS window calls and planned_ms > 0. Its window calls are the ones the driver put
+    in the session's pace (record.go/replay.go: in_window and not cut_at_end, ok or failed, joined
+    on the replay-instance id `session`); expected time is expected_ms() over them; pace =
+    observed_ms / expected - 1. offsets: {trace: {call index: offset_ms}} from the corpus.
     Returns (paces, excluded, nonpositive): excluded as in session_paces; nonpositive = sessions
     whose expected time is <= 0 (strongly negative medians), dropped and counted."""
+    offsets = offsets or {}
     by = {}
     for c in calls:
         if c.get("in_window") and not _is_cut(c):
@@ -135,8 +161,9 @@ def class_paces(calls, sessions, medians, global_median):
         if s.get("window_calls", 0) < MIN_SESSION_CALLS or not s.get("planned_ms"):
             excluded += 1
             continue
-        expected = s["planned_ms"] + sum(
-            medians.get(c.get("class"), global_median) for c in by.get(s.get("session"), []))
+        wc = by.get(s.get("session"), [])
+        trace = wc[0].get("trace") if wc else None
+        expected = expected_ms(wc, offsets.get(trace, {}), medians, global_median)
         if expected <= 0:
             nonpos += 1
             continue
@@ -144,7 +171,7 @@ def class_paces(calls, sessions, medians, global_median):
     return paces, excluded, nonpos
 
 
-def evaluate(calls, sessions, baseline, arm="sbx", refusals=0):
+def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None):
     """baseline: baseline.json's dict (class_medians, global_median_ms, excess_p95_ms, n1_median_pace)
     or None (N=1, and the control arm): conditions 3 and 4 are skipped, median_pace still reported.
     Condition 3 is the median class-matched pace (class_paces) <= 0.10."""
@@ -179,7 +206,7 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0):
     cpaces, nonpos = [], 0
     if baseline is not None:
         cpaces, _, nonpos = class_paces(win, sessions, baseline.get("class_medians", {}),
-                                        baseline["global_median_ms"])
+                                        baseline["global_median_ms"], offsets)
     med_class = median(cpaces)
     c3 = baseline is None or med_class is None or med_class <= PACE_MAX + 1e-9  # float slack at the inclusive boundary
     c4 = exc_limit is None or p95_exc is None or p95_exc <= exc_limit
@@ -187,7 +214,8 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0):
     # (B = baseline["excess_p95_ms"]). N=1 skips it as before.
     p95_limit_abs = None if baseline is None else baseline["excess_p95_ms"] + ABS_ADDED_MS
     c4_abs = p95_limit_abs is None or p95_exc is None or p95_exc <= p95_limit_abs
-    empty = len(win) == 0 or len(paces) == 0
+    # every eligible session dropped as non-positive expected time: nothing to judge pace on
+    empty = len(win) == 0 or len(paces) == 0 or (baseline is not None and not cpaces and nonpos > 0)
     out = {
         "holds": bool(c1 and c2 and c3 and c4) and not empty,
         "holds_abs": bool(c1 and c2 and c3 and c4_abs) and not empty,

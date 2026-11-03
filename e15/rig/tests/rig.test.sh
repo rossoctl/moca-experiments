@@ -268,9 +268,9 @@ SH
   printf '1=%s\n8=%s\n' "$ok" "$both_bad" >"$TMP/recs"
   ladder
   check "ladder: both fail together -> stop at once" "$(lj n_max)/$(lj n_max_abs)/$(wc -l <"$TMP/lcalls" | tr -d ' ')" "1/1/2"
-  printf '1=%s\n8=%s\n' "$ok" '{"holds":false,"holds_abs":false,"unseeded_sessions":0,"median_class_pace":0.04}' >"$TMP/recs"
+  printf '1=%s\n8=%s\n' "$ok" '{"holds":false,"holds_abs":false,"unseeded_sessions":0,"median_class_pace":0.0}' >"$TMP/recs"
   ladder
-  check "ladder.json rungs carry median_class_pace" "$(python3 -c 'import json,sys; print([r["median_class_pace"] for r in json.load(open(sys.argv[1]))["rungs"]])' "$TROOT/runs/default/sbx/ladder.json")" "[None, 0.04]"
+  check "ladder.json rungs carry median_class_pace" "$(python3 -c 'import json,sys; print([r["median_class_pace"] for r in json.load(open(sys.argv[1]))["rungs"]])' "$TROOT/runs/default/sbx/ladder.json")" "[None, 0.0]"
 
   printf '1=%s\n8=%s\n' "$ok" '{"holds":false,"holds_abs":false,"aborted":true}' >"$TMP/recs"
   ladder

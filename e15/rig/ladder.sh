@@ -65,7 +65,7 @@ rec_field() {
   python3 -c '
 import json, sys
 v = json.load(open(sys.argv[1])).get(sys.argv[2])
-print("true" if v is True else "false" if v in (False, None) else v)' "$1" "$2"
+print("true" if v is True else "false" if (v is False or v is None) else json.dumps(v))' "$1" "$2"
 }
 
 # run_rung N TAG [ENV...]: one rung.sh call; returns its directory on stdout. A rung.sh failure
@@ -119,7 +119,7 @@ for n in "${E15_LADDER[@]}"; do
   holds=$(rec_field "$dir/record.json" holds)
   holds_abs=$(rec_field "$dir/record.json" holds_abs)
   cpace=$(rec_field "$dir/record.json" median_class_pace)
-  [ "$cpace" = false ] && cpace=null
+  [ "$cpace" = false ] && cpace=null # rec_field prints null/missing as false; 0.0 prints as 0.0
   [ -n "$cpace" ] || cpace=null
   errs=$(printf '"%s",' "${rig_errors[@]}")
   [ ${#rig_errors[@]} -gt 0 ] || errs=""
