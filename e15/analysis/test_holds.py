@@ -1028,3 +1028,36 @@ def test_memory_high_yields_to_other_bindings_and_memory_abort(tmp_path):
     assert r["binding"] == "memory_floor" and r["reason"] == "memory_floor"
     r = _rung(tmp_path, [_ev(1, 0), _ev(120, 5)], driver_exit=2)   # a rig error gets no binding
     assert r["aborted"] and r["binding"] == "none"
+
+
+def test_footprint_drift_sum_basis(tmp_path):
+    # fresh-metal (drift_basis "sum"): judged on the summed VM memory; the median is information.
+    # a: 100 -> 300 MiB (+200%), b and c flat at 1000: median +0%, sum 2100 -> 2300 (+9.5%)
+    s = [S(0, vm={"a": 100 * MiB, "b": 1000 * MiB, "c": 1000 * MiB}),
+         S(120, vm={"a": 300 * MiB, "b": 1000 * MiB, "c": 1000 * MiB})]
+    r = _rung(tmp_path, s, arm="resident-inf", drift_basis="sum")
+    assert r["footprint_drift_basis"] == "sum"
+    assert abs(r["footprint_drift_sum_pct"] - 200 / 21.0) < 1e-9
+    assert abs(r["footprint_drift_median_pct"]) < 1e-9
+    assert r["footprint_drift_pct"] == r["footprint_drift_sum_pct"] and not r["repeat_required"]
+    # the median rises > 10% while the sum stays within 10%: no repeat on the sum basis
+    s = [S(0, vm={"a": 100 * MiB, "b": 100 * MiB, "c": 2000 * MiB}),
+         S(120, vm={"a": 100 * MiB, "b": 120 * MiB, "c": 2000 * MiB})]
+    r = _rung(tmp_path, s, arm="resident-inf", drift_basis="sum")
+    assert r["footprint_drift_median_pct"] > 10 and not r["repeat_required"]
+    # the sum grows > 10%: repeat
+    s = [S(0, vm={"a": 100 * MiB, "b": 100 * MiB}), S(120, vm={"a": 100 * MiB, "b": 200 * MiB})]
+    r = _rung(tmp_path, s, arm="resident-inf", drift_basis="sum")
+    assert abs(r["footprint_drift_sum_pct"] - 50) < 1e-9 and r["repeat_required"]
+
+
+def test_footprint_drift_median_basis_is_the_default(tmp_path):
+    # no drift_basis (every aws-prelim params.json): the median, as sealed; the sum is information
+    s = [S(0, vm={"a": 100 * MiB, "b": 100 * MiB, "c": 2000 * MiB}),
+         S(120, vm={"a": 100 * MiB, "b": 120 * MiB, "c": 2000 * MiB})]
+    r = _rung(tmp_path, s, arm="resident-inf")
+    assert r["footprint_drift_basis"] == "median"
+    assert abs(r["footprint_drift_pct"] - 20.0) < 1e-9 and r["repeat_required"]
+    assert abs(r["footprint_drift_sum_pct"] - 20 / 22.0) < 1e-9
+    r = _rung(tmp_path, s, arm="resident-inf", drift_basis="median")
+    assert r["footprint_drift_basis"] == "median" and r["repeat_required"]

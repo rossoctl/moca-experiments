@@ -153,16 +153,31 @@ def disk_read_stats(ws):
             "disk_await_mean_ms": (sum(aw) / len(aw)) if aw else None}
 
 
-def footprint_drift(ws):
+def footprint_drift(ws, basis="median"):
+    """Resident footprint drift over the window, first to last sample with VMs (SPEC §5.7).
+
+    basis "median" (the default; the sealed preliminary procedure): the median VM's memory.current.
+    basis "sum" (fresh-metal, user decision 2026-11-04): the summed memory.current of all live VMs.
+    The worker reuses VM cgroup names across sessions, so a median over a few VMs of mixed ages
+    steps whenever one VM's session starts a heavier command; the sum is the host-level footprint.
+    Both are reported; repeat_required follows the chosen basis.
+    """
     with_vm = [s for s in ws if s.get("vm_mem")]
     if not with_vm:
         return None
-    first = H.median(list(with_vm[0]["vm_mem"].values()))
-    last = H.median(list(with_vm[-1]["vm_mem"].values()))
-    if not first:
+
+    def pct(f):
+        first = f(list(with_vm[0]["vm_mem"].values()))
+        last = f(list(with_vm[-1]["vm_mem"].values()))
+        return None if not first else (last - first) / float(first) * 100
+
+    med, tot = pct(H.median), pct(sum)
+    chosen = tot if basis == "sum" else med
+    if chosen is None:
         return None
-    pct = (last - first) / float(first) * 100
-    return {"footprint_drift_pct": pct, "repeat_required": pct > 10}
+    return {"footprint_drift_pct": chosen, "footprint_drift_basis": basis,
+            "footprint_drift_median_pct": med, "footprint_drift_sum_pct": tot,
+            "repeat_required": chosen > 10}
 
 
 def driver_cpu(rows, start, end):
@@ -233,7 +248,7 @@ def build(rung_dir, params):
     rec.update(disk_read_stats(ws))
     rec["window_samples"] = len(ws)
     if arm in RESIDENT:
-        d = footprint_drift(ws)
+        d = footprint_drift(ws, p.get("drift_basis") or "median")
         if d:
             rec.update(d)
     rec["driver"] = driver_cpu(cpu_rows, start, end)
