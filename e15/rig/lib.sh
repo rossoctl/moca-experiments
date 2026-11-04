@@ -129,7 +129,7 @@ fi
 # e15_default_warmup ARM: the rung warm-up (s) when E15_WARMUP_S is unset.
 e15_default_warmup() {
   case "$E15_HOST_PROFILE:$1" in
-  fresh-metal:resident-inf | fresh-metal:resident-300) echo 1200 ;;
+  fresh-metal:sbx | fresh-metal:resident-inf | fresh-metal:resident-300) echo 1200 ;;
   *) echo 600 ;;
   esac
 }

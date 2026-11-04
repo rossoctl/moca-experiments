@@ -1,7 +1,7 @@
 # E15 — sessions per host: per-Exec microVMs vs resident microVMs, on replayed coding-agent traces
 
 Version: 0.9 (draft for review), 2026-11-03
-2026-11-04: metal procedure (user decision after the metal calibration, before the metal predictions are sealed; §13): the fresh-metal ladder extends to 1024, resident rungs warm up 1200 s, footprint drift is judged on summed VM memory, SH_MAX_RUNS 2048, and only the default and mem512 points run on metal. The aws-prelim procedure is unchanged.
+2026-11-04: metal procedure (user decision after the metal calibration, before the metal predictions are sealed; §13): the fresh-metal ladder extends to 1024, SBX and resident rungs warm up 1200 s, footprint drift is judged on summed VM memory, SH_MAX_RUNS 2048, and only the default and mem512 points run on metal. The aws-prelim procedure is unchanged.
 2026-11-03: fresh-metal host profile for the metal run (§13): bootstrap, guest rootfs from moca v0.9.0's sandbox image, parallel disk read measurement; metal substrate table. Later the same day: the XFS reflink=1 data volume at /srv/e15 is required (no sparse fallback; review abbaa15 H1/H2).
 2026-11-03: condition 3 class-matched (user decision before sealing): a session's expected time = the driver's schedule with each call lengthened by its class's N=1 probe median added latency; class pace ≤ 10%; N=1 median pace reported.
 2026-11-03: condition 3 relative to the arm's own N=1 median pace (user decision before sealing; at mem512 SBX's N=1 pace is +19.3%); metal run moves to an AWS m7i.metal-24xl (EBS-only), the IBM metal rig being unavailable.
@@ -643,8 +643,10 @@ procedure.
 - **Ladder:** the §10.2 ladder, then 160, 192, 256, 320, 384, 448, 512, 576, 640, 704, 768, 896
   and 1024. The calibration's burst-aware estimate puts both arms' CPU wall at about N = 400–700
   on 96 vCPU, and the ladder must reach the first failed rung.
-- **Resident warm-up 1200 s** (SBX and control keep 600 s). At N = 8 a resident VM reaches 90%
+- **Warm-up 1200 s for every measured arm** (control keeps 600 s). At N = 8 a resident VM reaches 90%
   of its final size at a median age of about 380 s, with a range of 55–970 s, so 600 s is short.
+  SBX gets the same 1200 s so that both arms' windows start at the same point in the replay and
+  hold the same session starts (at mem512 a session's first scans are its costliest calls).
 - **Footprint drift on summed VM memory.** The repeat rule (§5.7, more than 10% over the window)
   is judged on the summed `memory.current` of the live VMs, not on their median. The worker
   reuses VM cgroup names across sessions, so the median of a few VMs of mixed ages jumps

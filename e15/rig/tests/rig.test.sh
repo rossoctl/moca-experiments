@@ -637,7 +637,7 @@ if [ -f "$RIG/points.sh" ]; then
   check "profile: fresh-metal ladder extended to 1024" "$(lprof fresh-metal 'echo ${E15_LADDER[*]}')" \
     "1 8 16 24 32 40 48 56 64 80 96 128 160 192 256 320 384 448 512 576 640 704 768 896 1024"
   check "profile: default warm-up aws-prelim 600 for every arm" "$(lprof aws-prelim 'for a in sbx resident-inf resident-300 control; do e15_default_warmup $a; done | tr "\n" " "')" "600 600 600 600 "
-  check "profile: default warm-up fresh-metal 1200 for resident arms, 600 otherwise" "$(lprof fresh-metal 'for a in sbx resident-inf resident-300 control; do e15_default_warmup $a; done | tr "\n" " "')" "600 1200 1200 600 "
+  check "profile: default warm-up fresh-metal 1200 for sbx and resident arms, 600 for control" "$(lprof fresh-metal 'for a in sbx resident-inf resident-300 control; do e15_default_warmup $a; done | tr "\n" " "')" "1200 1200 1200 600 "
   check "profile: drift basis aws-prelim median, fresh-metal sum" "$(lprof aws-prelim 'echo $E15_DRIFT_BASIS') $(lprof fresh-metal 'echo $E15_DRIFT_BASIS')" "median sum"
   check "rung.sh: warm-up default from e15_default_warmup" "$(grep -c 'WARMUP=\${E15_WARMUP_S:-\$(e15_default_warmup "\$ARM")}' "$RIG/rung.sh")" "1"
   check "ladder.sh: warm-up default from e15_default_warmup" "$(grep -c 'WARMUP=\${E15_WARMUP_S:-\$(e15_default_warmup "\$ARM")}' "$RIG/ladder.sh")" "1"
