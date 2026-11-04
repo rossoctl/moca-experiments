@@ -1563,6 +1563,15 @@ check "setup.sh: fresh-metal rootfs from build-rootfs.sh over the pinned image, 
 check "setup.sh: fresh-metal kernel fetched by pinned sha256" "$(grep -c 'e15_fetch "\$E15_KERNEL_URL" "\$E15_KERNEL_SHA256" "\$KERNEL"' "$RIG/setup.sh")" "1"
 check "setup.sh: one build-snapshot call, --guest-ram-mb 1024, kernel per profile" "$(grep -c -- '--kernel "\$KERNEL" --rootfs "\$tree"' "$RIG/setup.sh")/$(grep -c -- '--vmm firecracker --guest-ram-mb 1024' "$RIG/setup.sh")" "1/1"
 
+# --- metal bring-up: the resident patch's stock suite in a private pid namespace ---------------
+# moca's TestSweepOrphansFindsEveryLeftoverVMCgroup kills fake pids 4242-4244; on the 96-vCPU metal
+# host those are kworkers (EPERM). fresh-metal runs apply.sh under unshare --pid as the login user.
+check "setup.sh: fresh-metal apply.sh runs in a fresh pid namespace, as the login user" \
+  "$(grep -c '\[ "\$METAL" = 1 \] && pidns=(sudo -n unshare --pid --fork --mount-proc' "$RIG/setup.sh")/$(grep -c 'setpriv "--reuid=\$(id -u)" "--regid=\$(id -g)" --init-groups' "$RIG/setup.sh")/$(grep -c '("\${pidns\[@\]}" env "\${GOENV_USER\[@\]}" MOCA_SRC=' "$RIG/setup.sh")" "1/1/1"
+pidns_snip=$(sed -n '/^  pidns=()$/,/--init-groups env/p' "$RIG/setup.sh")
+check "setup.sh: aws-prelim apply.sh runs as before (no pid namespace)" \
+  "$(METAL=0 bash -c "$pidns_snip"$'\n''echo ${#pidns[@]}')/$(METAL=1 bash -c "$pidns_snip"$'\n''echo ${pidns[0]} ${pidns[2]} ${pidns[3]}')" "0/sudo unshare --pid"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "rig.test.sh: all checks passed"

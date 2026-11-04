@@ -241,7 +241,14 @@ fi
 k=$(src_key resident)
 if ! stamp_ok go-resident "$k"; then
   log "resident build: resident/apply.sh (patch tests run here; log $E15_LOGS/apply.log)"
-  (env "${GOENV_USER[@]}" MOCA_SRC="$E15_MOCA" bash "$E15_SRC/resident/apply.sh" "$E15_ROOT/resident-work" "$E15_BIN") \
+  # fresh-metal: the patch's stock suite runs in a private pid namespace, as the login user.
+  # moca's TestSweepOrphansFindsEveryLeftoverVMCgroup SIGKILLs the fake pids 4242-4244; on a
+  # many-CPU host those are live kernel threads (kworkers), the kill gets EPERM and the test fails.
+  # In a fresh pid namespace no such pid exists (ESRCH, the case the test means).
+  pidns=()
+  [ "$METAL" = 1 ] && pidns=(sudo -n unshare --pid --fork --mount-proc
+    setpriv "--reuid=$(id -u)" "--regid=$(id -g)" --init-groups env "HOME=$HOME")
+  ("${pidns[@]}" env "${GOENV_USER[@]}" MOCA_SRC="$E15_MOCA" bash "$E15_SRC/resident/apply.sh" "$E15_ROOT/resident-work" "$E15_BIN") \
     >"$E15_LOGS/apply.log" 2>&1 || die "resident/apply.sh failed; see $E15_LOGS/apply.log"
   stamp_set go-resident "$k"
   m_note "built $E15_BIN/microvm-worker-resident (patch sha256 $(sha256_of "$E15_SRC/resident/resident.patch"))"
