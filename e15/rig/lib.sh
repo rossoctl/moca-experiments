@@ -118,6 +118,21 @@ fi
 
 E15_ARMS=(sbx resident-inf resident-300 control)
 E15_LADDER=(1 8 16 24 32 40 48 56 64 80 96 128)
+# fresh-metal (SPEC §13, user decision 2026-11-04): the ladder extends past 128 until one arm fails,
+# resident arms warm up 1200 s (their VMs are still growing at 600 s), and footprint drift is judged
+# on the summed VM memory (record.py drift_basis). aws-prelim: the sealed preliminary procedure.
+E15_DRIFT_BASIS=median
+if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+  E15_LADDER+=(160 192 256 320 384 448 512 576 640 704 768 896 1024)
+  E15_DRIFT_BASIS=sum
+fi
+# e15_default_warmup ARM: the rung warm-up (s) when E15_WARMUP_S is unset.
+e15_default_warmup() {
+  case "$E15_HOST_PROFILE:$1" in
+  fresh-metal:resident-inf | fresh-metal:resident-300) echo 1200 ;;
+  *) echo 600 ;;
+  esac
+}
 E15_FLOOR_MB=1536
 # SH_MAX_RUNS: the worker's backstop on unparked runs (moca vmpool admitLocked). A resident-inf
 # session holds one unparked run for its whole life, so 512 would refuse a metal resident rung above

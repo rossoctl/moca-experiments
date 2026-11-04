@@ -8,7 +8,7 @@
 #          /srv/e15/corpora/<its corpus>, library, workspace template, image size)
 #
 # Environment (defaults are SPEC §10.2's):
-#   E15_WARMUP_S 600   E15_WINDOW_S 900   E15_SPREAD_S 60   E15_GRACE_S 300   E15_SEED 1
+#   E15_WARMUP_S 600 (fresh-metal resident arms 1200; lib.sh e15_default_warmup)   E15_WINDOW_S 900   E15_SPREAD_S 60   E15_GRACE_S 300   E15_SEED 1
 #   E15_TAG            suffix for the rung directory (ladder.sh uses "repeat")
 #   E15_CORPUS_OVERRIDE  a probe corpus.jsonl to replay instead of POINT's (classprobe.sh)
 #   E15_START_ZERO     1: every session starts at its first call (probe runs)
@@ -72,7 +72,7 @@ case " $E15_P_ARMS " in *" $ARM "*) ;; *)
   ;;
 esac
 
-WARMUP=${E15_WARMUP_S:-600}
+WARMUP=${E15_WARMUP_S:-$(e15_default_warmup "$ARM")}
 K_MULT=${E15_K_MULT:-1}
 [[ "$K_MULT" =~ ^[1-9][0-9]*$ ]] || {
   echo "rung.sh: E15_K_MULT must be a positive integer" >&2
@@ -448,6 +448,7 @@ p = {
     "unseeded_sessions": len(keys - pre), "sessions_started": len(keys),
     "workspace_seeding": "cp $(workspace_cp_flag "$WS_COPY") of the template per key before t0",
     "workspace_copy": "$WS_COPY", "host_profile": "$E15_HOST_PROFILE",
+    "drift_basis": "$E15_DRIFT_BASIS",
     "corpus": "$CORPUS", "corpus_sha256": sha("$CORPUS"), "H_s": report.get("H_s"),
     "corpus_exclude": report.get("exclude"), "corpus_mean_span_min": report["table"]["mean_span_min"],
     "library_sha256": sha("$LIBRARY"),

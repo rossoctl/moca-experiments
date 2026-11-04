@@ -306,6 +306,12 @@ SH
   printf '1=%s\n1-repeat=%s\n8=%s\n' '{"holds":false,"holds_abs":false,"repeat_required":true,"unseeded_sessions":0}' "$ok" "$both_bad" >"$TMP/recs"
   E15_WARMUP_S=30 ladder
   check "ladder: repeat_required re-runs with warm-up doubled and the repeat counts" "$(lj n_max)/$(grep -c '^1-repeat k=1 w=60' "$TMP/lcalls")" "1/1"
+  # fresh-metal resident arm, no E15_WARMUP_S: the repeat doubles the 1200 s default
+  printf '1=%s\n1-repeat=%s\n8=%s\n' '{"holds":false,"holds_abs":false,"repeat_required":true,"unseeded_sessions":0}' "$ok" "$both_bad" >"$TMP/recs"
+  rm -rf "$TROOT/runs"; : >"$TMP/lcalls"
+  E15_HOST_PROFILE=fresh-metal E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$STUBRUNG" RECS="$TMP/recs" LADDER_CALLS="$TMP/lcalls" \
+    PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/ladder.sh" default resident-inf >"$TMP/l.out" 2>&1
+  check "ladder: fresh-metal resident repeat runs with warm-up 2400 (2 x 1200)" "$(grep -c '^1-repeat k=1 w=2400' "$TMP/lcalls")" "1"
 fi
 
 # classprobe.sh: one sequential rung per class, override corpus, tag probe-<class>, warm-up 0
@@ -625,6 +631,17 @@ if [ -f "$RIG/points.sh" ]; then
   # SH_MAX_RUNS: 512 on the preliminary rig; 2048 on fresh-metal (resident-inf holds one unparked run per
   # session, so 512 would refuse a metal resident rung above N=512 before any host resource binds)
   wruns() { E15_HOST_PROFILE="$1" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; worker_env "$3" "$2"; grep "^SH_MAX_RUNS=" "$2"' _ "$RIG/lib.sh" "$TMP/wenv" "$2"; }
+  # fresh-metal ladder, resident warm-up and drift basis (user decision 2026-11-04); aws-prelim unchanged
+  lprof() { E15_HOST_PROFILE="$1" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c "source '$RIG/lib.sh'; $2"; }
+  check "profile: aws-prelim ladder unchanged" "$(lprof aws-prelim 'echo ${E15_LADDER[*]}')" "1 8 16 24 32 40 48 56 64 80 96 128"
+  check "profile: fresh-metal ladder extended to 1024" "$(lprof fresh-metal 'echo ${E15_LADDER[*]}')" \
+    "1 8 16 24 32 40 48 56 64 80 96 128 160 192 256 320 384 448 512 576 640 704 768 896 1024"
+  check "profile: default warm-up aws-prelim 600 for every arm" "$(lprof aws-prelim 'for a in sbx resident-inf resident-300 control; do e15_default_warmup $a; done | tr "\n" " "')" "600 600 600 600 "
+  check "profile: default warm-up fresh-metal 1200 for resident arms, 600 otherwise" "$(lprof fresh-metal 'for a in sbx resident-inf resident-300 control; do e15_default_warmup $a; done | tr "\n" " "')" "600 1200 1200 600 "
+  check "profile: drift basis aws-prelim median, fresh-metal sum" "$(lprof aws-prelim 'echo $E15_DRIFT_BASIS') $(lprof fresh-metal 'echo $E15_DRIFT_BASIS')" "median sum"
+  check "rung.sh: warm-up default from e15_default_warmup" "$(grep -c 'WARMUP=\${E15_WARMUP_S:-\$(e15_default_warmup "\$ARM")}' "$RIG/rung.sh")" "1"
+  check "ladder.sh: warm-up default from e15_default_warmup" "$(grep -c 'WARMUP=\${E15_WARMUP_S:-\$(e15_default_warmup "\$ARM")}' "$RIG/ladder.sh")" "1"
+  check "rung.sh writes drift_basis into params" "$(grep -c '"drift_basis": "\$E15_DRIFT_BASIS"' "$RIG/rung.sh")" "1"
   check "worker_env: SH_MAX_RUNS 512 on aws-prelim (sbx, resident-inf)" "$(wruns aws-prelim sbx) $(wruns aws-prelim resident-inf)" "SH_MAX_RUNS=512 SH_MAX_RUNS=512"
   check "worker_env: SH_MAX_RUNS 2048 on fresh-metal (sbx, resident-inf, resident-300)" "$(wruns fresh-metal sbx) $(wruns fresh-metal resident-inf) $(wruns fresh-metal resident-300)" "SH_MAX_RUNS=2048 SH_MAX_RUNS=2048 SH_MAX_RUNS=2048"
   check "setup.sh records the fresh-metal SH_MAX_RUNS in the manifest" "$(grep -c 'm_note "worker SH_MAX_RUNS=' "$RIG/setup.sh")" "1"

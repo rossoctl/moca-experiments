@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # e15/rig/ladder.sh POINT ARM [START_N] -- run rung.sh up the ladder (SPEC §8, §10.2, §10.3).
 #
-# Ladder: 1 8 16 24 32 40 48 56 64 80 96 128, from START_N (default 1; it must be on the ladder).
+# Ladder: 1 8 16 24 32 40 48 56 64 80 96 128 (fresh-metal: then 160 ... 1024, lib.sh E15_LADDER), from
+# START_N (default 1; it must be on the ladder).
 # Each rung's record.json decides, in order:
 #   rig errors (never a host verdict -- the ladder DIES, it records no stopped_at):
 #     aborted=true, time_origin_mismatch=true, offset_join_misses>0 (class pace could not join the
@@ -56,7 +57,7 @@ e15_on_ladder "$START" || {
 }
 
 RUNG=${E15_RUNG:-$HERE/rung.sh}
-WARMUP=${E15_WARMUP_S:-600}
+WARMUP=${E15_WARMUP_S:-$(e15_default_warmup "$ARM")}
 OUTDIR=$E15_RUNS/$POINT/$ARM
 mkdir -p "$OUTDIR"
 rungs_json=$OUTDIR/ladder-rungs.jsonl
