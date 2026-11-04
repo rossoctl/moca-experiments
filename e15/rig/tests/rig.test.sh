@@ -16,7 +16,7 @@
 set -uo pipefail
 
 RIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPTS=(lib.sh points.sh setup.sh teardown.sh rung.sh ladder.sh sample.sh baseline.sh classprobe.sh tests/rig.test.sh)
+SCRIPTS=(lib.sh points.sh setup.sh teardown.sh rung.sh ladder.sh fine.sh sample.sh baseline.sh classprobe.sh tests/rig.test.sh)
 fails=0
 check() {
   if [ "$2" = "$3" ]; then
@@ -306,6 +306,31 @@ SH
   printf '1=%s\n1-repeat=%s\n8=%s\n' '{"holds":false,"holds_abs":false,"repeat_required":true,"unseeded_sessions":0}' "$ok" "$both_bad" >"$TMP/recs"
   E15_WARMUP_S=30 ladder
   check "ladder: repeat_required re-runs with warm-up doubled and the repeat counts" "$(lj n_max)/$(grep -c '^1-repeat k=1 w=60' "$TMP/lcalls")" "1/1"
+
+  # fine.sh: supplementary rungs (not sealed) -- tag fine, never ladder.json, own fine.json
+  if [ -f "$RIG/fine.sh" ]; then
+    fine() {
+      rm -rf "$TROOT/runs"
+      : >"$TMP/lcalls"
+      E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$STUBRUNG" RECS="$TMP/recs" LADDER_CALLS="$TMP/lcalls" \
+        PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/fine.sh" default sbx "$@" >"$TMP/f.out" 2>&1
+    }
+    fj() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get(sys.argv[2]))' "$TROOT/runs/default/sbx/fine.json" "$1"; }
+    printf '10-fine=%s\n12-fine=%s\n14-fine=%s\n' "$ok" "$abs_only" "$both_bad" >"$TMP/recs"
+    fine 10 12 14
+    check "fine: exits 0" "$?" "0"
+    check "fine: n_fine / n_fine_abs / stopped" "$(fj n_fine)/$(fj n_fine_abs)/$(fj stopped_at)/$(fj stopped_at_abs)" "10/12/12/14"
+    check "fine: every rung tagged fine, no ladder.json written" "$(grep -c -- '-fine k=' "$TMP/lcalls")/$([ -f "$TROOT/runs/default/sbx/ladder.json" ] && echo yes || echo no)" "3/no"
+    check "fine: fine.json is marked supplementary" "$(fj supplementary)" "True"
+    printf '10-fine=%s\n10-fine-repeat=%s\n12-fine=%s\n' '{"holds":true,"holds_abs":true,"repeat_required":true,"unseeded_sessions":0}' "$both_bad" "$ok" >"$TMP/recs"
+    E15_WARMUP_S=30 fine 10 12
+    check "fine: repeat_required re-runs (warm-up doubled) and the repeat counts; both fail -> stop" "$(fj n_fine)/$(grep -c '^10-fine-repeat k=1 w=60' "$TMP/lcalls")/$(wc -l <"$TMP/lcalls" | tr -d ' ')" "None/1/2"
+    printf '10-fine=%s\n10-fine-shared=%s\n' "$ok" "$both_bad" >"$TMP/recs"
+    E15_FINE_REPEAT_CHECK=true fine 10
+    check "fine: a shared-host flag re-runs once and the re-run counts" "$(fj n_fine)/$(grep -c '^10-fine-shared' "$TMP/lcalls")" "None/1"
+    fine 12 10
+    check "fine: steps not ascending -> usage exit 2" "$?" "2"
+  fi
 fi
 
 # classprobe.sh: one sequential rung per class, override corpus, tag probe-<class>, warm-up 0
