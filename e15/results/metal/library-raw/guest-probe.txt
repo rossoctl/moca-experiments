@@ -1,0 +1,7 @@
+time=time
+ls: cannot access '/usr/bin/time': No such file or directory
+Python 3.9.25
+1
+MemTotal:        1008484 kB
+MemFree:          956008 kB
+/workspace

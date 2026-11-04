@@ -1,0 +1,11 @@
+go aac1b08a0fb0c4e0a7c1555beb7b59180b05dfc5a3d62e40e9de90cd42f88235 https://go.dev/dl/go1.26.0.linux-amd64.tar.gz
+node b8492284c76a54baf58d61668dd0e41ee0fc98adabf9503d30f05d08f55b4406 https://nodejs.org/dist/v22.23.4/node-v22.23.4-linux-x64.tar.gz
+firecracker 06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558 https://github.com/firecracker-microvm/firecracker/releases/download/v1.17.0/firecracker-v1.17.0-x86_64.tgz
+grpcurl 97e13d58d2733a0e62cd2571d1d5f0c02823f0d25282f08bddedf1ad9c5d1736 https://github.com/fullstorydev/grpcurl/releases/download/v1.9.4/grpcurl_1.9.4_linux_x86_64.tar.gz
+pnpm sha512:68046141893c66fad01c079231128e9afb89ef87e2691d69e4d40eee228988295fd4682181bae55b58418c3a253bde65a505ec7c5f9403ece5cc3cd37dcf2531 corepack pnpm@9.15.9+sha512.68046141893c66fad01c079231128e9afb89ef87e2691d69e4d40eee228988295fd4682181bae55b58418c3a253bde65a505ec7c5f9403ece5cc3cd37dcf2531
+sandbox-image sha256:e8207aef109eeb16e47885a069a76242a5c3a08259e4a09a50d2a0fea0b97e91 ghcr.io/rossoctl/moca-remote-worker@sha256:e8207aef109eeb16e47885a069a76242a5c3a08259e4a09a50d2a0fea0b97e91
+snapshot-rootfs sha256:94fd1861ff50dc869f07f66d184587cf0d619b2316a5787eeef664cbb390f9af /srv/e15/snapshots/e15/rootfs
+snapshot-agent sha256:f04cc06081a699b805e6c5325e77d809e367295c63b65a12a95393838eda13f1 /srv/e15/snapshots/e15/agent
+kernel d8ced68bd61e27b6813e2c993cc53a4029c59e13210672180591c84109684fe4 https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/20260909-a8e1c3830545-0/x86_64/vmlinux-6.18.44
+template 627ff32b829a64308413d7e05817a474bf4f5a4421e5725e448ba6dfba10d1a9 /srv/e15/template/workspace.img
+template-mem512 7d7597dbe76a927ecc3a8457184b6f2031df5210aafafcd836629adb286e39db /srv/e15/template-mem512/workspace.img

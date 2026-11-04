@@ -1,0 +1,23 @@
+CHAIN lifecycle START 2026-11-04T02:19:51Z
+CHAIN lifecycle DONE 2026-11-04T02:20:19Z :: {"core_s_per_exec": 0.03106556, "phase_median_ms": {"acquire_us": 0.007, "resume_us": 17.929000000000002, "run_us": 2.487, "destroy_us": 19.404}}
+CHAIN base-default-sbx START 2026-11-04T02:20:19Z
+CHAIN base-default-sbx DONE 2026-11-04T05:00:41Z :: {"excess_p95_ms": 115.08, "p95_added_ms": null, "overhead_ms": 33.69, "n1_median_pace": 0.0, "undercovered": [], "probe_failed": {}, "evaluable": [1, 4, 5], "skipped": [2, 3]}
+CHAIN base-default-resident-inf START 2026-11-04T05:00:41Z
+CHAIN base-default-resident-inf DONE 2026-11-04T07:41:03Z :: {"excess_p95_ms": 126.17, "p95_added_ms": null, "overhead_ms": -27.84, "n1_median_pace": -0.0, "undercovered": [], "probe_failed": {}, "evaluable": [1, 4, 5], "skipped": [2, 3]}
+CHAIN base-default-resident-300 START 2026-11-04T07:41:03Z
+CHAIN base-default-resident-300 DONE 2026-11-04T10:21:25Z :: {"excess_p95_ms": 123.81, "p95_added_ms": null, "overhead_ms": -26.0, "n1_median_pace": -0.0, "undercovered": [], "probe_failed": {}, "evaluable": [1, 4, 5], "skipped": [2, 3]}
+CHAIN control-N128 START 2026-11-04T10:21:25Z
+CHAIN control-N128 DONE 2026-11-04T10:46:40Z :: {"holds": true, "holds_abs": true, "binding": "none", "failed_calls": 0, "window_calls": 2997, "median_class_pace": null, "median_pace": -0.0128, "p95_excess_ms": null, "excess_limit_ms": null, "a2": 0.0016}
+CHAIN cal-default-sbx-N8 START 2026-11-04T10:46:40Z
+CHAIN cal-default-sbx-N8 DONE 2026-11-04T11:11:57Z :: {"holds": true, "holds_abs": true, "binding": "none", "failed_calls": 0, "window_calls": 132, "median_class_pace": 0.0001, "median_pace": 0.0002, "p95_excess_ms": 131.846, "excess_limit_ms": 345.231, "a2": 0.0025} {"core_s_per_call": 3.599, "host_cpu_busy_pct_mean": 0.628}
+CHAIN cal-default-resident-inf-N8 START 2026-11-04T11:11:57Z
+CHAIN cal-default-resident-inf-N8 DONE 2026-11-04T11:37:12Z :: {"holds": true, "holds_abs": true, "binding": "none", "failed_calls": 0, "window_calls": 132, "median_class_pace": -0.0, "median_pace": -0.0001, "p95_excess_ms": 93.9795, "excess_limit_ms": 378.5085, "footprint_drift_pct": 29.5196, "repeat_required": true, "a2": 0.0025} {"core_s_per_call": 3.548, "footprint_median_mib": 97.152, "footprint_max_mib": 184.875, "usable_mib": 377548.375}
+CHAIN base-mem512-sbx START 2026-11-04T11:37:12Z
+CHAIN base-mem512-sbx DONE 2026-11-04T14:17:40Z :: {"excess_p95_ms": 250.96, "p95_added_ms": null, "overhead_ms": 389.75, "n1_median_pace": 0.0, "undercovered": [], "probe_failed": {}, "evaluable": [1, 4, 5], "skipped": [2, 3]}
+CHAIN base-mem512-resident-inf START 2026-11-04T14:17:40Z
+CHAIN base-mem512-resident-inf DONE 2026-11-04T16:58:06Z :: {"excess_p95_ms": 130.22, "p95_added_ms": null, "overhead_ms": -18.08, "n1_median_pace": 0.0, "undercovered": [], "probe_failed": {}, "evaluable": [1, 4, 5], "skipped": [2, 3]}
+CHAIN cal-mem512-sbx-N8 START 2026-11-04T16:58:06Z
+CHAIN cal-mem512-sbx-N8 DONE 2026-11-04T17:23:22Z :: {"holds": false, "holds_abs": false, "binding": "none", "failed_calls": 0, "window_calls": 132, "median_class_pace": 0.0001, "median_pace": 0.0008, "p95_excess_ms": 1894.795, "excess_limit_ms": 752.8785, "a2": 0.0026} {"core_s_per_call": 4.06, "host_cpu_busy_pct_mean": 0.697}
+CHAIN cal-mem512-resident-inf-N8 START 2026-11-04T17:23:22Z
+CHAIN cal-mem512-resident-inf-N8 DONE 2026-11-04T17:48:37Z :: {"holds": true, "holds_abs": true, "binding": "none", "failed_calls": 0, "window_calls": 132, "median_class_pace": -0.0, "median_pace": 0.0001, "p95_excess_ms": 95.972, "excess_limit_ms": 390.6615, "footprint_drift_pct": -0.0149, "repeat_required": false, "a2": 0.0025} {"core_s_per_call": 3.62, "footprint_median_mib": 1023.713, "footprint_max_mib": 1023.855, "usable_mib": 377419.285}
+CHAIN ALL DONE 2026-11-04T17:48:37Z

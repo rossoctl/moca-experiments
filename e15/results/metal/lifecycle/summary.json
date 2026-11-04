@@ -1,0 +1,16 @@
+{
+  "execs": 100,
+  "warm_skip": 5,
+  "slice_cpu_usec_before": 386900917,
+  "slice_cpu_usec_after": 390007473,
+  "span_s": 11.432583332061768,
+  "idle_cpu_usec_same_span": 417,
+  "command": "true",
+  "core_s_per_exec": 0.03106556,
+  "phase_median_ms": {
+    "acquire_us": 0.007,
+    "resume_us": 17.929000000000002,
+    "run_us": 2.487,
+    "destroy_us": 19.404
+  }
+}

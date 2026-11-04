@@ -1,0 +1,2 @@
+{"session":"e15-default-resident-300-n1-s4-1793782605-0-1","trace":"codex:e92d9799-6c1a-dcef-a61a-72b17ea97fce","provider":"codex","window_calls":17,"planned_ms":391650,"observed_ms":391503.439}
+{"session":"e15-default-resident-300-n1-s4-1793782605-0-2","trace":"claude:06dde36f-5409-9f7f-9095-5acf739ddc70","provider":"claude","window_calls":12,"planned_ms":197475,"observed_ms":197503.679}

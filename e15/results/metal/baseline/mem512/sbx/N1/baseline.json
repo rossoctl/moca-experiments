@@ -1,0 +1,202 @@
+{
+  "baseline_p95_ms": 606.718,
+  "calls": 40,
+  "class_counts": {
+    "build": 20,
+    "file_ops": 20,
+    "host_infra": 20,
+    "interpreter": 20,
+    "lint_check": 20,
+    "network": 20,
+    "opaque": 20,
+    "other": 20,
+    "process": 20,
+    "read": 20,
+    "search": 20,
+    "shell_read": 20,
+    "test": 20,
+    "unparsed": 20,
+    "vcs": 20,
+    "wait": 20,
+    "write": 20
+  },
+  "class_medians": {
+    "build": 53.24949999999998,
+    "file_ops": -454.5285,
+    "host_infra": 46.3319999999992,
+    "interpreter": 542.1245,
+    "lint_check": 515.9855,
+    "network": -34.359499999999905,
+    "opaque": 61.885999999999115,
+    "other": -5.489499999999943,
+    "process": 5.0390000000000015,
+    "read": 484.133,
+    "search": 482.304,
+    "shell_read": 389.755,
+    "test": 535.1955,
+    "unparsed": -41.18499999999962,
+    "vcs": 57.5195,
+    "wait": -21.748000000000502,
+    "write": 58.013
+  },
+  "corpus_class_counts": {
+    "build": 6485,
+    "file_ops": 7469,
+    "host_infra": 26751,
+    "interpreter": 55408,
+    "lint_check": 6697,
+    "network": 6790,
+    "opaque": 8954,
+    "other": 7154,
+    "process": 13891,
+    "read": 55085,
+    "search": 2807,
+    "shell_read": 216413,
+    "test": 5579,
+    "unparsed": 1629,
+    "vcs": 32986,
+    "wait": 6097,
+    "write": 73938
+  },
+  "corpus_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+  "driver_bin_sha256": "4971f732ec037686f65b6f97ef5f3c06911d0eae8139b4624bbc82552fd3ff9d",
+  "evaluable": [
+    {
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s1",
+      "seed": 1
+    },
+    {
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s4",
+      "seed": 4
+    },
+    {
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s5",
+      "seed": 5
+    }
+  ],
+  "excess_p95_ms": 250.95949999999993,
+  "global_median_ms": 59.5185,
+  "library_sha256": "3c8251383a81239366d5e9c4781af747f4c67cb18b75dc93de4db7045cce7b5f",
+  "n1_median_pace": 0.0037035847087868445,
+  "n1_pace_sessions": 4,
+  "overhead_ms": 389.755,
+  "point_sig": "f268309d12e6d2d506e8a4a18cff51a1e03d646bb6ad1f1ecda867fa9c1d0392",
+  "probe_failed": {},
+  "probe_runs": [
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-build",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-file_ops",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-host_infra",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-interpreter",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-lint_check",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-network",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-opaque",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-other",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-process",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-read",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-search",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-shell_read",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-test",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-unparsed",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-vcs",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-wait",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-write",
+      "ok": 20
+    }
+  ],
+  "runs": [
+    {
+      "calls": 7,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s1",
+      "p95_added_ms": 537.12
+    },
+    {
+      "calls": 29,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s4",
+      "p95_added_ms": 634.709
+    },
+    {
+      "calls": 4,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s5",
+      "p95_added_ms": 18.461999999999534
+    }
+  ],
+  "skipped": [
+    {
+      "reason": "empty_window",
+      "seed": 2,
+      "tag": "s2"
+    },
+    {
+      "reason": "empty_window",
+      "seed": 3,
+      "tag": "s3"
+    }
+  ],
+  "undercovered": []
+}
