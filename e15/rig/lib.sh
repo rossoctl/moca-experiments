@@ -119,6 +119,11 @@ fi
 E15_ARMS=(sbx resident-inf resident-300 control)
 E15_LADDER=(1 8 16 24 32 40 48 56 64 80 96 128)
 E15_FLOOR_MB=1536
+# SH_MAX_RUNS: the worker's backstop on unparked runs (moca vmpool admitLocked). A resident-inf
+# session holds one unparked run for its whole life, so 512 would refuse a metal resident rung above
+# N=512 before any host resource binds; the metal ladder goes past that (SPEC §13). aws-prelim
+# keeps 512, the preliminary run's value.
+if [ "$E15_HOST_PROFILE" = fresh-metal ]; then E15_MAX_RUNS=2048; else E15_MAX_RUNS=512; fi
 
 # Points (SPEC §10.3): points.sh (sourced after this file).
 
@@ -731,7 +736,7 @@ worker_env() {
     echo "SH_GUEST_RAM_MB=1024"
     echo "SH_STANDBY_DEPTH=$depth"
     echo "WORKER_MAX_CONCURRENT=256"
-    echo "SH_MAX_RUNS=512"
+    echo "SH_MAX_RUNS=$E15_MAX_RUNS"
     echo "SH_MAX_COMMITTED_MB=1048576"
     echo "SH_HOST_MEM_FLOOR_MB=$E15_FLOOR_MB"
     echo "SH_WORKSPACE_IMAGE_MB=$image_mb"

@@ -198,6 +198,9 @@ done
 sctl daemon-reload
 sctl start "$E15_SLICE" "$E15_VM_SLICE"
 m_note "e15.slice MemoryMax=$slice_max MemoryHigh=$slice_high bytes (host RAM $((mem_kb / 1024)) MiB - 3 GiB; MemoryMax - 1 GiB); undone with the slice unit's UNDO line"
+# The worker env is written per rung (lib.sh worker_env), nothing to undo; the value is recorded.
+[ "$E15_HOST_PROFILE" != fresh-metal ] ||
+  m_note "worker SH_MAX_RUNS=$E15_MAX_RUNS (fresh-metal; aws-prelim 512): written per rung into the rung's worker.env, nothing outside $E15_ROOT to undo"
 # Pool cgroups need the cpu/memory/pids controllers enabled below e15-vms.slice.
 sudo -n sh -c "echo '+memory +pids +cpu' > $E15_VMCG/cgroup.subtree_control" 2>/dev/null || true
 

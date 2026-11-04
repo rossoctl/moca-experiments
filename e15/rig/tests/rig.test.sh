@@ -622,6 +622,12 @@ if [ -f "$RIG/points.sh" ]; then
   wenv() { E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; worker_env sbx "$2" $3; grep "^SH_WORKSPACE_IMAGE_MB=" "$2"' _ "$RIG/lib.sh" "$TMP/wenv" "${1:-}"; }
   check "worker_env: SH_WORKSPACE_IMAGE_MB default 256" "$(wenv)" "SH_WORKSPACE_IMAGE_MB=256"
   check "worker_env: SH_WORKSPACE_IMAGE_MB follows the point (1024)" "$(wenv 1024)" "SH_WORKSPACE_IMAGE_MB=1024"
+  # SH_MAX_RUNS: 512 on the preliminary rig; 2048 on fresh-metal (resident-inf holds one unparked run per
+  # session, so 512 would refuse a metal resident rung above N=512 before any host resource binds)
+  wruns() { E15_HOST_PROFILE="$1" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; worker_env "$3" "$2"; grep "^SH_MAX_RUNS=" "$2"' _ "$RIG/lib.sh" "$TMP/wenv" "$2"; }
+  check "worker_env: SH_MAX_RUNS 512 on aws-prelim (sbx, resident-inf)" "$(wruns aws-prelim sbx) $(wruns aws-prelim resident-inf)" "SH_MAX_RUNS=512 SH_MAX_RUNS=512"
+  check "worker_env: SH_MAX_RUNS 2048 on fresh-metal (sbx, resident-inf, resident-300)" "$(wruns fresh-metal sbx) $(wruns fresh-metal resident-inf) $(wruns fresh-metal resident-300)" "SH_MAX_RUNS=2048 SH_MAX_RUNS=2048 SH_MAX_RUNS=2048"
+  check "setup.sh records the fresh-metal SH_MAX_RUNS in the manifest" "$(grep -c 'm_note "worker SH_MAX_RUNS=' "$RIG/setup.sh")" "1"
   check "rung.sh starts the worker with the point's image size" "$(grep -c 'start_worker "\$ARM" "\$DIR" "\$E15_P_IMAGE_MB"' "$RIG/rung.sh")" "1"
   check "rung.sh copies the point's template, not E15_TEMPLATE" "$(grep -c 'E15_TEMPLATE' "$RIG/rung.sh")/$(grep -c '"\$TEMPLATE" "\$RUN_ID"' "$RIG/rung.sh")" "0/1"
 fi
