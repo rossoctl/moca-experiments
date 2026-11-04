@@ -1061,3 +1061,31 @@ def test_footprint_drift_median_basis_is_the_default(tmp_path):
     assert abs(r["footprint_drift_sum_pct"] - 20 / 22.0) < 1e-9
     r = _rung(tmp_path, s, arm="resident-inf", drift_basis="median")
     assert r["footprint_drift_basis"] == "median" and r["repeat_required"]
+
+
+def test_flat_p95_limit_override_holds_1s(tmp_path):
+    # supplementary 1-second limit (user decision 2026-11-04): condition 4 for both verdicts is
+    # p95(excess) <= the flat limit; conditions 1-3 unchanged; the default is the sealed rule.
+    c = [call(added=a) for a in [50] * 18 + [700, 700]]
+    bl = BL(excess=100)                       # sealed: limit max(3 x 100, 50) = 300, abs 350
+    r = H.evaluate(c, [sess(0.0)] * 3, bl)
+    assert not r["holds"] and not r["holds_abs"] and r["excess_limit_ms"] == 300
+    r = H.evaluate(c, [sess(0.0)] * 3, bl, p95_limit_ms=1000)
+    assert r["holds"] and r["holds_abs"] and r["excess_limit_ms"] == 1000 and r["p95_limit_abs_ms"] == 1000
+    assert r["p95_limit_override_ms"] == 1000
+    assert not H.evaluate(c, [sess(0.0)] * 3, bl, p95_limit_ms=600)["holds"]
+    # conditions 1-2 still apply under the flat limit
+    bad = c + [call(status="err", cause="rpc_error")]
+    assert not H.evaluate(bad, [sess(0.0)] * 3, bl, p95_limit_ms=1000)["holds"]
+
+
+def test_record_main_out_and_limit_never_overwrites_record(tmp_path):
+    (tmp_path / "samples.jsonl").write_text(json.dumps(S(1)))
+    (tmp_path / "params.json").write_text(json.dumps(dict(arm="sbx", n=1, warmup_s=0, window_s=120, floor_mb=1536)))
+    (tmp_path / "record.json").write_text('{"sealed": true}')
+    R.main([str(tmp_path), "--params", str(tmp_path / "params.json"), "--p95-limit-ms", "1000",
+            "--out", str(tmp_path / "record_1s.json")])
+    assert json.loads((tmp_path / "record.json").read_text()) == {"sealed": True}
+    assert json.loads((tmp_path / "record_1s.json").read_text())["p95_limit_override_ms"] == 1000
+    with pytest.raises(SystemExit):
+        R.main([str(tmp_path), "--params", str(tmp_path / "params.json"), "--p95-limit-ms", "1000"])

@@ -176,10 +176,12 @@ def class_paces(calls, sessions, medians, global_median, offsets=None, stats=Non
     return paces, excluded, nonpos
 
 
-def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None):
+def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None, p95_limit_ms=None):
     """baseline: baseline.json's dict (class_medians, global_median_ms, excess_p95_ms, n1_median_pace)
     or None (N=1, and the control arm): conditions 3 and 4 are skipped, median_pace still reported.
-    Condition 3 is the median class-matched pace (class_paces) <= 0.10."""
+    Condition 3 is the median class-matched pace (class_paces) <= 0.10.
+    p95_limit_ms: a flat condition-4 limit for BOTH verdicts (the supplementary, unsealed 1-second
+    re-judge of the metal default arms, user decision 2026-11-04); None = the sealed rule."""
     win = [c for c in calls if c.get("in_window")]
     failed = [c for c in win if _is_failure(c, arm)]
     not_started = [c for c in win if c.get("status") == "err"
@@ -202,6 +204,8 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None):
         exc, fb = excess_ms(win, baseline.get("class_medians", {}), baseline["global_median_ms"])
         p95_exc = percentile(exc, 95)
         exc_limit = max(P95_FACTOR * baseline["excess_p95_ms"], EXCESS_FLOOR_MS)
+        if p95_limit_ms is not None:
+            exc_limit = float(p95_limit_ms)
     c1 = len(failed) == 0
     c2 = refusals == 0
     # condition 3 is class-matched: median class pace <= PACE_MAX. N=1 and control (baseline None)
@@ -222,6 +226,8 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None):
     # holds_abs: the same conditions, but condition 4 is p95 excess at most B + ABS_ADDED_MS
     # (B = baseline["excess_p95_ms"]). N=1 skips it as before.
     p95_limit_abs = None if baseline is None else baseline["excess_p95_ms"] + ABS_ADDED_MS
+    if baseline is not None and p95_limit_ms is not None:
+        p95_limit_abs = float(p95_limit_ms)
     c4_abs = p95_limit_abs is None or p95_exc is None or p95_exc <= p95_limit_abs
     # every eligible session dropped as non-positive expected time: nothing to judge pace on
     empty = len(win) == 0 or len(paces) == 0 or (baseline is not None and not cpaces and nonpos > 0)
@@ -234,6 +240,7 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None):
         "conditions_abs": {"no_failures": c1, "no_refusals": c2,
                            "pace": c3, "added_latency": c4_abs},
         "p95_limit_abs_ms": p95_limit_abs,
+        "p95_limit_override_ms": None if p95_limit_ms is None else float(p95_limit_ms),
         "window_calls": len(win),
         "failed_calls": len(failed),
         "not_started": len(not_started),
