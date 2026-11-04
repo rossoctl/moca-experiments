@@ -1,0 +1,6 @@
+rest: exit 0
+workspace-fast: exit 0
+workspace-slow: exit 0
+rest: exit 0
+workspace-fast: exit 0
+workspace-slow: exit 0

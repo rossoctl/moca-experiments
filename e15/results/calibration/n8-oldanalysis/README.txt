@@ -1,0 +1,1 @@
+Produced by the analysis BEFORE class-matched condition 4 (6252cfe..03bb4eb) and by driver 00d847e1/d3aa6a79-era builds. Their CPU-per-call (sbx k2) and footprint (resident-inf k2) numbers stand; their holds verdicts are superseded. N8-cal (no k2) had 3 unseeded sessions in slot 7 (rig error, K=4).

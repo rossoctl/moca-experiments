@@ -1,0 +1,20 @@
+{
+  "rung": "/srv/e15/runs/default/resident-inf/N1",
+  "n": 1,
+  "vms_at_window_end": 1,
+  "vm_mem_window_end_mib": [
+    80.3
+  ],
+  "footprint_median_mib": 80.33984375,
+  "footprint_max_mib": 80.33984375,
+  "footprint_median_window_start_mib": 80.0390625,
+  "mem_available_at_start_mib": 12009.69140625,
+  "mem_available_at_start_t": 0.958,
+  "usable_mib": 9449.69140625,
+  "slice_mem_window_end_mib": 90.0078125,
+  "in_window_calls": 7,
+  "calls_per_s_per_session": 0.007786420704760061,
+  "slice_cpu_s": 3.820824,
+  "core_s_per_call": 0.545832,
+  "cores_per_session": 0.004250077586120594
+}

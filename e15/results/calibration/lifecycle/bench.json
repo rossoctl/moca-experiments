@@ -1,0 +1,1 @@
+{"execs": 100, "warm_skip": 5, "slice_cpu_usec_before": 5237969165, "slice_cpu_usec_after": 5247879976, "span_s": 26.279968976974487, "idle_cpu_usec_same_span": 559, "command": "true"}

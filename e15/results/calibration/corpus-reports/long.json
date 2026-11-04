@@ -1,0 +1,48 @@
+{
+  "sessions": 4147,
+  "by_provider": {
+    "claude": 2539,
+    "codex": 1608
+  },
+  "total_sessions": 8058,
+  "dropped_lt20": 3911,
+  "excluded": 0,
+  "chains_collapsed": 36680,
+  "chains_capped": 16,
+  "chains_capped_ms": 165484731,
+  "dur_capped": {
+    "claude": 13347,
+    "codex": 251
+  },
+  "dur_capped_moved_ms": {
+    "claude": 3174673724,
+    "codex": 241076624
+  },
+  "gap_capped": 2003,
+  "gap_capped_ms": 143539514164,
+  "errored": 27082,
+  "infra_calls": 26751,
+  "infra_sessions": 893,
+  "chain_sessions": 873,
+  "opaque_calls": 8954,
+  "unparsed_calls": 1629,
+  "chain_sessions_pct": 21.051362430672775,
+  "infra_sessions_pct": 21.533638775018087,
+  "opaque_busy_pct": 14.494867866562931,
+  "unparsed_busy_pct": 0.48280763767664103,
+  "table": {
+    "occupied_pct": 6.311080773980616,
+    "work_pct": 5.414696952694076,
+    "calls_per_s": 0.01149910505345651,
+    "held_t300_pct": 37.02638884420188,
+    "wakes_per_session_h": 1.5464899417411326,
+    "mean_span_min": 186.6809847640865
+  },
+  "dup_calls_dropped": 12319,
+  "dup_sessions_affected": 94,
+  "null_wall_dropped": 616,
+  "unlinked_polls": 487,
+  "duckdb_sha256": "a7bab286bc640844560850965ccf47975cf66407154132abaab90f27ec9be744",
+  "H_s": 7200,
+  "exclude": null
+}

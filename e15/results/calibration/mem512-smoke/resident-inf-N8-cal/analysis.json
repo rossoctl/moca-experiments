@@ -1,0 +1,27 @@
+{
+  "rung": "/srv/e15/runs/_attempt7/mem512/resident-inf/N8-cal",
+  "n": 8,
+  "vms_at_window_end": 8,
+  "vm_mem_window_end_mib": [
+    871.4,
+    904.0,
+    930.3,
+    942.2,
+    960.0,
+    986.8,
+    1023.9,
+    1024.0
+  ],
+  "footprint_median_mib": 951.125,
+  "footprint_max_mib": 1023.98828125,
+  "footprint_median_window_start_mib": 963.171875,
+  "mem_available_at_start_mib": 11997.640625,
+  "mem_available_at_start_t": 0.665,
+  "usable_mib": 9437.640625,
+  "slice_mem_window_end_mib": 7799.8828125,
+  "in_window_calls": 132,
+  "calls_per_s_per_session": 0.01835380802584216,
+  "slice_cpu_s": 507.525239,
+  "core_s_per_call": 3.844888174242424,
+  "cores_per_session": 0.07056833943087622
+}

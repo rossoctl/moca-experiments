@@ -1,0 +1,80 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+// usage: plancheck CORPUS LIBRARY SEED CALLS.jsonl -> each call whose plan has a step with exit != 0
+func main() {
+	if os.Args[1] == "join" { join(); return }
+	if os.Args[1] == "plan" { planOne(); return }
+	if os.Args[1] == "sizes" { sizes(); return }
+	sess, err := LoadCorpus(os.Args[1])
+	if err != nil { panic(err) }
+	lib, err := LoadLibrary(os.Args[2])
+	if err != nil { panic(err) }
+	var seed int64
+	fmt.Sscan(os.Args[3], &seed)
+	by := map[string]Session{}
+	for _, s := range sess { by[s.ID] = s }
+	f, _ := os.Open(os.Args[4])
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<24)
+	n := 0
+	for sc.Scan() {
+		var c struct{ Trace, Status, Cause string; Call int; InWindow bool `json:"in_window"`; Exit *int32 }
+		json.Unmarshal(sc.Bytes(), &c)
+		s := by[c.Trace]
+		p, err := lib.Plan(s.Calls[c.Call], seed, s.ID)
+		if err != nil { panic(err) }
+		for _, st := range p {
+			if st.Exit != 0 {
+				n++
+				fmt.Printf("call %d status=%s cause=%s in_window=%v step_exit=%d cmd=%q\n", c.Call, c.Status, c.Cause, c.InWindow, st.Exit, st.Cmd)
+			}
+		}
+	}
+	fmt.Println("nonzero-exit steps:", n)
+}
+
+// join LIBRARY ID[:EXIT]... : print JoinPlan's script (base64-free, raw) for those invocations;
+// ID:EXIT overrides the declared exit (to force a mismatch).
+func join() {
+	lib, err := LoadLibrary(os.Args[2])
+	if err != nil { panic(err) }
+	idx := map[string]Invocation{}
+	for _, l := range lib.Classes { for _, v := range l { idx[v.ID] = v } }
+	var steps []Planned
+	for _, a := range os.Args[3:] {
+		id, ex := a, int32(-999)
+		for i := range a { if a[i] == ':' { id = a[:i]; var e int32; fmt.Sscan(a[i+1:], &e); ex = e } }
+		v, ok := idx[id]
+		if !ok { panic("no invocation " + id) }
+		p := Planned{Cmd: v.Cmd, Exit: v.Exit}
+		if ex != -999 { p.Exit = ex }
+		steps = append(steps, p)
+	}
+	s, err := JoinPlan(steps, 0)
+	if err != nil { panic(err) }
+	fmt.Print(s)
+}
+
+// plan CORPUS LIBRARY SEED TRACE CALL_I SESSION_KEY: print the joined script the driver sends
+func planOne() {
+	sess, err := LoadCorpus(os.Args[2]); if err != nil { panic(err) }
+	lib, err := LoadLibrary(os.Args[3]); if err != nil { panic(err) }
+	var seed int64; var ci int
+	fmt.Sscan(os.Args[4], &seed); fmt.Sscan(os.Args[6], &ci)
+	for _, s := range sess {
+		if s.ID != os.Args[5] { continue }
+		p, err := lib.Plan(s.Calls[ci], seed, os.Args[7]); if err != nil { panic(err) }
+		var tail int64
+		if n := len(p); n > 0 { tail = p[n-1].SleepAfterMs }
+		out, err := JoinPlan(p, tail); if err != nil { panic(err) }
+		fmt.Fprintf(os.Stderr, "steps=%d work_ms=%d dur_ms=%d chain=%v\n", len(p), s.Calls[ci].WorkMs, s.Calls[ci].DurMs, s.Calls[ci].Chain)
+		fmt.Print(out)
+	}
+}

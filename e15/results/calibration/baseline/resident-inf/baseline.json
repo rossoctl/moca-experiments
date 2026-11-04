@@ -1,0 +1,202 @@
+{
+  "baseline_p95_ms": 12.403999999999996,
+  "calls": 40,
+  "class_counts": {
+    "build": 20,
+    "file_ops": 20,
+    "host_infra": 20,
+    "interpreter": 20,
+    "lint_check": 20,
+    "network": 20,
+    "opaque": 20,
+    "other": 20,
+    "process": 20,
+    "read": 20,
+    "search": 20,
+    "shell_read": 20,
+    "test": 20,
+    "unparsed": 20,
+    "vcs": 20,
+    "wait": 20,
+    "write": 20
+  },
+  "class_medians": {
+    "build": -14.712499999999977,
+    "file_ops": -540.5205,
+    "host_infra": -15.831999999999198,
+    "interpreter": -5.143999999999949,
+    "lint_check": -12.039499999999997,
+    "network": -90.19449999999989,
+    "opaque": -1.0380000000004657,
+    "other": -43.931,
+    "process": -57.4385,
+    "read": -13.1035,
+    "search": -25.350500000000004,
+    "shell_read": -99.7285,
+    "test": 16.646000000000186,
+    "unparsed": -139.73549999999977,
+    "vcs": 7.164500000000004,
+    "wait": -53.004999999999654,
+    "write": -3.427500000000002
+  },
+  "corpus_class_counts": {
+    "build": 6485,
+    "file_ops": 7469,
+    "host_infra": 26751,
+    "interpreter": 55408,
+    "lint_check": 6697,
+    "network": 6790,
+    "opaque": 8954,
+    "other": 7154,
+    "process": 13891,
+    "read": 55085,
+    "search": 2807,
+    "shell_read": 216413,
+    "test": 5579,
+    "unparsed": 1629,
+    "vcs": 32986,
+    "wait": 6097,
+    "write": 73938
+  },
+  "corpus_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+  "driver_bin_sha256": "297c8e8ab424093612547f53072ac0c8ceea9b82f569863e0d7da6d0cbd2f713",
+  "evaluable": [
+    {
+      "dir": "/srv/e15/runs/default/resident-inf/N1-s1",
+      "seed": 1
+    },
+    {
+      "dir": "/srv/e15/runs/default/resident-inf/N1-s4",
+      "seed": 4
+    },
+    {
+      "dir": "/srv/e15/runs/default/resident-inf/N1-s5",
+      "seed": 5
+    }
+  ],
+  "excess_p95_ms": 284.2625,
+  "global_median_ms": -30.112,
+  "library_sha256": "7c2bdc4bfdda9cb8be8ae0865247fb52f802014dca002ad1d546066b2835ed41",
+  "n1_median_pace": -0.0031758213724542572,
+  "n1_pace_sessions": 4,
+  "overhead_ms": -15.831999999999198,
+  "point_sig": "0124f0509c32954356a90c6e5d9e7975069e2de4c0ccbb44e994cf829bc16db8",
+  "probe_failed": {},
+  "probe_runs": [
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-build",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-file_ops",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-host_infra",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-interpreter",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-lint_check",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-network",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-opaque",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-other",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-process",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-read",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-search",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-shell_read",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-test",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-unparsed",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-vcs",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-wait",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-probe-write",
+      "ok": 20
+    }
+  ],
+  "runs": [
+    {
+      "calls": 7,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-s1",
+      "p95_added_ms": -4.2029999999999745
+    },
+    {
+      "calls": 29,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-s4",
+      "p95_added_ms": 182.476
+    },
+    {
+      "calls": 4,
+      "dir": "/srv/e15/runs/default/resident-inf/N1-s5",
+      "p95_added_ms": -39.875
+    }
+  ],
+  "skipped": [
+    {
+      "reason": "empty_window",
+      "seed": 2,
+      "tag": "s2"
+    },
+    {
+      "reason": "empty_window",
+      "seed": 3,
+      "tag": "s3"
+    }
+  ],
+  "undercovered": []
+}

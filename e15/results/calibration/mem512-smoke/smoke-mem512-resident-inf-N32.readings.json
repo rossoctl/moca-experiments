@@ -1,0 +1,64 @@
+{
+ "holds": false,
+ "holds_abs": false,
+ "binding": "memory_floor",
+ "conditions": {
+  "added_latency": true,
+  "no_failures": false,
+  "no_refusals": false,
+  "pace": false
+ },
+ "conditions_abs": {
+  "added_latency": true,
+  "no_failures": false,
+  "no_refusals": false,
+  "pace": false
+ },
+ "p95_excess_ms": null,
+ "excess_limit_ms": 861.5939999999999,
+ "excess_limit_abs_ms": 537.198,
+ "median_class_pace": 16.96776508281202,
+ "median_pace_raw": 16.911419226520415,
+ "pace_excess": 16.911261929084116,
+ "offset_join_misses": 0,
+ "window_calls": 171,
+ "failed": 171,
+ "refusals": 3,
+ "oom_kills": 3,
+ "unseeded": 0,
+ "vm_mem_end_median_mib": 536.806640625,
+ "vm_mem_end_max_mib": 630.1171875,
+ "vm_mem_window_peak_mib": 630.35546875,
+ "vms_at_end": 28,
+ "disk_read_mbs_mean": 0.00836,
+ "disk_read_mbs_p95": 0.0,
+ "disk_read_max_mbs": 130.5,
+ "disk_await_ms_mean": 0.9410232558139535,
+ "disk_await_ms_p95": 1.0,
+ "mem_available_min_mib": 1017.578125,
+ "page_cache_max_mib": 653.69140625,
+ "host_cpu_busy_mean": 2.207588888888889,
+ "host_cpu_busy_p95": 3.27,
+ "top_excess_classes": [
+  [
+   "file_ops",
+   null
+  ],
+  [
+   "host_infra",
+   null
+  ],
+  [
+   "interpreter",
+   null
+  ],
+  [
+   "lint_check",
+   null
+  ],
+  [
+   "opaque",
+   null
+  ]
+ ]
+}

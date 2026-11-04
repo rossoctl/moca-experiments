@@ -1,0 +1,225 @@
+{
+  "H_s": 1800,
+  "aborted": false,
+  "arm": "resident-inf",
+  "baseline_path": "/srv/e15/runs/mem512/resident-inf/N1/baseline.json",
+  "baseline_source": "/srv/e15/runs/mem512/resident-inf/N1/baseline.json",
+  "binding": "none",
+  "by_class": {
+    "build": {
+      "calls": 1,
+      "failed": 0,
+      "p95_added_ms": -36.79399999999987
+    },
+    "host_infra": {
+      "calls": 21,
+      "failed": 0,
+      "p95_added_ms": 232.5680000000002
+    },
+    "interpreter": {
+      "calls": 6,
+      "failed": 0,
+      "p95_added_ms": 76.374
+    },
+    "lint_check": {
+      "calls": 2,
+      "failed": 0,
+      "p95_added_ms": 36.202
+    },
+    "network": {
+      "calls": 5,
+      "failed": 0,
+      "p95_added_ms": 423.8199999999997
+    },
+    "opaque": {
+      "calls": 3,
+      "failed": 0,
+      "p95_added_ms": 779.8680000000004
+    },
+    "process": {
+      "calls": 6,
+      "failed": 0,
+      "p95_added_ms": 22.464
+    },
+    "read": {
+      "calls": 24,
+      "failed": 0,
+      "p95_added_ms": 80.516
+    },
+    "shell_read": {
+      "calls": 44,
+      "failed": 0,
+      "p95_added_ms": 64.252
+    },
+    "vcs": {
+      "calls": 7,
+      "failed": 0,
+      "p95_added_ms": 545.2730000000001
+    },
+    "wait": {
+      "calls": 1,
+      "failed": 0,
+      "p95_added_ms": -40.844999999999345
+    },
+    "write": {
+      "calls": 12,
+      "failed": 0,
+      "p95_added_ms": 151.86300000000006
+    }
+  },
+  "by_provider": {
+    "claude": {
+      "calls": 95,
+      "failed": 0,
+      "p95_added_ms": 187.33000000000175
+    },
+    "codex": {
+      "calls": 37,
+      "failed": 0,
+      "p95_added_ms": 779.8680000000004
+    }
+  },
+  "causes": {},
+  "conditions": {
+    "added_latency": true,
+    "no_failures": true,
+    "no_refusals": true,
+    "pace": true
+  },
+  "conditions_abs": {
+    "added_latency": true,
+    "no_failures": true,
+    "no_refusals": true,
+    "pace": true
+  },
+  "corpus": "/srv/e15/corpora/default/corpus.jsonl",
+  "corpus_exclude": null,
+  "corpus_mean_span_min": 123.07861308174584,
+  "corpus_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+  "cut_at_end": 0,
+  "dataset_mib": 512,
+  "dataset_seed": 1,
+  "disk_await_mean_ms": 1.1956445497630332,
+  "disk_read_max_mbs": 130.5,
+  "disk_read_mean_mbs": 1.8163377777777778,
+  "disk_read_p95_mbs": 0.0,
+  "driver": {
+    "a2_ok": true,
+    "a2_pct_of_host": 0.09638888888888889,
+    "end_sessions": {
+      "end_sessions_failed": 0,
+      "end_sessions_ok": 16,
+      "end_sessions_sent": 16
+    },
+    "header": {
+      "goarch": "amd64",
+      "gomaxprocs": 4,
+      "goos": "linux",
+      "header": true,
+      "num_cpu": 4,
+      "t0_epoch": 1793710730.6103103
+    },
+    "window_cpu_ms": 3470
+  },
+  "driver_bin_sha256": "297c8e8ab424093612547f53072ac0c8ceea9b82f569863e0d7da6d0cbd2f713",
+  "driver_exit": 0,
+  "driver_load_s": 7.360025405883789,
+  "end_session_exec": true,
+  "excess_limit_ms": 861.5939999999999,
+  "failed_calls": 0,
+  "fallback_calls": 0,
+  "fallback_share": 0.0,
+  "floor_mb": 1536,
+  "footprint_drift_pct": -1.2507502879483479,
+  "grace_s": 300,
+  "holds": true,
+  "holds_abs": true,
+  "host_mem_total_kb": 16082476,
+  "launch_ts": 1793710723.250285,
+  "library": "/srv/e15/src/e15/commands/library.json",
+  "library_sha256": "7c2bdc4bfdda9cb8be8ae0865247fb52f802014dca002ad1d546066b2835ed41",
+  "median_class_pace": -1.172307623009683e-05,
+  "median_pace": 2.3893538997565855e-05,
+  "moca_commit": "c13d55649777e69ec7649d6fa8c08f4acb1f4e2e",
+  "moca_experiments_commit": "f9ca34200b1aea2b460b4e3ea1a9b4ba67495acf",
+  "n": 8,
+  "n1_median_pace": 0.0001572974362988866,
+  "n1_overhead_ms": -18.990000000000038,
+  "not_started": 0,
+  "offset_join_misses": 0,
+  "oom_kills": 0,
+  "p95_added_ms": 423.8199999999997,
+  "p95_excess_ms": 525.1654999999997,
+  "p95_limit_abs_ms": 537.198,
+  "pace_excess": -0.00013340389730132074,
+  "pace_excluded_nonpositive": 0,
+  "point": "mem512",
+  "point_settings": "point=mem512 corpus=default library=src/e15/commands/library.json template=template-mem512/workspace.img image_mb=1024 dataset_mib=512 dataset_seed=1 scan_classes=read,shell_read,search,test,interpreter,lint_check scan_cmd=cat /workspace/data.bin >/dev/null",
+  "point_sig": "f268309d12e6d2d506e8a4a18cff51a1e03d646bb6ad1f1ecda867fa9c1d0392",
+  "probe_failed": {},
+  "refusal_scope": "window",
+  "refusals": 0,
+  "refusals_by_reason": {},
+  "repeat_required": false,
+  "resident_patch_sha256": "1d0ce8b1a97c6db06a75fe27a43a371c00359be66cc37182ee76d0cc7a229dba",
+  "run_id": "mem512-resident-inf-n8-cal-1793710721",
+  "rung_start_ts": 1793710730.6103103,
+  "scan_classes": [
+    "read",
+    "shell_read",
+    "search",
+    "test",
+    "interpreter",
+    "lint_check"
+  ],
+  "scan_cmd": "cat /workspace/data.bin >/dev/null",
+  "seed": 1,
+  "sessions_evaluated": 9,
+  "sessions_excluded_lt3": 2,
+  "sessions_started": 16,
+  "slice_memory_max": "14320402432",
+  "snapshot_guest_ram_mb": 1024,
+  "snapshot_hash": "sha256:c60ed9495783ee640bbf0dec4b8a913c9f369425bf94e5665d68f5fdd21c65e7",
+  "spread_s": 60,
+  "template": "/srv/e15/template-mem512/workspace.img",
+  "template_sha256": "0854c2aedb579bd1-1024-512-1",
+  "time_origin_mismatch": false,
+  "undercovered": [],
+  "unseeded_sessions": 0,
+  "warmup_s": 600,
+  "window_calls": 132,
+  "window_s": 900,
+  "window_samples": 900,
+  "worker_bin_sha256": "0fba964a8a444f8f17a360dcd6ad5cf8e3eb8bbab9ec1706afd847a3aa93577b",
+  "worker_env": {
+    "E15_RESIDENT": "1",
+    "E15_RESIDENT_IDLE_S": "0",
+    "RELAY_ADDR": "127.0.0.1:9643",
+    "RELAY_TLS": "false",
+    "SANDBOX_ID": "e15",
+    "SH_CHROOT_BASE": "/srv/e15/jail",
+    "SH_DIAG_PHASES": "1",
+    "SH_DIAG_STATS_ADDR": "127.0.0.1:9646",
+    "SH_FIRECRACKER_BIN": "/usr/local/bin/firecracker",
+    "SH_GUEST_RAM_MB": "1024",
+    "SH_HOST_MEM_FLOOR_MB": "1536",
+    "SH_JAILER_BIN": "/usr/local/bin/jailer",
+    "SH_MAX_COMMITTED_MB": "1048576",
+    "SH_MAX_RUNS": "512",
+    "SH_PARENT_CGROUP": "e15.slice/e15-vms.slice",
+    "SH_SNAPSHOT_DIR": "/srv/e15/snapshots",
+    "SH_SNAPSHOT_IMAGE": "e15",
+    "SH_STANDBY_DEPTH": "0",
+    "SH_VMM": "firecracker",
+    "SH_WORKSPACE_IDLE": "24h",
+    "SH_WORKSPACE_IMAGE_MB": "1024",
+    "SH_WORKSPACE_ROOT": "/srv/e15/workspaces",
+    "TZ": "UTC",
+    "WORKER_MAX_CONCURRENT": "256"
+  },
+  "workspace_image_mb": 1024,
+  "workspace_seeding": "cp --reflink=always of the template per key before t0",
+  "workspaces_k_mult": 1,
+  "workspaces_per_slot": 16,
+  "workspaces_precreated": 128
+}

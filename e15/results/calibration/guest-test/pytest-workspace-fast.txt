@@ -1,0 +1,5 @@
+.                                                                        [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED test_library.py::test_commands_run_in_workspace
+1 passed, 12 deselected in 18.71s

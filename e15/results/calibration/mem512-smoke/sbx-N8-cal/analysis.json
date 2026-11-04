@@ -1,0 +1,36 @@
+{
+  "work_matched_calls": 135,
+  "command_cpu_s_est": 344.1986311264791,
+  "command_core_s_per_call_est": 2.549619489825771,
+  "lifecycle_core_s_per_call_resid": 2.627704310174229,
+  "lifecycle_core_s_per_exec_resid": 2.627704310174229,
+  "rung": "/srv/e15/runs/_attempt7/mem512/sbx/N8-cal",
+  "n": 8,
+  "window_s": 900,
+  "samples_span_s": 898.9899999999999,
+  "in_window_calls": 135,
+  "in_window_ok": 135,
+  "in_window_execs": 135,
+  "execs_per_call": 1.0,
+  "calls_per_s_per_session": 0.018771065306621877,
+  "slice_cpu_s": 698.938713,
+  "e15_cpu_s": 704.505403,
+  "core_s_per_call": 5.1773238,
+  "cores_per_session": 0.09718388316332775,
+  "slice_cores": 0.777471065306622,
+  "host_cpu_busy_pct_mean": 21.548177777777777,
+  "host_cpu_busy_pct_p95": 56.47,
+  "phase_execs": 137,
+  "phase_median_ms": {
+    "acquire_us": 0.062,
+    "resume_us": 78.548,
+    "run_us": 1532.087,
+    "destroy_us": 122.668
+  },
+  "phase_mean_ms": {
+    "acquire_us": 10.249058394160583,
+    "resume_us": 82.14148175182481,
+    "run_us": 6376.351087591241,
+    "destroy_us": 122.27162773722628
+  }
+}

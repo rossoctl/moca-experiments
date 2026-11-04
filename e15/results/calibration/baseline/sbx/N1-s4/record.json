@@ -1,0 +1,198 @@
+{
+  "H_s": 1800,
+  "aborted": false,
+  "arm": "sbx",
+  "baseline_path": null,
+  "baseline_source": "none",
+  "binding": "none",
+  "by_class": {
+    "build": {
+      "calls": 3,
+      "failed": 0,
+      "p95_added_ms": 550.1630000000005
+    },
+    "file_ops": {
+      "calls": 6,
+      "failed": 0,
+      "p95_added_ms": 186.29499999999996
+    },
+    "interpreter": {
+      "calls": 5,
+      "failed": 0,
+      "p95_added_ms": 379.9290000000001
+    },
+    "lint_check": {
+      "calls": 2,
+      "failed": 0,
+      "p95_added_ms": 346.193
+    },
+    "opaque": {
+      "calls": 1,
+      "failed": 0,
+      "p95_added_ms": 236.76899999999978
+    },
+    "read": {
+      "calls": 2,
+      "failed": 0,
+      "p95_added_ms": 191.14600000000002
+    },
+    "search": {
+      "calls": 2,
+      "failed": 0,
+      "p95_added_ms": 215.26
+    },
+    "shell_read": {
+      "calls": 5,
+      "failed": 0,
+      "p95_added_ms": 186.835
+    },
+    "write": {
+      "calls": 3,
+      "failed": 0,
+      "p95_added_ms": 529.941
+    }
+  },
+  "by_provider": {
+    "claude": {
+      "calls": 12,
+      "failed": 0,
+      "p95_added_ms": 529.941
+    },
+    "codex": {
+      "calls": 17,
+      "failed": 0,
+      "p95_added_ms": 550.1630000000005
+    }
+  },
+  "causes": {},
+  "conditions": {
+    "added_latency": true,
+    "no_failures": true,
+    "no_refusals": true,
+    "pace": true
+  },
+  "conditions_abs": {
+    "added_latency": true,
+    "no_failures": true,
+    "no_refusals": true,
+    "pace": true
+  },
+  "corpus": "/srv/e15/corpora/default/corpus.jsonl",
+  "corpus_exclude": null,
+  "corpus_mean_span_min": 123.07861308174584,
+  "corpus_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+  "cut_at_end": 0,
+  "dataset_mib": 0,
+  "dataset_seed": 1,
+  "disk_await_mean_ms": 1.0145466666666665,
+  "disk_read_max_mbs": 130.5,
+  "disk_read_mean_mbs": 0.11115777777777779,
+  "disk_read_p95_mbs": 0.151,
+  "disk_read_single_mbs": null,
+  "driver": {
+    "a2_ok": true,
+    "a2_pct_of_host": 0.012777777777777779,
+    "header": {
+      "goarch": "amd64",
+      "gomaxprocs": 4,
+      "goos": "linux",
+      "header": true,
+      "num_cpu": 4,
+      "t0_epoch": 1793728537.0253878
+    },
+    "window_cpu_ms": 460
+  },
+  "driver_bin_sha256": "297c8e8ab424093612547f53072ac0c8ceea9b82f569863e0d7da6d0cbd2f713",
+  "driver_exit": 0,
+  "driver_load_s": 7.2145256996154785,
+  "end_session_exec": false,
+  "excess_limit_ms": null,
+  "failed_calls": 0,
+  "fallback_calls": 0,
+  "fallback_share": 0.0,
+  "floor_mb": 1536,
+  "grace_s": 300,
+  "holds": true,
+  "holds_abs": true,
+  "host_mem_total_kb": 16082476,
+  "host_profile": "aws-prelim",
+  "launch_ts": 1793728529.810862,
+  "library": "/srv/e15/src/e15/commands/library.json",
+  "library_sha256": "7c2bdc4bfdda9cb8be8ae0865247fb52f802014dca002ad1d546066b2835ed41",
+  "median_class_pace": null,
+  "median_pace": 0.003457003155357241,
+  "memory_abort": null,
+  "moca_commit": "c13d55649777e69ec7649d6fa8c08f4acb1f4e2e",
+  "moca_experiments_commit": "617ebb7e1796a4d4281a8c29964915f0d492be46",
+  "n": 1,
+  "n1_median_pace": null,
+  "n1_overhead_ms": null,
+  "not_started": 0,
+  "offset_join_misses": 0,
+  "oom_kills": 0,
+  "p95_added_ms": 529.941,
+  "p95_excess_ms": null,
+  "p95_limit_abs_ms": null,
+  "pace_excess": null,
+  "pace_excluded_nonpositive": 0,
+  "point": "default",
+  "point_settings": "point=default corpus=default library=src/e15/commands/library.json template=template/workspace.img image_mb=256 dataset_mib=0 dataset_seed=1 scan_classes= scan_cmd=",
+  "point_sig": "0124f0509c32954356a90c6e5d9e7975069e2de4c0ccbb44e994cf829bc16db8",
+  "probe_failed": null,
+  "refusal_scope": "window",
+  "refusals": 0,
+  "refusals_by_reason": {},
+  "resident_patch_sha256": null,
+  "run_id": "default-sbx-n1-s4-1793728528",
+  "rung_start_ts": 1793728537.0253878,
+  "scan_classes": [],
+  "scan_cmd": "",
+  "seed": 4,
+  "sessions_evaluated": 2,
+  "sessions_excluded_lt3": 0,
+  "sessions_started": 3,
+  "slice_memory_max": "13246660608",
+  "snapshot_guest_ram_mb": 1024,
+  "snapshot_hash": "sha256:c60ed9495783ee640bbf0dec4b8a913c9f369425bf94e5665d68f5fdd21c65e7",
+  "spread_s": 60,
+  "template": "/srv/e15/template/workspace.img",
+  "template_sha256": "0854c2aedb579bd1",
+  "time_origin_mismatch": false,
+  "undercovered": null,
+  "unseeded_sessions": 0,
+  "warmup_s": 600,
+  "window_calls": 29,
+  "window_s": 900,
+  "window_samples": 900,
+  "worker_bin_sha256": "ebb9a8b7d698bab69efbb1f144b47a98f8f17ec2ad8146598f07cb1bd8166522",
+  "worker_env": {
+    "RELAY_ADDR": "127.0.0.1:9643",
+    "RELAY_TLS": "false",
+    "SANDBOX_ID": "e15",
+    "SH_CHROOT_BASE": "/srv/e15/jail",
+    "SH_DIAG_PHASES": "1",
+    "SH_DIAG_STATS_ADDR": "127.0.0.1:9646",
+    "SH_FIRECRACKER_BIN": "/usr/local/bin/firecracker",
+    "SH_GUEST_RAM_MB": "1024",
+    "SH_HOST_MEM_FLOOR_MB": "1536",
+    "SH_JAILER_BIN": "/usr/local/bin/jailer",
+    "SH_MAX_COMMITTED_MB": "1048576",
+    "SH_MAX_RUNS": "512",
+    "SH_PARENT_CGROUP": "e15.slice/e15-vms.slice",
+    "SH_SNAPSHOT_DIR": "/srv/e15/snapshots",
+    "SH_SNAPSHOT_IMAGE": "e15",
+    "SH_STANDBY_DEPTH": "2",
+    "SH_VMM": "firecracker",
+    "SH_WORKSPACE_IDLE": "24h",
+    "SH_WORKSPACE_IMAGE_MB": "256",
+    "SH_WORKSPACE_ROOT": "/srv/e15/workspaces",
+    "TZ": "UTC",
+    "WORKER_MAX_CONCURRENT": "256"
+  },
+  "workspace_copy": "reflink",
+  "workspace_image_mb": 256,
+  "workspace_seeding": "cp --reflink=always of the template per key before t0",
+  "workspaces_k_mult": 1,
+  "workspaces_per_slot": 16,
+  "workspaces_precreated": 16
+}

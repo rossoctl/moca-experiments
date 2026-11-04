@@ -1,0 +1,30 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"sort"
+)
+
+func sizes() {
+	sess, err := LoadCorpus(os.Args[2]); if err != nil { panic(err) }
+	lib, err := LoadLibrary(os.Args[3]); if err != nil { panic(err) }
+	var all []int
+	over := map[string]int{}
+	calls := map[string]int{}
+	n, big := 0, 0
+	for _, s := range sess {
+		for _, c := range s.Calls {
+			p, err := lib.Plan(c, 1, s.ID); if err != nil { panic(err) }
+			var tail int64
+			if k := len(p); k > 0 { tail = p[k-1].SleepAfterMs }
+			out, _ := JoinPlan(p, tail)
+			n++; calls[c.Class]++
+			all = append(all, len(out))
+			if len(out) > 30*1024 { big++; over[c.Class]++ }
+		}
+	}
+	sort.Ints(all)
+	fmt.Printf("calls=%d over30KiB=%d (%.3f%%) p50=%d p99=%d p999=%d max=%d\n", n, big, 100*float64(big)/float64(n), all[n/2], all[n*99/100], all[n*999/1000], all[n-1])
+	for k, v := range over { fmt.Printf("  %s: %d of %d\n", k, v, calls[k]) }
+}

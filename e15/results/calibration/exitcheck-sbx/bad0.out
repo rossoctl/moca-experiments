@@ -1,0 +1,8 @@
+ README.rst                 |  5 ++++-
+ docs/api.rst               |  3 ++-
+ docs/versions.rst          | 32 +++++++++++++++++++++++++++++++-
+ more_itertools/__init__.py |  2 +-
+ more_itertools/more.py     | 17 +++++++++--------
+ setup.cfg                  |  2 +-
+ 6 files changed, 48 insertions(+), 13 deletions(-)
+E15_FAILED_STEP=0 RC=1

@@ -1,0 +1,27 @@
+{
+  "rung": "/srv/e15/runs/default/resident-inf/N8-cal",
+  "n": 8,
+  "vms_at_window_end": 8,
+  "vm_mem_window_end_mib": [
+    29.0,
+    56.3,
+    58.1,
+    67.9,
+    80.3,
+    114.8,
+    159.7,
+    178.4
+  ],
+  "footprint_median_mib": 74.072265625,
+  "footprint_max_mib": 178.359375,
+  "footprint_median_window_start_mib": 69.21875,
+  "mem_available_at_start_mib": 11730.296875,
+  "mem_available_at_start_t": 0.829,
+  "usable_mib": 9170.296875,
+  "slice_mem_window_end_mib": 759.28515625,
+  "in_window_calls": 132,
+  "calls_per_s_per_session": 0.01835378760996978,
+  "slice_cpu_s": 491.032029,
+  "core_s_per_call": 3.7199396136363636,
+  "cores_per_session": 0.06827498159059486
+}

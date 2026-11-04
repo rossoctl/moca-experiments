@@ -1,0 +1,13 @@
+{
+  "execs": 100,
+  "command": "true",
+  "core_s_per_exec": 0.09910811000000001,
+  "phase_median_ms": {
+    "acquire_us": 0.062,
+    "resume_us": 73.451,
+    "run_us": 7.6395,
+    "destroy_us": 108.2915
+  },
+  "idle_cpu_usec_same_span": 559,
+  "span_s": 26.279968976974487
+}

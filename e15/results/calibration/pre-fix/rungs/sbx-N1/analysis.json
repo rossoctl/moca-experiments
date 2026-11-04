@@ -1,0 +1,37 @@
+{
+  "command_cpu_s_est": 2.9091133632313317,
+  "command_core_s_per_call_est": 0.4155876233187617,
+  "lifecycle_core_s_per_call_resid": 0.6072498052526669,
+  "lifecycle_core_s_per_exec_resid": 0.2500440374569805,
+  "rung": "/srv/e15/runs/default/sbx/N1",
+  "n": 1,
+  "window_s": 900,
+  "samples_span_s": 899.0019999999998,
+  "in_window_calls": 7,
+  "in_window_ok": 7,
+  "in_window_execs": 17,
+  "execs_per_call": 2.4285714285714284,
+  "calls_per_s_per_session": 0.0077864120435772125,
+  "slice_cpu_s": 7.159862,
+  "e15_cpu_s": 7.246853,
+  "core_s_per_call": 1.0228374285714286,
+  "cores_per_session": 0.00796423367245012,
+  "slice_cores": 0.00796423367245012,
+  "host_cpu_busy_pct_mean": 1.4081444444444444,
+  "host_cpu_busy_pct_p95": 2.26,
+  "planned_work_s": 3.317,
+  "planned_work_core_frac_per_session": 0.003689646964077945,
+  "phase_execs": 17,
+  "phase_median_ms": {
+    "acquire_us": 0.051,
+    "resume_us": 75.876,
+    "run_us": 228.732,
+    "destroy_us": 101.883
+  },
+  "phase_mean_ms": {
+    "acquire_us": 8.938529411764707,
+    "resume_us": 75.76952941176471,
+    "run_us": 294.1835882352941,
+    "destroy_us": 102.51529411764706
+  }
+}

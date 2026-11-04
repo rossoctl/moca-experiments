@@ -1,0 +1,1 @@
+SUPERSEDED EVIDENCE -- NOT CALIBRATION. Recorded before the run-length-encoded JoinPlan and grouped Plan (abdff01, 9c9a385): the same seed now runs a call's invocations in a grouped order, so these records are not step-for-step comparable with later runs.

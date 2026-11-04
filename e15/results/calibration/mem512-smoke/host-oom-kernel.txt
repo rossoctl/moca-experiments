@@ -1,0 +1,23 @@
+Nov 03 13:53:29 ip-172-31-66-225.ec2.internal kernel: node invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+Nov 03 13:56:35 ip-172-31-66-225.ec2.internal kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=sh-control-plane.service,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/session.slice/dbus-broker.service,task=
+Nov 03 13:56:35 ip-172-31-66-225.ec2.internal kernel: Out of memory: Killed process 1280802 (dbus-broker-lau) total-vm:8308kB, anon-rss:256kB, file-rss:204kB, shmem-rss:0kB, UID:1000 pgtables:60kB oom_score_adj:200
+Nov 03 13:56:35 ip-172-31-66-225.ec2.internal kernel: irqbalance invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=irqbalance.service,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/session.slice/dbus-broker.service,task=dbus-b
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: Out of memory: Killed process 1280803 (dbus-broker) total-vm:5000kB, anon-rss:128kB, file-rss:180kB, shmem-rss:0kB, UID:1000 pgtables:48kB oom_score_adj:200
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: systemd invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=init.scope,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/init.scope,task=(sd-pam),pid=585404,uid=1000
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: Out of memory: Killed process 585404 ((sd-pam)) total-vm:176052kB, anon-rss:8536kB, file-rss:416kB, shmem-rss:0kB, UID:1000 pgtables:100kB oom_score_adj:100
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: amazon-ssm-agen invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=-900
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=amazon-ssm-agent.service,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/init.scope,task=systemd,pid=585402,uid=
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: Out of memory: Killed process 585402 (systemd) total-vm:23136kB, anon-rss:3768kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:92kB oom_score_adj:100
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: sshd-session invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=user.slice,mems_allowed=0,global_oom,task_memcg=/e15.slice/e15-vms.slice/e15-worker.service,task=microvm-worker-,pid=2325816,uid=0
+Nov 03 13:56:36 ip-172-31-66-225.ec2.internal kernel: Out of memory: Killed process 2325816 (microvm-worker-) total-vm:3007244kB, anon-rss:13184kB, file-rss:1047968kB, shmem-rss:0kB, UID:0 pgtables:2304kB oom_score_adj:0
+Nov 03 13:56:40 ip-172-31-66-225.ec2.internal kernel: firecracker invoked oom-killer: gfp_mask=0x100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+Nov 03 13:56:41 ip-172-31-66-225.ec2.internal kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=e15.slice,mems_allowed=0,oom_memcg=/e15.slice,task_memcg=/e15.slice/e15-vms.slice/pool-3,task=firecracker,pid=2326435,uid=0
+Nov 03 13:56:45 ip-172-31-66-225.ec2.internal kernel: fc_vcpu 0 invoked oom-killer: gfp_mask=0x100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+Nov 03 13:56:45 ip-172-31-66-225.ec2.internal kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=e15.slice,mems_allowed=0,oom_memcg=/e15.slice,task_memcg=/e15.slice/e15-vms.slice/pool-14,task=firecracker,pid=2327670,uid=0
+Nov 03 14:19:23 ip-172-31-66-225.ec2.internal kernel: fc_vcpu 0 invoked oom-killer: gfp_mask=0x100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+Nov 03 14:19:23 ip-172-31-66-225.ec2.internal kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=e15.slice,mems_allowed=0,oom_memcg=/e15.slice,task_memcg=/e15.slice/e15-vms.slice/e15-worker.service,task=microvm-worker,pid=2457865,uid=0
+Nov 03 14:19:23 ip-172-31-66-225.ec2.internal kernel: fc_vcpu 0 invoked oom-killer: gfp_mask=0x100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+Nov 03 14:19:24 ip-172-31-66-225.ec2.internal kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=e15.slice,mems_allowed=0,oom_memcg=/e15.slice,task_memcg=/e15.slice/e15-vms.slice/pool-7,task=firecracker,pid=2326791,uid=0

@@ -1,0 +1,18 @@
+ README.rst                 |  5 ++++-
+ docs/api.rst               |  3 ++-
+ docs/versions.rst          | 32 +++++++++++++++++++++++++++++++-
+ more_itertools/__init__.py |  2 +-
+ more_itertools/more.py     | 17 +++++++++--------
+ setup.cfg                  |  2 +-
+ 6 files changed, 48 insertions(+), 13 deletions(-)
+LICENSE
+MANIFEST.in
+Makefile
+README.rst
+docs
+more_itertools
+pyproject.toml
+requirements
+setup.cfg
+tests
+tox.ini

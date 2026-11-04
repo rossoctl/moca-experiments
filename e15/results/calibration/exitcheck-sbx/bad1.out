@@ -1,0 +1,12 @@
+LICENSE
+MANIFEST.in
+Makefile
+README.rst
+docs
+more_itertools
+pyproject.toml
+requirements
+setup.cfg
+tests
+tox.ini
+E15_FAILED_STEP=1 RC=1
