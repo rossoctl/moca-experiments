@@ -1571,6 +1571,8 @@ check "setup.sh: fresh-metal apply.sh runs in a fresh pid namespace, as the logi
 pidns_snip=$(sed -n '/^  pidns=()$/,/--init-groups env/p' "$RIG/setup.sh")
 check "setup.sh: aws-prelim apply.sh runs as before (no pid namespace)" \
   "$(METAL=0 bash -c "$pidns_snip"$'\n''echo ${#pidns[@]}')/$(METAL=1 bash -c "$pidns_snip"$'\n''echo ${pidns[0]} ${pidns[2]} ${pidns[3]}')" "0/sudo unshare --pid"
+check "setup.sh: fresh-metal template artifact hashed as root, empty hash refused" \
+  "$(grep -c 'tsha=\$(sudo -n sha256sum "\$E15_P_TEMPLATE"' "$RIG/setup.sh")/$(grep -c '\[ -n "\$tsha" \] || die' "$RIG/setup.sh")/$(grep -c 'e15_artifact "\$E15_P_TEMPLATE_STAMP" "\$(sha256_of' "$RIG/setup.sh")" "1/1/0"
 
 echo
 if [ "$fails" -eq 0 ]; then

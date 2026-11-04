@@ -349,7 +349,13 @@ while read -r tpoint; do
     stamp_set "$E15_P_TEMPLATE_STAMP" "$tkey"
     m_note "built $E15_P_TEMPLATE ($(tail -1 "$wlog"))"
   fi
-  [ "$METAL" = 1 ] && e15_artifact "$E15_P_TEMPLATE_STAMP" "$(sha256_of "$E15_P_TEMPLATE")" "$E15_P_TEMPLATE"
+  # The template is root's, mode 0600 (build_workspace.sh runs under sudo): hash it as root, and
+  # refuse an empty hash rather than record one.
+  if [ "$METAL" = 1 ]; then
+    tsha=$(sudo -n sha256sum "$E15_P_TEMPLATE" | cut -d' ' -f1)
+    [ -n "$tsha" ] || die "cannot hash $E15_P_TEMPLATE"
+    e15_artifact "$E15_P_TEMPLATE_STAMP" "$tsha" "$E15_P_TEMPLATE"
+  fi
 done < <(e15_templates)
 
 # --- 7b. workspace disk estimate (fresh-metal: reflinked copies, the per-session delta) -------
