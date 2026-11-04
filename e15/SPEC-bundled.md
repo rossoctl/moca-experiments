@@ -1,7 +1,7 @@
 # E15b — bundled commands: does per-turn bundling narrow resident's warm-VM advantage?
 
-Version: 0.1 (draft for review), 2026-11-04
-Status: **Design. Not approved. Nothing is built.**
+Version: 0.1, 2026-11-04
+Status: **Design. Approved by the user 2026-11-04. Not built; runs after E15's metal ladders.**
 Parent: `e15/SPEC.md` (E15). E15b reuses E15's instrument unchanged except where this document
 says otherwise. Section references like "§8" are to E15's spec.
 Rig: the metal host of E15 §13 (AWS m7i.metal-24xl), after E15's metal ladders finish.
