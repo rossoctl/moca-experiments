@@ -257,17 +257,87 @@
   0.6
  ],
  "fitted_eff_range": [
-  0.5,
-  0.6
+  0.4,
+  0.5
  ],
  "metal_n_max_range_at_fitted_eff": {
   "SBX": [
-   448,
-   576
+   384,
+   448
   ],
   "RES": [
-   448,
-   576
+   384,
+   448
   ]
+ },
+ "fit_v1": {
+  "basis": "default only (all arms N=8 hold, N=16 fail)",
+  "fitted_eff_range": [
+   0.5,
+   0.6
+  ],
+  "metal_n_max_range": {
+   "SBX": [
+    448,
+    576
+   ],
+   "RES": [
+    448,
+    576
+   ]
+  }
+ },
+ "refit": {
+  "basis": "AWS records /tmp/kagenti/aws-records: default and long (all arms N=8 hold, N=16 fail), short (sbx, resident-inf N=8 fail), no-infra sbx (N=8 fails, 717 vs 687 ms); 11 outcomes; demand scale fixed from the default corpus; 9 seeds per point",
+  "outcomes_matched_by_eff": {
+   "0.35": 7,
+   "0.40": 9,
+   "0.425": 8,
+   "0.45": 9,
+   "0.50": 8,
+   "0.55": 8,
+   "0.60": 8,
+   "0.65": 6,
+   "0.70": 4
+  },
+  "misses": {
+   "0.40": [
+    "default sbx N=8",
+    "long sbx N=8"
+   ],
+   "0.45": [
+    "short resident-inf N=8",
+    "no-infra sbx N=8"
+   ],
+   "0.50": [
+    "short sbx N=8",
+    "short resident-inf N=8",
+    "no-infra sbx N=8"
+   ]
+  },
+  "one_factor_explains_all": false,
+  "fitted_eff_range": [
+   0.4,
+   0.5
+  ],
+  "metal_grid_logs": [
+   "bm-metal-refit.log",
+   "bm-fit2.log",
+   "bm-fit3.log"
+  ],
+  "metal_n_max_ladder": {
+   "0.40": {
+    "SBX": 384,
+    "RES": 384
+   },
+   "0.45": {
+    "SBX": 384,
+    "RES": 384
+   },
+   "0.50": {
+    "SBX": 448,
+    "RES": 448
+   }
+  }
  }
 }

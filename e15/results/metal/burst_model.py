@@ -178,6 +178,7 @@ def main():
     ap.add_argument("--scan-s", type=float, default=0.0, help="mem512: fixed CPU s per call of a scanning class")
     ap.add_argument("--scan-classes", default="read,shell_read,search,test,interpreter,lint_check")
     ap.add_argument("--ladder", default=None, help="comma list: report n_max per seed on this ladder (needs --limit-ms)")
+    ap.add_argument("--scale", type=float, default=None, help="fix the demand scale (from the default corpus) instead of fitting it to --core-s")
     ap.add_argument("--warmup", type=float, default=600)
     ap.add_argument("--window", type=float, default=900)
     a = ap.parse_args()
@@ -188,6 +189,8 @@ def main():
     share = (sum(1 for s in corpus for c in s["calls"] if c["class"] in scls) /
              float(sum(len(s["calls"]) for s in corpus))) if scls else 0.0
     scale = (a.core_s * 1000.0 - a.life_s * 1000.0 - share * a.scan_s * 1000.0) / md
+    if a.scale is not None:
+        scale = a.scale
     out = {"mean_lib_demand_ms": md, "scale": scale, "scan_share": share, "rows": []}
     for n in [int(x) for x in a.ns.split(",")]:
         p = []

@@ -152,13 +152,21 @@ The N=8 calibration rungs:
   - at most 1 core per call, because guests have 1 vCPU;
   - `eff × vCPU` cores shared between the calls in service;
   - the p95 of added latency judged against each arm's primary limit.
-- **The fit.** `eff` is the one free parameter. It is fitted on the preliminary result: all
-  arms hold at N=8 and fail at N=16. That gives eff 0.50–0.60, about the number of physical
-  cores per vCPU (the hosts have 2 threads per core).
+- **The fit.** `eff` is the one free parameter.
+  - First fit, on the default point only (all arms hold at N=8 and fail at N=16): eff 0.50–0.60.
+  - **Refit on the AWS records** (default, long, short, no-infra; 11 rung outcomes, 9 seeds each):
+    **no single eff explains all of them.** The best match is 9 of 11, at eff 0.40 and at 0.45:
+    - 0.40 misses default and long SBX N=8: the model says they fail, but they held.
+    - 0.45 misses short resident N=8 and no-infra SBX N=8 (717 vs 687 ms, a narrow fail).
+    - 0.50–0.60 match 8 of 11, missing all three N=8 failures at short and no-infra.
+  - The refit range is **eff 0.40–0.50**. The model is a mean-field queue: it places the CPU
+    wall about right (N=8 holds and N=16 fails at default and long) but cannot resolve tails
+    that sit within a few percent of the limit.
 
 | method | sbx | resident-inf |
 |---|---|---|
-| **burst model (recommended)**, eff 0.50–0.60 × 96 | **[448, 576]** | **[448, 576]** |
+| **burst model (recommended)**, refit eff 0.40–0.50 × 96 | **[384, 448]** | **[384, 448]** |
+| burst model, first fit eff 0.50–0.60 (superseded) | [448, 576] | [448, 576] |
 | pessimistic: avg-CPU × AWS factor (8 ÷ avg bound = 0.15–0.17) | [187, 236] → ladder [160, 192] | [179, 226] → ladder [160, 192] |
 | average-CPU bound, 96 × [0.8, 0.9] (information) | [1223, 1376] | [1241, 1396] |
 | resident memory bound | | [2042, 3309] |
@@ -182,27 +190,47 @@ default point.
 | ladder top | 1024 (e964dd0) | 1024 |
 
 The metal ladder (e964dd0) runs 1 … 128, then 160, 192, 256, 320, 384, 448, 512, 576, 640, 704,
-768, 896 and 1024. Below about 750, no cap binds before the predicted CPU wall.
+768, 896 and 1024. Below about 750, no cap binds before the predicted CPU wall (384–448).
 
 ## 9. Draft metal N_max (predictions-metal.json, NOT sealed, not committed)
 
 | prediction | draft |
 |---|---|
 | 1 binding | SBX CPU. Resident ∞ is also expected CPU-bound (concern: the resident half is expected to be falsified) |
-| 2 default N_max | SBX [448, 576], resident ∞ [448, 576]; pessimistic [160, 192] each. Concern: a tie |
-| 3 resident 300 s | [448, 576], within one step of SBX |
+| 2 default N_max | SBX [384, 448], resident ∞ [384, 448]; pessimistic [160, 192] each. Concern: a tie |
+| 3 resident 300 s | [384, 448], within one step of SBX |
 | 4, 5 | not run on metal (SPEC §13 metal procedure) |
 | 6 A2 | < 1%; measured 0.0016% at N=128 |
 | 7 method | unchanged, plus the metal procedure. Abs test: SBX overhead +34 ms against B + 250 = 365 ms, so n_max_abs is expected to track n_max |
-| 8 ratio | AWS ratio 8/8 = **1.0** primary (abs 1/8 = 0.125). Metal draft [0.78, 1.29]. Concern: about 1, so it is expected to tie or be falsified on the primary verdict and to rise on abs |
+| 8 ratio | AWS ratio 8/8 = **1.0** primary (abs 1/8 = 0.125). Metal draft [0.86, 1.17]. Concern: about 1, so it is expected to tie or be falsified on the primary verdict and to rise on abs |
 | 9 mem512 | resident ∞ [320, 320], memory-bound (368 VMs at 1 GiB); SBX **[1, 1]** (N=8 measured fail, cold first scan). Concern: the "SBX holds more" half is expected to be falsified |
 
 ## 10. Notes for the metal ladder
 
-- Setup at e964dd0 rebuilt both workspace templates. Their stamp is `src_key(commands/)`, and
-  that now includes the metal library. The project commit (8c1a6ef), the sizes and the seed are
-  the same, but the template sha256 differs from the one the baselines ran on. The baseline guard
-  does not check it.
-- AWS Task 9 records were not reachable from here. The AWS fit uses the coordinator-reported
-  n_max values. Refit when Task 9 pulls its records.
+- **Template rebuild: the content is identical.** Setup at e964dd0 rebuilt both workspace
+  templates, because their stamp is `src_key(commands/)` and that now includes the metal library.
+  The old images were deleted by the rebuild, so the check rebuilt the tree from 089010b's
+  `commands/`. That commit is the baselines' build, and its `commands/` tree is identical to
+  708d62f and e964dd0 apart from `library.json`, which `build_workspace.sh` does not read.
+  - Every file matches the current template except the git pack files. `git gc` names a pack by
+    its contents and order. Two builds from the same inputs gave the same pack, and the current
+    pack differs only in packing order. The **set of git objects is identical** (sha 8485dc72)
+    in all three trees.
+  - `data.bin` (mem512) is sha256 `b9f5e19a…`, which equals the SHAKE-256 stream from seed 1
+    computed independently.
+  - The project HEAD is 8c1a6ef in both, and the image sizes (256 / 1024 MiB) are the same.
+  - Only the image bytes (and so the template sha256) differ. The baselines stand.
+- **First-scan counts at mem512 N=8 are even between the arms.** Both rungs used warm-up 600 s
+  and seed 1, so they drew the same sessions: 16 started, 4 starting in the window, 3 first scans
+  in the window. The difference is what a scan costs after that.
+  - SBX: **8 cold scans** in the window, each above 1.5 s. They are scan #1, #2 and #3 of new
+    sessions (and one #14), because every SBX Exec is a fresh VM and the first few reads of a
+    fresh image still come from EBS.
+  - Resident: **3 cold scans**, each the session's scan #1. After that the data is in the
+    guest's page cache.
+  - So the cold-read cost per session is uneven by mechanism, not by warm-up. The metal
+    procedure's 1200 s resident warm-up would remove in-window session starts unevenly, though.
+    At mem512 the resident ladder should either keep 600 s or the SBX ladder use 1200 s too —
+    a decision for the user.
+- AWS records are now read from `/tmp/kagenti/aws-records` (read-only copy); the refit in §7 uses them.
 - The host is left set up: relay, Redis and the slices are running, with no worker and no VMs.

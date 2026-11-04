@@ -17,8 +17,9 @@ Ranges, per the coordinator's ruling (2026-11-04):
     default corpus; each call's CPU demand comes from the library cpu/run ratio, scaled to the
     measured core-s per call; the 1-vCPU guests share V_eff = eff x vCPU cores; the p95 of added
     latency is judged against the arm's primary limit max(3B, 50 ms). Its one free parameter, eff,
-    is fitted on the preliminary run (every eff for which all arms hold at N=8 and fail at N=16,
-    the measured AWS n_max = 8) and applied to 96 vCPU.
+    is fitted on the preliminary records (default and long: all arms hold N=8, fail N=16; short: sbx
+    and resident-inf fail N=8; no-infra: sbx fails N=8). No single eff explains all 11 outcomes; the
+    range of best-matching eff (9 of 11) is used, applied to 96 vCPU.
   PESSIMISTIC: the average-CPU bound (96 vCPU x [0.80, 0.90] / (c x r)) times the preliminary
     over-prediction factor 8 / (4 vCPU x [0.80, 0.90] / (c_aws x r)).
   INFORMATION: the plain average-CPU bound.
@@ -245,7 +246,7 @@ def main(md, prelim_p, out, commit):
     }
 
     def rng(a):
-        return "burst model [%d, %d] (RECOMMENDED; eff %s–%s of 96 vCPU, fitted on the preliminary n_max 8); " \
+        return "burst model [%d, %d] (RECOMMENDED; eff %s–%s of 96 vCPU, refitted on the preliminary default, long, short and no-infra outcomes -- no single eff explains all 11, the best match 9 of 11); " \
                "pessimistic factor bound [%s, %s] → ladder [%d, %d]; average-CPU bound [%s, %s] (information)" % (
                    burst[a][0], burst[a][1], f(eff[0]), f(eff[1]), f(pess[a][0]), f(pess[a][1]), L(pess[a][0]),
                    L(pess[a][1]), f(avg[a][0]), f(avg[a][1]))
