@@ -1,0 +1,584 @@
+{
+  "status": "SEALED",
+  "sealed": true,
+  "spec": "e15/SPEC.md v0.9",
+  "section": "11, 13",
+  "recordedAt": null,
+  "note": "DRAFT metal predictions from the metal calibration (SPEC §10.1 on the m7i.metal-24xl) and the preliminary n_max. Ranges are the burst-aware model's (recommended), with the factor bound as pessimistic. To be reviewed and sealed with the user before the first metal ladder rung.",
+  "codeCommit": "46b6a18",
+  "preliminaryPredictions": "e15/predictions.json (sealed 708d62f)",
+  "calibration": {
+    "host": "AWS m7i.metal-24xl, bare metal, 96 vCPU (48C x 2T), 377 GiB, EBS gp3 data volume XFS reflink=1 at /srv/e15",
+    "library_sha256": "3c8251383a81239366d5e9c4781af747f4c67cb18b75dc93de4db7045cce7b5f",
+    "library_note": "metal-measured e15/results/metal/library.json (invocations as 7c2bdc4b; run_ms/cpu_ms are metal in-guest medians of 5)",
+    "driver_bin_sha256": "4971f732ec037686f65b6f97ef5f3c06911d0eae8139b4624bbc82552fd3ff9d",
+    "corpus_sha256_default": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+    "snapshot_hash": "sha256:505dd864f0c1a630340563a9dade2210fa468666b2a96d4493f6fd558992534c",
+    "baseline_excess_p95_ms": {
+      "sbx": 115.07699999999983,
+      "resident-inf": 126.1695,
+      "resident-300": 123.80700000000002
+    },
+    "n1_overhead_ms": {
+      "sbx": 33.686499999999995,
+      "resident-inf": -27.8405,
+      "resident-300": -25.995500000000007
+    },
+    "n1_median_pace": {
+      "sbx": 0.0007154147946627498,
+      "resident-inf": -0.0020055730980347297,
+      "resident-300": -0.001982249903834943
+    },
+    "class_medians_ms": {
+      "sbx": {
+        "build": 40.18700000000047,
+        "file_ops": -453.1895,
+        "host_infra": 54.29000000000002,
+        "interpreter": 67.53,
+        "lint_check": 56.6345,
+        "network": -28.378,
+        "opaque": 60.9705,
+        "other": 0.7850000000000001,
+        "process": 4.233499999999992,
+        "read": 33.686499999999995,
+        "search": 21.730499999999996,
+        "shell_read": -57.876000000000005,
+        "test": 77.95349999999988,
+        "unparsed": -57.759,
+        "vcs": 53.498000000000005,
+        "wait": -18.77599999999984,
+        "write": 55.312999999999995
+      },
+      "resident-inf": {
+        "build": -32.38800000000083,
+        "file_ops": -527.283,
+        "host_infra": -14.157499999999999,
+        "interpreter": -6.977499999999992,
+        "lint_check": -25.720499999999998,
+        "network": -88.45449999999997,
+        "opaque": -11.604500000000144,
+        "other": -48.65450000000037,
+        "process": -48.86,
+        "read": -12.858999999999996,
+        "search": -27.8405,
+        "shell_read": -106.565,
+        "test": -13.233499999999822,
+        "unparsed": -117.08399999999948,
+        "vcs": -13.861500000000007,
+        "wait": -60.708000000000084,
+        "write": -8.197000000000003
+      },
+      "resident-300": {
+        "build": -33.99950000000024,
+        "file_ops": -528.8765,
+        "host_infra": -13.805500000000052,
+        "interpreter": -6.90249999999989,
+        "lint_check": -25.995500000000007,
+        "network": -89.3375,
+        "opaque": -13.605999999999995,
+        "other": -47.50400000000063,
+        "process": -48.216,
+        "read": -13.674000000000003,
+        "search": -25.915999999999997,
+        "shell_read": -105.917,
+        "test": -4.836500000000058,
+        "unparsed": -106.8525000000005,
+        "vcs": -18.284000000000002,
+        "wait": -60.722499999999854,
+        "write": -8.701
+      }
+    },
+    "excess_limit_ms": {
+      "sbx": 345.2309999999995,
+      "resident-inf": 378.5085,
+      "resident-300": 371.42100000000005
+    },
+    "excess_limit_abs_ms": {
+      "sbx": 365.0769999999998,
+      "resident-inf": 376.16949999999997,
+      "resident-300": 373.807
+    },
+    "baseline_seeds": {
+      "sbx": {
+        "evaluable": [
+          1,
+          4,
+          5
+        ],
+        "skipped": [
+          2,
+          3
+        ]
+      },
+      "resident-inf": {
+        "evaluable": [
+          1,
+          4,
+          5
+        ],
+        "skipped": [
+          2,
+          3
+        ]
+      },
+      "resident-300": {
+        "evaluable": [
+          1,
+          4,
+          5
+        ],
+        "skipped": [
+          2,
+          3
+        ]
+      }
+    },
+    "undercovered": {
+      "sbx": [],
+      "resident-inf": [],
+      "resident-300": []
+    },
+    "probe_failed": {
+      "sbx": {},
+      "resident-inf": {},
+      "resident-300": {}
+    },
+    "a2_control_n128_pct_of_host": 0.0016319444444444443,
+    "lifecycle_bench": {
+      "execs": 100,
+      "warm_skip": 5,
+      "slice_cpu_usec_before": 386900917,
+      "slice_cpu_usec_after": 390007473,
+      "span_s": 11.432583332061768,
+      "idle_cpu_usec_same_span": 417,
+      "command": "true",
+      "core_s_per_exec": 0.03106556,
+      "phase_median_ms": {
+        "acquire_us": 0.007,
+        "resume_us": 17.929000000000002,
+        "run_us": 2.487,
+        "destroy_us": 19.404
+      }
+    },
+    "sbx_n8": {
+      "holds": true,
+      "holds_abs": true,
+      "p95_excess_ms": 131.846,
+      "core_s_per_call": 3.5993810833333337,
+      "calls_in_window": 132,
+      "phase_median_ms": {
+        "acquire_us": 0.053,
+        "resume_us": 19.604,
+        "run_us": 115.23349999999999,
+        "destroy_us": 22.177500000000002
+      },
+      "host_cpu_busy_pct_mean": 0.6284555555555555,
+      "sbx_minus_resident_core_s_per_call": 0.051639068181818626
+    },
+    "resident_inf_n8": {
+      "holds": true,
+      "holds_abs": true,
+      "p95_excess_ms": 93.9795000000004,
+      "footprint_median_mib": 97.15234375,
+      "footprint_max_mib": 184.875,
+      "footprint_drift_median_pct": 29.51959380289025,
+      "footprint_drift_sum_pct": 7.20391371594529,
+      "repeat_required_median_basis": true,
+      "repeat_required_sum_basis": false,
+      "vm_mem_window_end_mib": [
+        40.1,
+        59.4,
+        59.6,
+        75.8,
+        118.5,
+        148.5,
+        176.9,
+        184.9
+      ],
+      "mem_available_at_start_mib": 380108.375,
+      "usable_mib": 377548.375,
+      "core_s_per_call": 3.547742015151515
+    },
+    "resident_inf_n8_warmup1200": {
+      "holds": true,
+      "holds_abs": true,
+      "p95_excess_ms": 88.265,
+      "footprint_median_mib": 114.12109375,
+      "footprint_max_mib": 184.94140625,
+      "footprint_drift_basis": "sum",
+      "footprint_drift_sum_pct": 7.648067069483658,
+      "footprint_drift_median_pct": 17.64113715068052,
+      "repeat_required": false,
+      "core_s_per_call": 2.77740336
+    },
+    "footprint_used": "warm-up 1200 rung",
+    "corpus_calls_per_s_per_session": {
+      "default": 0.01744140758117889,
+      "long": 0.01149910505345651
+    },
+    "held_t300_pct_default": 56.105714767966305,
+    "cpu_models": {
+      "average_cpu_bound": {
+        "sbx": [
+          1223.3531909050446,
+          1376.272339768175
+        ],
+        "resident-inf": [
+          1241.1596769927578,
+          1396.3046366168523
+        ]
+      },
+      "preliminary_overprediction_factor": {
+        "sbx": [
+          0.15264402064480312,
+          0.1717245232254035
+        ],
+        "resident-inf": [
+          0.14417996217512208,
+          0.16220245744701237
+        ]
+      },
+      "pessimistic_factor_bound": {
+        "sbx": [
+          186.7375497283954,
+          236.33971137500038
+        ],
+        "resident-inf": [
+          178.95035528210255,
+          226.48404340391104
+        ]
+      },
+      "burst_model": {
+        "fitted_eff_range": [
+          0.4,
+          0.5
+        ],
+        "aws_consistent_eff": [
+          0.5,
+          0.5625,
+          0.6
+        ],
+        "metal_n_max_ladder": {
+          "sbx": [
+            384,
+            448
+          ],
+          "resident-inf": [
+            384,
+            448
+          ]
+        },
+        "limits_ms": {
+          "AWS-SBX": 687.5,
+          "AWS-RES": 852.8,
+          "METAL-SBX": 345.2,
+          "METAL-RES": 378.5
+        },
+        "script": "e15/results/metal/burst_model.py"
+      }
+    },
+    "caps": [
+      {
+        "cap": "SH_MAX_RUNS (unparked runs)",
+        "value": 2048,
+        "binds_at_n": {
+          "resident-inf": 2048,
+          "sbx": "~4500 (0.45 unparked runs/session at N=8)"
+        },
+        "note": "d80c1c7; 512 would bind resident-inf at N=512"
+      },
+      {
+        "cap": "WORKER_MAX_CONCURRENT (dispatch goroutines) + QueueCap 64",
+        "value": 256,
+        "binds_at_n": "concurrent Execs > 320 ('busy: queue full'); 0.09 Execs in flight per session at N=8 → ~3500 at the measured mix; reached only in CPU collapse"
+      },
+      {
+        "cap": "SH_MAX_COMMITTED_MB",
+        "value": 1048576,
+        "binds_at_n": {
+          "resident-inf": 992,
+          "sbx": "~1100 (0.9 VMs/session incl. standbys)"
+        },
+        "note": "1056 MiB charged per running VM (1024 guest + 32 overhead)"
+      },
+      {
+        "cap": "host memory (resident footprint)",
+        "binds_at_n": {
+          "resident-inf default": 2041,
+          "resident-inf mem512": 368
+        }
+      },
+      {
+        "cap": "disk free (N x K=16 per-session deltas + 10%)",
+        "value": "289.5 GiB free",
+        "binds_at_n": {
+          "default": 753,
+          "mem512": 434
+        },
+        "note": "rung.sh refuses the rung; 22 MiB / 38 MiB delta"
+      },
+      {
+        "cap": "EBS read 1017 MB/s (mem512, uncached datasets)",
+        "binds_at_n": {
+          "sbx mem512": 169
+        },
+        "note": "only after the per-session datasets exceed page cache"
+      },
+      {
+        "cap": "relay SH_SANDBOX_MAX_INFLIGHT",
+        "value": 1024,
+        "binds_at_n": "concurrent Execs > 1024"
+      },
+      {
+        "cap": "relay CPU (one Node thread)",
+        "binds_at_n": "~4900 (0.0116 core-s/call at N=8)"
+      },
+      {
+        "cap": "driver, fds, pids",
+        "binds_at_n": "none below 1024 (NOFILE 1048576, pid_max 4M, TasksMax infinity; A2 0.0016% at N=128)"
+      },
+      {
+        "cap": "ladder top",
+        "value": 1024,
+        "binds_at_n": 1024
+      }
+    ],
+    "mem512": {
+      "baseline_excess_p95_ms": {
+        "sbx": 250.95949999999993,
+        "resident-inf": 130.2204999999999
+      },
+      "n1_overhead_ms": {
+        "sbx": 389.755,
+        "resident-inf": -18.078999999999997
+      },
+      "n1_median_pace": {
+        "sbx": 0.0037035847087868445,
+        "resident-inf": 0.00033676334102961114
+      },
+      "class_medians_ms": {
+        "sbx": {
+          "build": 53.24949999999998,
+          "file_ops": -454.5285,
+          "host_infra": 46.3319999999992,
+          "interpreter": 542.1245,
+          "lint_check": 515.9855,
+          "network": -34.359499999999905,
+          "opaque": 61.885999999999115,
+          "other": -5.489499999999943,
+          "process": 5.0390000000000015,
+          "read": 484.133,
+          "search": 482.304,
+          "shell_read": 389.755,
+          "test": 535.1955,
+          "unparsed": -41.18499999999962,
+          "vcs": 57.5195,
+          "wait": -21.748000000000502,
+          "write": 58.013
+        },
+        "resident-inf": {
+          "build": -24.93899999999951,
+          "file_ops": -528.5645,
+          "host_infra": -13.148999999999631,
+          "interpreter": 61.58899999999997,
+          "lint_check": 46.448499999999996,
+          "network": -88.18000000000002,
+          "opaque": -11.281999999999243,
+          "other": -46.2765,
+          "process": -49.2085,
+          "read": 58.4645,
+          "search": 42.16349999999999,
+          "shell_read": -34.742999999999995,
+          "test": 30.26250000000016,
+          "unparsed": -125.14349999999925,
+          "vcs": -18.078999999999997,
+          "wait": -60.4994999999999,
+          "write": -6.1815
+        }
+      },
+      "excess_limit_ms": {
+        "sbx": 752.8784999999998,
+        "resident-inf": 390.6614999999997
+      },
+      "excess_limit_abs_ms": {
+        "sbx": 500.95949999999993,
+        "resident-inf": 380.2204999999999
+      },
+      "seeds": {
+        "sbx": {
+          "evaluable": [
+            1,
+            4,
+            5
+          ],
+          "skipped": [
+            2,
+            3
+          ]
+        },
+        "resident-inf": {
+          "evaluable": [
+            1,
+            4,
+            5
+          ],
+          "skipped": [
+            2,
+            3
+          ]
+        }
+      },
+      "disk_read_max_mbs": 1017.2,
+      "scan_share_of_calls": 0.6403,
+      "dataset_mib": 512,
+      "sbx_n8": {
+        "holds": false,
+        "holds_abs": false,
+        "p95_excess_ms": 1894.795,
+        "excess_limit_ms": 752.8784999999998,
+        "p95_limit_abs_ms": 500.95949999999993,
+        "core_s_per_call": 4.0600789772727275,
+        "phase_median_ms": {
+          "acquire_us": 0.0545,
+          "resume_us": 20.130000000000003,
+          "run_us": 543.8075,
+          "destroy_us": 41.8305
+        },
+        "capacity_bound_ladder": [
+          320,
+          384
+        ],
+        "capacity_binding": "CPU (burst)",
+        "tail_mechanism": "cold first scan per new session: ~2.5 s added (EBS read of a fresh 512 MiB data.bin) vs ~0.5 s warm",
+        "disk_read_mean_mbs": 5.591721111111111
+      },
+      "resident_inf_n8": {
+        "holds": true,
+        "holds_abs": true,
+        "p95_excess_ms": 95.97199999999962,
+        "footprint_median_mib": 1023.712890625,
+        "footprint_max_mib": 1023.85546875,
+        "footprint_drift_pct": -0.01487927755384677,
+        "usable_mib": 377419.28515625,
+        "core_s_per_call": 3.6202298939393938
+      }
+    },
+    "host_vcpu": 96,
+    "usable_cpu_fraction": [
+      0.8,
+      0.9
+    ],
+    "floor_mib": 1536,
+    "headroom_mib": 1024,
+    "ladder": [
+      1,
+      8,
+      16,
+      24,
+      32,
+      40,
+      48,
+      56,
+      64,
+      80,
+      96,
+      128,
+      160,
+      192,
+      256,
+      320,
+      384,
+      448,
+      512,
+      576,
+      640,
+      704,
+      768,
+      896,
+      1024
+    ],
+    "p95_factor": 3.0,
+    "abs_added_ms": 250,
+    "excess_floor_ms": 50.0,
+    "preliminary_n_max": {
+      "sbx": 8,
+      "resident-inf": 8,
+      "resident-300": 8
+    },
+    "preliminary_n_max_abs": {
+      "sbx": 1,
+      "resident-inf": 8,
+      "resident-300": 8
+    }
+  },
+  "predictions": [
+    {
+      "id": 1,
+      "claim": "SBX is bound by CPU. Resident ∞ is bound by memory.",
+      "metric": "record.json `binding` and the failed §8 condition at each arm's first failed default-point rung (SBX: host CPU busy ≥ 90% or pace/latency failing with MemAvailable well above the floor; resident ∞: memory_floor, a host-memory/memory-budget refusal or an OOM kill)",
+      "falsifiedBy": "SBX's first failed rung bound by memory (memory_floor, host-memory refusal or OOM), or resident ∞'s first failed rung failing on pace/latency with binding=cpu while MemAvailable stays above floor + 1 GiB",
+      "note": "Metal: SBX 3.599 core-s/call, resident ∞ 3.548 core-s/call at N=8; both CPU walls at about N = 384–448 (burst model). Resident ∞'s memory bound is 2042–3309 sessions (usable 3.776e+05 MiB ÷ footprint 184.9 max / 114.1 median MiB), far above its CPU wall. CALIBRATION CONCERN, recorded before measurement: calibration expects resident ∞ to be CPU-bound on metal too, so the resident half is expected to be falsified at the default point."
+    },
+    {
+      "id": 2,
+      "claim": "SBX holds more sessions than resident ∞ at the default point. Predicted ranges: SBX N_max in [384, 448]; resident ∞ N_max in [384, 448].",
+      "metric": "ladder.json n_max (SPEC §8, class-matched condition 4, primary rule) per arm, default point",
+      "falsifiedBy": "n_max(SBX) ≤ n_max(resident ∞); separately, either arm's n_max outside its range falsifies the numeric part",
+      "note": "SBX: burst model [384, 448] (RECOMMENDED; eff 0.4–0.5 of 96 vCPU, refitted on the preliminary default, long, short and no-infra outcomes -- no single eff explains all 11, the best match 9 of 11); pessimistic factor bound [186.7, 236.3] → ladder [160, 192]; average-CPU bound [1223, 1376] (information). Resident ∞: burst model [384, 448] (RECOMMENDED; eff 0.4–0.5 of 96 vCPU, refitted on the preliminary default, long, short and no-infra outcomes -- no single eff explains all 11, the best match 9 of 11); pessimistic factor bound [179, 226.5] → ladder [160, 192]; average-CPU bound [1241, 1396] (information); memory bound [2042, 3309]. CALIBRATION CONCERN, recorded before measurement: the ranges coincide -- the arms differ by 0.05164 core-s/call (1.5%), within the model's resolution, so calibration expects a tie within one ladder step; the direction is SPEC §11's and is kept."
+    },
+    {
+      "id": 3,
+      "claim": "Resident 300 s comes within one ladder step of SBX, in either direction. Predicted range: resident 300 s N_max in [384, 448].",
+      "metric": "ladder.json n_max, resident 300 s vs SBX, default point; ladder index difference",
+      "falsifiedBy": "|ladder index(n_max resident 300) − ladder index(n_max SBX)| > 1",
+      "note": "CPU: the resident per-call CPU and the burst model's resident range [384, 448]; cold wakes (2.3/session-h) cost about one lifecycle each (0.03107 core-s, metal bench), under 0.1% of the per-session CPU. Memory: 3.776e+05 ÷ (114.1 × 0.5611) = 5897 sessions, not binding."
+    },
+    {
+      "id": 4,
+      "claim": "Longer gaps help SBX and resident 300 s, not resident ∞. At H = 7200 s, SBX's and resident 300 s's N_max rise; resident ∞ stays within one ladder step of its default.",
+      "metric": "ladder.json n_max at the long point vs the default point, per arm",
+      "falsifiedBy": "SBX or resident 300 s n_max at H=7200 not above its default n_max, or resident ∞ moving more than one ladder step",
+      "note": "NOT RUN ON METAL (SPEC §13 metal procedure: default and mem512 only); carried for completeness. Estimate: r(7200)/r(1800) = 0.6593, so SBX ≈ ladder [576, 640]; resident ∞ CPU-bound ≈ [576, 640] -- the 'resident ∞ stays' half would be falsified."
+    },
+    {
+      "id": 5,
+      "claim": "Removing host-infrastructure sessions and chains moves both arms the same way. Neither point reverses the default result.",
+      "metric": "sign of n_max(SBX) − n_max(resident ∞) at the no-infra and no-chains points vs the default",
+      "falsifiedBy": "the sign at no-infra or no-chains opposite to the default point's",
+      "note": "NOT RUN ON METAL (SPEC §13 metal procedure: default and mem512 only); carried for completeness."
+    },
+    {
+      "id": 6,
+      "claim": "The driver uses less than 1% of host CPU at every N (A2).",
+      "metric": "record.json driver.a2_pct_of_host on every rung",
+      "falsifiedBy": "any rung with a2_pct_of_host ≥ 1.0",
+      "note": "Metal calibration: control N=128 a2_pct_of_host = 0.001632% (96 vCPU)."
+    },
+    {
+      "id": 7,
+      "notAPrediction": true,
+      "claim": "METHOD, NOT A PREDICTION: the two verdicts reported per arm and point, fixed before measurement.",
+      "metric": "ladder.json n_max (PRIMARY) and n_max_abs",
+      "falsifiedBy": "n/a (a method, not a claim)",
+      "note": "The preliminary method, unchanged, plus the metal procedure (SPEC §13: ladder to 1024, warm-up 1200 s for SBX and resident arms (control 600 s), footprint drift on summed VM memory, SH_MAX_RUNS 2048). Metal per-arm values (B; primary limit; absolute limit; N=1 overhead): sbx B 115.1 ms, limit 345.2, abs 365.1, overhead 33.69 ms; resident-inf B 126.2 ms, limit 378.5, abs 376.2, overhead -27.84 ms; resident-300 B 123.8 ms, limit 371.4, abs 373.8, overhead -26 ms. ABSOLUTE-TEST EXPECTATION: sbx: N=1 overhead 33.69 ms vs abs limit B + 250 = 365.1 ms, N=8 p95 excess 131.8 ms; resident-inf: N=1 overhead -27.84 ms vs abs limit B + 250 = 376.2 ms, N=8 p95 excess 93.98 ms; resident-300: N=1 overhead -26 ms vs abs limit B + 250 = 373.8 ms -- unlike the preliminary run (SBX N=1 overhead +186 ms against an abs limit of 479 ms; SBX n_max_abs 1), SBX's overhead on metal is small beside B + 250, so n_max_abs is expected to track n_max for every arm."
+    },
+    {
+      "id": 8,
+      "claim": "The m7i.metal-24xl run shows the largest SBX gain: n_max(SBX) / n_max(resident ∞) at the default point on metal is larger than on the preliminary nested instance, where it was 1 (8 / 8, primary).",
+      "metric": "n_max(SBX) / n_max(resident ∞), default point, primary verdict; metal vs preliminary",
+      "falsifiedBy": "a metal ratio ≤ 1 (the preliminary primary ratio)",
+      "threshold": 1.0,
+      "threshold_abs": 0.125,
+      "note": "Preliminary default n_max: SBX 8, resident ∞ 8, resident 300 s 8 (primary); absolute SBX 1, resident ∞ 8 (ratio 0.125). Draft metal ratio from 2: [0.8571, 1.167]. Lifecycle on metal: no-op bench 0.03107 core-s/Exec (preliminary 0.0991, 3.2×); SBX − resident ∞ per-call CPU at N=8 0.05164 core-s (preliminary 0.218). CALIBRATION CONCERN, recorded before measurement: the lifecycle term is now ~1.4% of SBX's per-call CPU, so both arms meet the same CPU wall and calibration expects a ratio of about 1 -- the primary claim (ratio > 1.0) is expected to be falsified or tie; on the absolute verdict the metal ratio is expected to rise from 0.125 to about 1."
+    },
+    {
+      "id": 9,
+      "claim": "At mem512, resident ∞ is bound by memory and SBX holds more sessions than resident ∞. Predicted ranges: resident ∞ N_max in [320, 320]; SBX N_max in [1, 1].",
+      "metric": "ladder.json n_max (primary) per arm at the mem512 point; record.json binding of each arm's first failed mem512 rung (with e15.slice memory.events high/oom for resident ∞)",
+      "falsifiedBy": "resident ∞'s first failed mem512 rung not bound by memory (neither memory_floor, a memory-watchdog abort, nor e15.slice MemoryHigh throttling with Exec timeouts), or n_max(SBX) ≤ n_max(resident ∞) at mem512",
+      "note": "Resident ∞: footprint at N=8 median 1024 MiB (max 1024), usable 3.774e+05 MiB → N = [368.6, 368.7] → ladder [320, 320], bound by memory (its CPU wall is ~384). SBX: 4.06 core-s/call at N=8 → CPU (burst model scaled by 3.599/4.06) ladder [320, 384]; page cache: 3.776e+05 MiB ÷ 512 MiB = 737.5 sessions (per-inode, no sharing); EBS once uncached: 512 MiB × 64.0% × 0.01744 calls/s = 5.718 MiB/s per session, 1017 MB/s ÷ that = 169.7 sessions. Capacity bound N_sbx = min(CPU, max(cache, disk)) → ladder [320, 384] (CPU (burst)), information only. SBX mem512 N=8 calibration rung: holds False (p95 excess 1895 ms vs primary 752.9 / abs 501 ms; 0 failures; host CPU <1%; disk mean 5.592 MB/s). CALIBRATION CONCERN, recorded before measurement: each new SBX session's FIRST scan reads its own fresh 512 MiB data.bin from EBS (~2.5 s added; later scans hit the host page cache, ~0.5 s), the class medians absorb only the warm cost, and ~6% of window calls are such cold scans at any N (session starts and window calls both scale with N), so calibration expects SBX to fail mem512 at every N > 1: the predicted SBX range is [1, 1], and prediction 9's 'SBX holds more' half is expected to be falsified (resident ∞ holds N=8, p95 excess 95.97 ms)."
+    }
+  ],
+  "sealedAt": "2026-11-04T18:54:56Z",
+  "sealNote": "Sealed on the user's go-ahead before the first metal ladder rung (SPEC §13). Directions as SPEC §11 fixes them; calibration concerns recorded in each prediction's note before measurement. User decision at seal: warm-up 1200 s for SBX and resident arms on metal (the calibration N=8 rungs used 600 s for SBX), so both arms' windows hold the same session starts. Burst model refit on 11 AWS outcomes (eff 0.40-0.50 cores/vCPU)."
+}
