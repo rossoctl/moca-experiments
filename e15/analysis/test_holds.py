@@ -1089,3 +1089,26 @@ def test_record_main_out_and_limit_never_overwrites_record(tmp_path):
     assert json.loads((tmp_path / "record_1s.json").read_text())["p95_limit_override_ms"] == 1000
     with pytest.raises(SystemExit):
         R.main([str(tmp_path), "--params", str(tmp_path / "params.json"), "--p95-limit-ms", "1000"])
+
+
+def test_ignore_condition_4_cpu_wall_mode(tmp_path):
+    # supplementary "CPU wall" reading (user decision 2026-11-05): conditions 1-3 only.
+    c = [call(added=a) for a in [50] * 18 + [9000, 9000]]
+    bl = BL(excess=100)
+    assert not H.evaluate(c, [sess(0.0)] * 3, bl)["holds"]
+    r = H.evaluate(c, [sess(0.0)] * 3, bl, ignore_c4=True)
+    assert r["holds"] and r["holds_abs"] and r["conditions"]["added_latency"] and r["ignore_c4"]
+    assert r["p95_excess_ms"] > 1000                       # still reported
+    assert not H.evaluate(c + [call(status="err", cause="rpc_error")], [sess(0.0)] * 3, bl, ignore_c4=True)["holds"]
+    assert not H.evaluate(c, [sess(0.0)] * 3, bl, refusals=1, ignore_c4=True)["holds"]
+
+
+def test_record_main_ignore_c4_needs_out(tmp_path):
+    (tmp_path / "samples.jsonl").write_text(json.dumps(S(1)))
+    (tmp_path / "params.json").write_text(json.dumps(dict(arm="sbx", n=1, warmup_s=0, window_s=120, floor_mb=1536)))
+    (tmp_path / "record.json").write_text('{"sealed": true}')
+    R.main([str(tmp_path), "--params", str(tmp_path / "params.json"), "--ignore-c4", "--out", str(tmp_path / "record_cpu.json")])
+    assert json.loads((tmp_path / "record.json").read_text()) == {"sealed": True}
+    assert json.loads((tmp_path / "record_cpu.json").read_text())["ignore_c4"] is True
+    with pytest.raises(SystemExit):
+        R.main([str(tmp_path), "--params", str(tmp_path / "params.json"), "--ignore-c4"])

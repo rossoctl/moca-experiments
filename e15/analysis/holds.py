@@ -176,12 +176,14 @@ def class_paces(calls, sessions, medians, global_median, offsets=None, stats=Non
     return paces, excluded, nonpos
 
 
-def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None, p95_limit_ms=None):
+def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None, p95_limit_ms=None, ignore_c4=False):
     """baseline: baseline.json's dict (class_medians, global_median_ms, excess_p95_ms, n1_median_pace)
     or None (N=1, and the control arm): conditions 3 and 4 are skipped, median_pace still reported.
     Condition 3 is the median class-matched pace (class_paces) <= 0.10.
     p95_limit_ms: a flat condition-4 limit for BOTH verdicts (the supplementary, unsealed 1-second
-    re-judge of the metal default arms, user decision 2026-11-04); None = the sealed rule."""
+    re-judge of the metal default arms, user decision 2026-11-04); None = the sealed rule.
+    ignore_c4: condition 4 is not applied to either verdict (the supplementary "CPU wall" reading,
+    conditions 1-3 only, user decision 2026-11-05); p95 excess is still reported."""
     win = [c for c in calls if c.get("in_window")]
     failed = [c for c in win if _is_failure(c, arm)]
     not_started = [c for c in win if c.get("status") == "err"
@@ -229,6 +231,8 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None, p95
     if baseline is not None and p95_limit_ms is not None:
         p95_limit_abs = float(p95_limit_ms)
     c4_abs = p95_limit_abs is None or p95_exc is None or p95_exc <= p95_limit_abs
+    if ignore_c4:
+        c4 = c4_abs = True
     # every eligible session dropped as non-positive expected time: nothing to judge pace on
     empty = len(win) == 0 or len(paces) == 0 or (baseline is not None and not cpaces and nonpos > 0)
     out = {
@@ -241,6 +245,7 @@ def evaluate(calls, sessions, baseline, arm="sbx", refusals=0, offsets=None, p95
                            "pace": c3, "added_latency": c4_abs},
         "p95_limit_abs_ms": p95_limit_abs,
         "p95_limit_override_ms": None if p95_limit_ms is None else float(p95_limit_ms),
+        "ignore_c4": bool(ignore_c4),
         "window_calls": len(win),
         "failed_calls": len(failed),
         "not_started": len(not_started),

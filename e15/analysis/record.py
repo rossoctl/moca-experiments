@@ -200,7 +200,7 @@ def driver_cpu(rows, start, end):
     return out
 
 
-def build(rung_dir, params, p95_limit_ms=None):
+def build(rung_dir, params, p95_limit_ms=None, ignore_c4=False):
     p = dict(params)
     arm = p.get("arm", "sbx")
     warm, win = p["warmup_s"], p["window_s"]
@@ -232,7 +232,7 @@ def build(rung_dir, params, p95_limit_ms=None):
             raise SystemExit("record.py: %s is not a class-matched baseline.json" % p["baseline_path"])
     offsets = corpus_offsets(p.get("corpus"), {c.get("trace") for c in calls}) if baseline else None
     ev = H.evaluate(calls, sessions, baseline, arm=arm, refusals=refusals, offsets=offsets,
-                    p95_limit_ms=p95_limit_ms)
+                    p95_limit_ms=p95_limit_ms, ignore_c4=ignore_c4)
     ws = window_samples(samples, start, end)
     rec = dict(p)
     rec.update(ev)
@@ -292,14 +292,16 @@ def main(argv=None):
     ap.add_argument("--params", required=True)
     ap.add_argument("--p95-limit-ms", type=float, default=None,
                     help="supplementary re-judge: flat condition-4 limit for both verdicts (needs --out)")
+    ap.add_argument("--ignore-c4", action="store_true",
+                    help="supplementary re-judge: conditions 1-3 only (needs --out)")
     ap.add_argument("--out", default=None, help="write the record here instead of RUNG_DIR/record.json")
     a = ap.parse_args(argv)
     out = a.out or os.path.join(a.rung_dir, "record.json")
-    if a.p95_limit_ms is not None and os.path.abspath(out) == os.path.abspath(os.path.join(a.rung_dir, "record.json")):
-        raise SystemExit("record.py: --p95-limit-ms never writes record.json; pass --out (e.g. record_1s.json)")
+    if (a.p95_limit_ms is not None or a.ignore_c4) and os.path.abspath(out) == os.path.abspath(os.path.join(a.rung_dir, "record.json")):
+        raise SystemExit("record.py: --p95-limit-ms/--ignore-c4 never write record.json; pass --out (e.g. record_1s.json)")
     with open(a.params) as f:
         params = json.load(f)
-    rec = build(a.rung_dir, params, p95_limit_ms=a.p95_limit_ms)
+    rec = build(a.rung_dir, params, p95_limit_ms=a.p95_limit_ms, ignore_c4=a.ignore_c4)
     with open(out, "w") as f:
         json.dump(rec, f, indent=2, sort_keys=True)
     print(rec["holds"])
