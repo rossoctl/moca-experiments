@@ -1,0 +1,15 @@
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-10-4","trace":"claude:4e3f16b1-1f32-ff82-705f-d304d6da4571","provider":"claude","window_calls":7,"planned_ms":455000,"observed_ms":436092.425}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-14-6","trace":"claude:5e506900-c6a8-91fc-cc03-153c5e9c74de","provider":"claude","window_calls":8,"planned_ms":33806,"observed_ms":33882.574}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-11-2","trace":"claude:1968b17d-40ff-f63d-e0e5-f62b6d81bb23","provider":"claude","window_calls":25,"planned_ms":549102,"observed_ms":549088.926}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-11-3","trace":"claude:01c6b3b6-6e75-b56f-0634-81682ca09247","provider":"claude","window_calls":11,"planned_ms":181035,"observed_ms":181013.609}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-14-7","trace":"claude:dc7d3971-c69d-0597-1012-3e7e44e26b6d","provider":"claude","window_calls":2,"planned_ms":274910,"observed_ms":274650.822}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-11-4","trace":"claude:98efa869-6652-f568-442a-83fcb1c620ce","provider":"claude","window_calls":13,"planned_ms":91330,"observed_ms":91326.91}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-15-0","trace":"codex:15f480a4-4a0b-eace-77f1-0cf1cf4fa257","provider":"codex","window_calls":4,"planned_ms":45984,"observed_ms":45989.911}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-3-0","trace":"claude:7b3314b9-1328-1833-0900-e2bcd0c0d808","provider":"claude","window_calls":20,"planned_ms":767363,"observed_ms":767344.375}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-5-2","trace":"claude:29c246e5-e599-007a-2698-8b41a398be5a","provider":"claude","window_calls":14,"planned_ms":122079,"observed_ms":122258.374}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-4-5","trace":"claude:b897fd69-1449-baf7-a895-ae76842f4ce8","provider":"claude","window_calls":19,"planned_ms":510337,"observed_ms":510286.354}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-13-2","trace":"claude:8546852e-038a-032b-032d-e51cf66f75e7","provider":"claude","window_calls":8,"planned_ms":16704,"observed_ms":16702.714}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-10-5","trace":"codex:5b3247a4-277b-4b6b-3010-1d7bfe00f2e8","provider":"codex","window_calls":95,"planned_ms":872,"observed_ms":3278.804}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-0-0","trace":"codex:fd646ec4-f85e-20fd-8234-970a29706975","provider":"codex","window_calls":46,"planned_ms":735759,"observed_ms":734364.534}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-1-2","trace":"claude:e3e9f921-59e9-f337-d2d6-b6e163b6223e","provider":"claude","window_calls":32,"planned_ms":322801,"observed_ms":322680.561}
+{"session":"e15-default-resident-inf-n16-repeat-1793849732-7-0","trace":"codex:05ac5546-8f1e-84bc-ca07-0b62a0d924fc","provider":"codex","window_calls":8,"planned_ms":496487,"observed_ms":478774.086}

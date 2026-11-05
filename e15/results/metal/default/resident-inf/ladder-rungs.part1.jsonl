@@ -1,0 +1,7 @@
+{"n":1,"holds":true,"holds_abs":true,"repeated":false,"median_class_pace":null,"rig_errors":[],"dir":"/srv/e15/runs/default/resident-inf/N1"}
+{"n":8,"holds":true,"holds_abs":true,"repeated":false,"median_class_pace":0.00031795464461170653,"rig_errors":[],"dir":"/srv/e15/runs/default/resident-inf/N8"}
+{"n":16,"holds":true,"holds_abs":true,"repeated":true,"median_class_pace":-2.193898778202197e-06,"rig_errors":[],"dir":"/srv/e15/runs/default/resident-inf/N16-repeat"}
+{"n":24,"holds":true,"holds_abs":true,"repeated":false,"median_class_pace":6.994057304232637e-05,"rig_errors":[],"dir":"/srv/e15/runs/default/resident-inf/N24"}
+{"n":32,"holds":true,"holds_abs":true,"repeated":false,"median_class_pace":8.22313155379728e-05,"rig_errors":[],"dir":"/srv/e15/runs/default/resident-inf/N32"}
+{"n":40,"holds":true,"holds_abs":true,"repeated":true,"median_class_pace":5.084193503557266e-05,"rig_errors":[],"dir":"/srv/e15/runs/default/resident-inf/N40-repeat"}
+{"n":48,"holds":true,"holds_abs":true,"repeated":true,"median_class_pace":6.653480662954792e-05,"rig_errors":[],"dir":"/srv/e15/runs/default/resident-inf/N48-repeat"}
