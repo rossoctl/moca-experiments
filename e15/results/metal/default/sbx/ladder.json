@@ -1,0 +1,141 @@
+{
+  "point": "default",
+  "arm": "sbx",
+  "start_n": 1,
+  "ladder": [
+    1,
+    8,
+    16,
+    24,
+    32,
+    40,
+    48,
+    56,
+    64,
+    80,
+    96,
+    128,
+    160,
+    192,
+    256,
+    320,
+    384,
+    448,
+    512,
+    576,
+    640,
+    704,
+    768,
+    896,
+    1024
+  ],
+  "rungs_below_start_assumed_held": false,
+  "rungs": [
+    {
+      "n": 1,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": null,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N1"
+    },
+    {
+      "n": 8,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.0003640685055457116,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N8"
+    },
+    {
+      "n": 16,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00026613167098876733,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N16"
+    },
+    {
+      "n": 24,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00025685685071241693,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N24"
+    },
+    {
+      "n": 32,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00011023272809729256,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N32"
+    },
+    {
+      "n": 40,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.000159359086527866,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N40"
+    },
+    {
+      "n": 48,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00026385053748589904,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N48"
+    },
+    {
+      "n": 56,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.0002603012872437471,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N56"
+    },
+    {
+      "n": 64,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.0003495947195983895,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N64"
+    },
+    {
+      "n": 80,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.0002635934233490289,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N80"
+    },
+    {
+      "n": 96,
+      "holds": false,
+      "holds_abs": false,
+      "repeated": false,
+      "median_class_pace": 0.000487939853120789,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/sbx/N96"
+    }
+  ],
+  "n_max": 80,
+  "stopped_at": 96,
+  "n_max_abs": 80,
+  "stopped_at_abs": 96,
+  "abs_rule": "condition 4 as p95(class excess) <= B + 250 ms (B = the arm's N=1 within-class excess p95; excess = added latency minus the per-class N=1 probe median)",
+  "n1_overhead_ms": 33.686499999999995,
+  "n1_median_pace": 0.0007154147946627498
+}
