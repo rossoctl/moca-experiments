@@ -1,0 +1,7 @@
+{"session":"e15-no-chains-resident-300-n8-repeat-1793846145-3-4","trace":"claude:bc349324-c3f2-1b55-2df8-3c39dd14a06f","provider":"claude","window_calls":5,"planned_ms":30386,"observed_ms":30361.513}
+{"session":"e15-no-chains-resident-300-n8-repeat-1793846145-6-2","trace":"codex:47de8a40-eb8c-35d1-6d28-b0a7743045f0","provider":"codex","window_calls":14,"planned_ms":80513,"observed_ms":80408.879}
+{"session":"e15-no-chains-resident-300-n8-repeat-1793846145-5-3","trace":"claude:3ed97ec2-29a7-c03c-1c7d-8244c52ed118","provider":"claude","window_calls":7,"planned_ms":631059,"observed_ms":631091.011}
+{"session":"e15-no-chains-resident-300-n8-repeat-1793846145-7-3","trace":"claude:90916d03-4077-d1b4-ad19-f66ee68a4419","provider":"claude","window_calls":14,"planned_ms":679865,"observed_ms":673333.373}
+{"session":"e15-no-chains-resident-300-n8-repeat-1793846145-3-5","trace":"claude:6fd16db6-3936-3137-3372-9664b69a3235","provider":"claude","window_calls":22,"planned_ms":851585,"observed_ms":851596.226}
+{"session":"e15-no-chains-resident-300-n8-repeat-1793846145-1-1","trace":"claude:96ed7eda-9721-adc6-fb07-3f6bc2b826a4","provider":"claude","window_calls":15,"planned_ms":508717,"observed_ms":508658.336}
+{"session":"e15-no-chains-resident-300-n8-repeat-1793846145-6-3","trace":"claude:30328c8a-8306-71f9-895a-80b67580cb7a","provider":"claude","window_calls":9,"planned_ms":361726,"observed_ms":361885.786}

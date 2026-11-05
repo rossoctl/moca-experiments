@@ -1,0 +1,24 @@
+{
+  "supplementary": true,
+  "note": "NOT SEALED: supplementary rungs outside SPEC \u00a710.2's ladder; they never change ladder.json or any prediction verdict",
+  "point": "default",
+  "arm": "sbx",
+  "steps": [
+    10,
+    12,
+    14
+  ],
+  "rungs": [
+    {
+      "n": 10,
+      "holds": false,
+      "holds_abs": false,
+      "reruns": [],
+      "dir": "/srv/e15/runs/default/sbx/N10-fine"
+    }
+  ],
+  "n_fine": null,
+  "stopped_at": 10,
+  "n_fine_abs": null,
+  "stopped_at_abs": 10
+}

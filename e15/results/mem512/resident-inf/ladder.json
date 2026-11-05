@@ -1,0 +1,56 @@
+{
+  "point": "mem512",
+  "arm": "resident-inf",
+  "start_n": 1,
+  "ladder": [
+    1,
+    8,
+    16,
+    24,
+    32,
+    40,
+    48,
+    56,
+    64,
+    80,
+    96,
+    128
+  ],
+  "rungs_below_start_assumed_held": false,
+  "rungs": [
+    {
+      "n": 1,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": null,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/mem512/resident-inf/N1"
+    },
+    {
+      "n": 8,
+      "holds": true,
+      "holds_abs": false,
+      "repeated": false,
+      "median_class_pace": 1.2532425186950746e-05,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/mem512/resident-inf/N8"
+    },
+    {
+      "n": 16,
+      "holds": false,
+      "holds_abs": false,
+      "repeated": false,
+      "median_class_pace": 0.01345315544331993,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/mem512/resident-inf/N16"
+    }
+  ],
+  "n_max": 8,
+  "stopped_at": 16,
+  "n_max_abs": 1,
+  "stopped_at_abs": 8,
+  "abs_rule": "condition 4 as p95(class excess) <= B + 250 ms (B = the arm's N=1 within-class excess p95; excess = added latency minus the per-class N=1 probe median)",
+  "n1_overhead_ms": -18.990000000000038,
+  "n1_median_pace": 0.0001572974362988866
+}

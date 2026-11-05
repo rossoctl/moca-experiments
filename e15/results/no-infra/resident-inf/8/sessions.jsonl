@@ -1,0 +1,12 @@
+{"session":"e15-no-infra-resident-inf-n8-1793873516-0-1","trace":"codex:72b5eeaa-6796-2050-4a1f-dfcf45226e90","provider":"codex","window_calls":1,"planned_ms":131,"observed_ms":53.322}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-0-2","trace":"codex:6a580e76-fa05-0258-def2-9c347aec3983","provider":"codex","window_calls":23,"planned_ms":379962,"observed_ms":380201.359}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-0-3","trace":"claude:62809664-6064-7f17-24ea-4d04a3c8a720","provider":"claude","window_calls":7,"planned_ms":23016,"observed_ms":23035.45}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-7-1","trace":"claude:795e2df3-419e-b861-7f9c-168086d43dec","provider":"claude","window_calls":13,"planned_ms":822204,"observed_ms":822172.901}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-7-2","trace":"claude:c3f57c54-aa66-db31-2d75-b425a05e086c","provider":"claude","window_calls":14,"planned_ms":37476,"observed_ms":37479.971}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-3-0","trace":"codex:b8aa4a13-fadf-ebb4-fd6e-8cfa2b322dd3","provider":"codex","window_calls":16,"planned_ms":280799,"observed_ms":280813.944}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-4-0","trace":"codex:588561ce-e829-ec7d-27fb-65b3c7da2a38","provider":"codex","window_calls":12,"planned_ms":483423,"observed_ms":483441.291}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-2-0","trace":"claude:ce2b2f4b-8f1e-546a-a648-1789a36ea256","provider":"claude","window_calls":2,"planned_ms":20931,"observed_ms":21024.672}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-5-2","trace":"claude:37725cdc-f134-6a2e-3a18-1d679b638af0","provider":"claude","window_calls":5,"planned_ms":130209,"observed_ms":130085.15}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-0-4","trace":"claude:c5cdcca1-9cd3-a5db-9a8f-c1251a9f7c0c","provider":"claude","window_calls":1,"planned_ms":452,"observed_ms":578.509}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-7-3","trace":"claude:3dbcc590-aa06-d643-cc6d-aaf79c3a8ec0","provider":"claude","window_calls":2,"planned_ms":14423,"observed_ms":14430.384}
+{"session":"e15-no-infra-resident-inf-n8-1793873516-6-5","trace":"codex:47648daf-5e8e-e643-a049-be44264aa8ca","provider":"codex","window_calls":8,"planned_ms":817917,"observed_ms":822139.113}

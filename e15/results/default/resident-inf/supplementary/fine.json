@@ -1,0 +1,26 @@
+{
+  "supplementary": true,
+  "note": "NOT SEALED: supplementary rungs outside SPEC \u00a710.2's ladder; they never change ladder.json or any prediction verdict",
+  "point": "default",
+  "arm": "resident-inf",
+  "steps": [
+    10,
+    12,
+    14
+  ],
+  "rungs": [
+    {
+      "n": 10,
+      "holds": false,
+      "holds_abs": false,
+      "reruns": [
+        "repeat"
+      ],
+      "dir": "/srv/e15/runs/default/resident-inf/N10-fine-repeat"
+    }
+  ],
+  "n_fine": null,
+  "stopped_at": 10,
+  "n_fine_abs": null,
+  "stopped_at_abs": 10
+}

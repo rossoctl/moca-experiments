@@ -1,0 +1,228 @@
+{
+  "H_s": 300,
+  "aborted": false,
+  "arm": "sbx",
+  "baseline_path": "/srv/e15/runs/default/sbx/N1/baseline.json",
+  "baseline_source": "/srv/e15/runs/default/sbx/N1/baseline.json",
+  "binding": "none",
+  "by_class": {
+    "build": {
+      "calls": 2,
+      "failed": 0,
+      "p95_added_ms": 1127.839
+    },
+    "file_ops": {
+      "calls": 1,
+      "failed": 0,
+      "p95_added_ms": 180.30700000000002
+    },
+    "host_infra": {
+      "calls": 27,
+      "failed": 0,
+      "p95_added_ms": 1651.3320000000003
+    },
+    "interpreter": {
+      "calls": 19,
+      "failed": 0,
+      "p95_added_ms": 5439.269
+    },
+    "lint_check": {
+      "calls": 8,
+      "failed": 0,
+      "p95_added_ms": 918.1699999999983
+    },
+    "network": {
+      "calls": 6,
+      "failed": 0,
+      "p95_added_ms": 3181.6699999999983
+    },
+    "opaque": {
+      "calls": 12,
+      "failed": 0,
+      "p95_added_ms": 13793.59600000002
+    },
+    "process": {
+      "calls": 6,
+      "failed": 0,
+      "p95_added_ms": 245.188
+    },
+    "read": {
+      "calls": 26,
+      "failed": 0,
+      "p95_added_ms": 287.939
+    },
+    "shell_read": {
+      "calls": 78,
+      "failed": 0,
+      "p95_added_ms": 278.965
+    },
+    "unparsed": {
+      "calls": 1,
+      "failed": 0,
+      "p95_added_ms": 173.417
+    },
+    "vcs": {
+      "calls": 9,
+      "failed": 0,
+      "p95_added_ms": 1215.2879999999996
+    },
+    "wait": {
+      "calls": 1,
+      "failed": 0,
+      "p95_added_ms": 308.0599999999995
+    },
+    "write": {
+      "calls": 28,
+      "failed": 0,
+      "p95_added_ms": 553.432
+    }
+  },
+  "by_provider": {
+    "claude": {
+      "calls": 144,
+      "failed": 0,
+      "p95_added_ms": 1035.6190000000001
+    },
+    "codex": {
+      "calls": 80,
+      "failed": 0,
+      "p95_added_ms": 1216.3999999999996
+    }
+  },
+  "causes": {},
+  "conditions": {
+    "added_latency": false,
+    "no_failures": true,
+    "no_refusals": true,
+    "pace": true
+  },
+  "conditions_abs": {
+    "added_latency": false,
+    "no_failures": true,
+    "no_refusals": true,
+    "pace": true
+  },
+  "corpus": "/srv/e15/corpora/short/corpus.jsonl",
+  "corpus_exclude": null,
+  "corpus_mean_span_min": 68.575615304236,
+  "corpus_sha256": "229d0bc4f4f4bcc21e8488c11005c57e85c9e186fbdb3a285f5367c663ef3cb3",
+  "cut_at_end": 0,
+  "dataset_mib": 0,
+  "dataset_seed": 1,
+  "disk_await_mean_ms": 1.0512056451612901,
+  "disk_read_max_mbs": 130.5,
+  "disk_read_mean_mbs": 0.8920833333333328,
+  "disk_read_p95_mbs": 5.573,
+  "disk_read_single_mbs": null,
+  "driver": {
+    "a2_ok": true,
+    "a2_pct_of_host": 0.10083333333333333,
+    "header": {
+      "goarch": "amd64",
+      "gomaxprocs": 4,
+      "goos": "linux",
+      "header": true,
+      "num_cpu": 4,
+      "t0_epoch": 1793778604.6072152
+    },
+    "window_cpu_ms": 3630
+  },
+  "driver_bin_sha256": "297c8e8ab424093612547f53072ac0c8ceea9b82f569863e0d7da6d0cbd2f713",
+  "driver_exit": 0,
+  "driver_load_s": 7.20306921005249,
+  "end_session_exec": false,
+  "excess_limit_ms": 687.4650000000001,
+  "failed_calls": 0,
+  "fallback_calls": 0,
+  "fallback_share": 0.0,
+  "floor_mb": 1536,
+  "grace_s": 300,
+  "holds": false,
+  "holds_abs": false,
+  "host_mem_total_kb": 16082476,
+  "host_profile": "aws-prelim",
+  "launch_ts": 1793778597.404146,
+  "library": "/srv/e15/src/e15/commands/library.json",
+  "library_sha256": "7c2bdc4bfdda9cb8be8ae0865247fb52f802014dca002ad1d546066b2835ed41",
+  "median_class_pace": 0.0013518968536758713,
+  "median_pace": 0.002775051795713024,
+  "memory_abort": null,
+  "memory_events_window": {
+    "high": 0,
+    "max": 0,
+    "oom_kill": 0
+  },
+  "moca_commit": "c13d55649777e69ec7649d6fa8c08f4acb1f4e2e",
+  "moca_experiments_commit": "708d62f68a38ba595d17e29913b3761ff032f4de",
+  "n": 8,
+  "n1_median_pace": 0.003457003155357241,
+  "n1_overhead_ms": 186.236,
+  "not_started": 0,
+  "offset_join_misses": 0,
+  "oom_kills": 0,
+  "p95_added_ms": 1129.964,
+  "p95_excess_ms": 882.5909999999996,
+  "p95_limit_abs_ms": 479.15500000000003,
+  "pace_excess": -0.0006819513596442173,
+  "pace_excluded_nonpositive": 0,
+  "point": "short",
+  "point_settings": "point=short corpus=short library=src/e15/commands/library.json template=template/workspace.img image_mb=256 dataset_mib=0 dataset_seed=1 scan_classes= scan_cmd=",
+  "point_sig": "4c52aa6fd5a31707151be6dd16279a6b2bc92f1465f9d01bb52cddab64b3f607",
+  "probe_failed": {},
+  "refusal_scope": "window",
+  "refusals": 0,
+  "refusals_by_reason": {},
+  "resident_patch_sha256": null,
+  "run_id": "short-sbx-n8-1793778590",
+  "rung_start_ts": 1793778604.6072152,
+  "scan_classes": [],
+  "scan_cmd": "",
+  "seed": 1,
+  "sessions_evaluated": 11,
+  "sessions_excluded_lt3": 2,
+  "sessions_started": 17,
+  "slice_memory_max": "13246660608",
+  "snapshot_guest_ram_mb": 1024,
+  "snapshot_hash": "sha256:c60ed9495783ee640bbf0dec4b8a913c9f369425bf94e5665d68f5fdd21c65e7",
+  "spread_s": 60,
+  "template": "/srv/e15/template/workspace.img",
+  "template_sha256": "0854c2aedb579bd1",
+  "time_origin_mismatch": false,
+  "undercovered": [],
+  "unseeded_sessions": 0,
+  "warmup_s": 600,
+  "window_calls": 224,
+  "window_s": 900,
+  "window_samples": 900,
+  "worker_bin_sha256": "ebb9a8b7d698bab69efbb1f144b47a98f8f17ec2ad8146598f07cb1bd8166522",
+  "worker_env": {
+    "RELAY_ADDR": "127.0.0.1:9643",
+    "RELAY_TLS": "false",
+    "SANDBOX_ID": "e15",
+    "SH_CHROOT_BASE": "/srv/e15/jail",
+    "SH_DIAG_PHASES": "1",
+    "SH_DIAG_STATS_ADDR": "127.0.0.1:9646",
+    "SH_FIRECRACKER_BIN": "/usr/local/bin/firecracker",
+    "SH_GUEST_RAM_MB": "1024",
+    "SH_HOST_MEM_FLOOR_MB": "1536",
+    "SH_JAILER_BIN": "/usr/local/bin/jailer",
+    "SH_MAX_COMMITTED_MB": "1048576",
+    "SH_MAX_RUNS": "512",
+    "SH_PARENT_CGROUP": "e15.slice/e15-vms.slice",
+    "SH_SNAPSHOT_DIR": "/srv/e15/snapshots",
+    "SH_SNAPSHOT_IMAGE": "e15",
+    "SH_STANDBY_DEPTH": "2",
+    "SH_VMM": "firecracker",
+    "SH_WORKSPACE_IDLE": "24h",
+    "SH_WORKSPACE_IMAGE_MB": "256",
+    "SH_WORKSPACE_ROOT": "/srv/e15/workspaces",
+    "TZ": "UTC",
+    "WORKER_MAX_CONCURRENT": "256"
+  },
+  "workspace_copy": "reflink",
+  "workspace_image_mb": 256,
+  "workspace_seeding": "cp --reflink=always of the template per key before t0",
+  "workspaces_k_mult": 1,
+  "workspaces_per_slot": 16,
+  "workspaces_precreated": 128
+}

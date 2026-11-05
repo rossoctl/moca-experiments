@@ -1,0 +1,47 @@
+{
+  "point": "short",
+  "arm": "resident-inf",
+  "start_n": 1,
+  "ladder": [
+    1,
+    8,
+    16,
+    24,
+    32,
+    40,
+    48,
+    56,
+    64,
+    80,
+    96,
+    128
+  ],
+  "rungs_below_start_assumed_held": false,
+  "rungs": [
+    {
+      "n": 1,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": true,
+      "median_class_pace": null,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/short/resident-inf/N1-repeat"
+    },
+    {
+      "n": 8,
+      "holds": false,
+      "holds_abs": false,
+      "repeated": true,
+      "median_class_pace": 0.0015109653289324676,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/short/resident-inf/N8-repeat"
+    }
+  ],
+  "n_max": 1,
+  "stopped_at": 8,
+  "n_max_abs": 1,
+  "stopped_at_abs": 8,
+  "abs_rule": "condition 4 as p95(class excess) <= B + 250 ms (B = the arm's N=1 within-class excess p95; excess = added latency minus the per-class N=1 probe median)",
+  "n1_overhead_ms": null,
+  "n1_median_pace": null
+}

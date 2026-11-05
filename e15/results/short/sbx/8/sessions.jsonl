@@ -1,0 +1,13 @@
+{"session":"e15-short-sbx-n8-1793778590-1-0","trace":"claude:d32d93e5-4e95-1b84-baec-9ced1fd8cf80","provider":"claude","window_calls":1,"planned_ms":64,"observed_ms":244.36}
+{"session":"e15-short-sbx-n8-1793778590-7-3","trace":"claude:800aa04d-61c7-a48a-9657-210f37231fbc","provider":"claude","window_calls":18,"planned_ms":375499,"observed_ms":375817.676}
+{"session":"e15-short-sbx-n8-1793778590-7-4","trace":"codex:05578687-80aa-b60a-5bb2-25ef022038c6","provider":"codex","window_calls":12,"planned_ms":126598,"observed_ms":126909.827}
+{"session":"e15-short-sbx-n8-1793778590-7-5","trace":"claude:5b52b148-a895-584d-1c85-d22cda21ba7b","provider":"claude","window_calls":32,"planned_ms":192512,"observed_ms":178669.962}
+{"session":"e15-short-sbx-n8-1793778590-4-0","trace":"codex:a7e37a78-b63a-d6bc-308d-f4ec94cfa021","provider":"codex","window_calls":16,"planned_ms":604215,"observed_ms":606994.681}
+{"session":"e15-short-sbx-n8-1793778590-0-0","trace":"codex:fd646ec4-f85e-20fd-8234-970a29706975","provider":"codex","window_calls":22,"planned_ms":711706,"observed_ms":714570.569}
+{"session":"e15-short-sbx-n8-1793778590-7-6","trace":"codex:15f480a4-4a0b-eace-77f1-0cf1cf4fa257","provider":"codex","window_calls":2,"planned_ms":18712,"observed_ms":18909.879}
+{"session":"e15-short-sbx-n8-1793778590-4-1","trace":"codex:742ff91e-62e3-e5d0-5fbf-16c659913e20","provider":"codex","window_calls":19,"planned_ms":176930,"observed_ms":179930.307}
+{"session":"e15-short-sbx-n8-1793778590-5-0","trace":"claude:51b9b650-a65f-5a32-61a4-0462f97d5291","provider":"claude","window_calls":30,"planned_ms":872776,"observed_ms":856234.229}
+{"session":"e15-short-sbx-n8-1793778590-3-0","trace":"claude:7b3314b9-1328-1833-0900-e2bcd0c0d808","provider":"claude","window_calls":27,"planned_ms":649185,"observed_ms":650986.522}
+{"session":"e15-short-sbx-n8-1793778590-2-1","trace":"claude:2fd7db5b-ab20-764b-6d91-a7ed9eea0303","provider":"claude","window_calls":7,"planned_ms":759683,"observed_ms":759868.485}
+{"session":"e15-short-sbx-n8-1793778590-1-1","trace":"claude:7ddfe9ee-2430-4517-811e-b99e8a21c0f6","provider":"claude","window_calls":29,"planned_ms":795511,"observed_ms":798839.982}
+{"session":"e15-short-sbx-n8-1793778590-6-0","trace":"codex:05ac5546-8f1e-84bc-ca07-0b62a0d924fc","provider":"codex","window_calls":9,"planned_ms":676027,"observed_ms":690169.994}

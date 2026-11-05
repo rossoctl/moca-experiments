@@ -1,0 +1,202 @@
+{
+  "baseline_p95_ms": 1779.7930000000001,
+  "calls": 41,
+  "class_counts": {
+    "build": 20,
+    "file_ops": 20,
+    "host_infra": 20,
+    "interpreter": 20,
+    "lint_check": 20,
+    "network": 20,
+    "opaque": 20,
+    "other": 20,
+    "process": 20,
+    "read": 20,
+    "search": 20,
+    "shell_read": 20,
+    "test": 20,
+    "unparsed": 20,
+    "vcs": 20,
+    "wait": 20,
+    "write": 20
+  },
+  "class_medians": {
+    "build": 301.7554999999993,
+    "file_ops": -271.325,
+    "host_infra": 286.8864999999997,
+    "interpreter": 1767.1459999999997,
+    "lint_check": 1750.9425,
+    "network": 139.88400000000001,
+    "opaque": 302.5849999999998,
+    "other": 191.808,
+    "process": 178.9785,
+    "read": 1657.7154999999998,
+    "search": 1640.8305,
+    "shell_read": 1588.9175,
+    "test": 1844.2945,
+    "unparsed": 129.44200000000006,
+    "vcs": 337.282,
+    "wait": 168.83350000000064,
+    "write": 263.11749999999995
+  },
+  "corpus_class_counts": {
+    "build": 6485,
+    "file_ops": 7469,
+    "host_infra": 26751,
+    "interpreter": 55408,
+    "lint_check": 6697,
+    "network": 6790,
+    "opaque": 8954,
+    "other": 7154,
+    "process": 13891,
+    "read": 55085,
+    "search": 2807,
+    "shell_read": 216413,
+    "test": 5579,
+    "unparsed": 1629,
+    "vcs": 32986,
+    "wait": 6097,
+    "write": 73938
+  },
+  "corpus_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+  "driver_bin_sha256": "297c8e8ab424093612547f53072ac0c8ceea9b82f569863e0d7da6d0cbd2f713",
+  "evaluable": [
+    {
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s1",
+      "seed": 1
+    },
+    {
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s4",
+      "seed": 4
+    },
+    {
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s5",
+      "seed": 5
+    }
+  ],
+  "excess_p95_ms": 298.4884999999995,
+  "global_median_ms": 302.40150000000006,
+  "library_sha256": "7c2bdc4bfdda9cb8be8ae0865247fb52f802014dca002ad1d546066b2835ed41",
+  "n1_median_pace": 0.011974542056758963,
+  "n1_pace_sessions": 4,
+  "overhead_ms": 1588.9175,
+  "point_sig": "f268309d12e6d2d506e8a4a18cff51a1e03d646bb6ad1f1ecda867fa9c1d0392",
+  "probe_failed": {},
+  "probe_runs": [
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-build",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-file_ops",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-host_infra",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-interpreter",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-lint_check",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-network",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-opaque",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-other",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-process",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-read",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-search",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-shell_read",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-test",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-unparsed",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-vcs",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-wait",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-probe-write",
+      "ok": 20
+    }
+  ],
+  "runs": [
+    {
+      "calls": 7,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s1",
+      "p95_added_ms": 1779.7930000000001
+    },
+    {
+      "calls": 30,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s4",
+      "p95_added_ms": 1792.239
+    },
+    {
+      "calls": 4,
+      "dir": "/srv/e15/runs/mem512/sbx/N1-s5",
+      "p95_added_ms": -108.47099999999955
+    }
+  ],
+  "skipped": [
+    {
+      "reason": "empty_window",
+      "seed": 2,
+      "tag": "s2"
+    },
+    {
+      "reason": "empty_window",
+      "seed": 3,
+      "tag": "s3"
+    }
+  ],
+  "undercovered": []
+}

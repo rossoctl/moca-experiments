@@ -1,0 +1,10 @@
+{
+  "rule": "SPEC 12: repeat when non-E15 CPU (host busy - e15.slice share) has a 10 s rolling mean > 10% of host CPU inside the window",
+  "samples": 900,
+  "other_pct_mean": 1.8488813588966488,
+  "other_pct_p95": 3.112880730123735,
+  "other_pct_roll10_max": 2.944594979278636,
+  "host_busy_pct_mean": 15.391933333333366,
+  "spike_t": 618.132,
+  "repeat": false
+}

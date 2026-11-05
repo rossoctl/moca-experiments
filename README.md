@@ -41,6 +41,11 @@ Go seam-closure check specifically skips gracefully (like its "no go on PATH" ch
   [`sbx/RESULTS-SUMMARY.md`](sbx/RESULTS-SUMMARY.md)**; `EXPERIMENTS.md` is the record,
   `RUNBOOK.md` the replication steps, and `HARNESS.md` every script and config used, embedded
   as markdown.
+- `e15/` — E15: sessions per host, SBX (a fresh microVM per command) against resident microVMs
+  (one VM per session), on replayed TraceLab coding-agent sessions. The preliminary run is on a
+  4-vCPU nested AWS instance. **Start at [`e15/RESULTS-SUMMARY.md`](e15/RESULTS-SUMMARY.md)**;
+  `EXPERIMENTS.md` is the record, `RUNBOOK.md` the replication steps, `SPEC.md` the design and
+  `predictions.json` the sealed predictions.
 - `experiments/` — the original `@sh/experiments` workspace package: M6's E2/E5 in-process
   experiment runners, the E11 density-analysis module (`src/microvm-density.ts`, consumed by
   `microvm/e11-density.sh`), and `swebench/` — the SWE-bench sandbox-sharing evaluation harness

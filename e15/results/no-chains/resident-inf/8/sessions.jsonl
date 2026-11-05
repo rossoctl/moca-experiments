@@ -1,0 +1,13 @@
+{"session":"e15-no-chains-resident-inf-n8-1793822801-7-1","trace":"claude:d4730bbb-b411-b169-226e-3a77badfa9b7","provider":"claude","window_calls":10,"planned_ms":98843,"observed_ms":98810.405}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-7-2","trace":"claude:418037d3-5ff1-71e4-2f2f-1ee569fae523","provider":"claude","window_calls":15,"planned_ms":180619,"observed_ms":180642.77}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-3-3","trace":"claude:6e937172-d071-9afe-14ee-d5f218097923","provider":"claude","window_calls":26,"planned_ms":572045,"observed_ms":572036.69}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-3-4","trace":"claude:bc349324-c3f2-1b55-2df8-3c39dd14a06f","provider":"claude","window_calls":7,"planned_ms":46159,"observed_ms":46127.795}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-6-2","trace":"codex:47de8a40-eb8c-35d1-6d28-b0a7743045f0","provider":"codex","window_calls":62,"planned_ms":691299,"observed_ms":690915.918}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-6-3","trace":"claude:30328c8a-8306-71f9-895a-80b67580cb7a","provider":"claude","window_calls":3,"planned_ms":203171,"observed_ms":203717.321}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-5-3","trace":"claude:3ed97ec2-29a7-c03c-1c7d-8244c52ed118","provider":"claude","window_calls":13,"planned_ms":694162,"observed_ms":676759.201}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-2-5","trace":"claude:f0a4a1cb-518c-556c-8f52-2e44283e0e54","provider":"claude","window_calls":6,"planned_ms":520656,"observed_ms":521560.685}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-7-3","trace":"claude:90916d03-4077-d1b4-ad19-f66ee68a4419","provider":"claude","window_calls":12,"planned_ms":524744,"observed_ms":524756.08}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-3-5","trace":"claude:6fd16db6-3936-3137-3372-9664b69a3235","provider":"claude","window_calls":16,"planned_ms":264196,"observed_ms":264170.531}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-0-4","trace":"claude:fa1713c0-f942-1874-7bb6-0ca2f7b2f9cd","provider":"claude","window_calls":1,"planned_ms":103,"observed_ms":295.95}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-1-1","trace":"claude:96ed7eda-9721-adc6-fb07-3f6bc2b826a4","provider":"claude","window_calls":24,"planned_ms":567047,"observed_ms":569394.652}
+{"session":"e15-no-chains-resident-inf-n8-1793822801-4-0","trace":"codex:0d701905-679d-c258-20c5-ca4cc25f9c65","provider":"codex","window_calls":3,"planned_ms":340,"observed_ms":181.731}
