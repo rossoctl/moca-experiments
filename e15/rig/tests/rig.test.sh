@@ -311,7 +311,17 @@ SH
   rm -rf "$TROOT/runs"; : >"$TMP/lcalls"
   E15_HOST_PROFILE=fresh-metal E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$STUBRUNG" RECS="$TMP/recs" LADDER_CALLS="$TMP/lcalls" \
     PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/ladder.sh" default resident-inf >"$TMP/l.out" 2>&1
-  check "ladder: fresh-metal resident repeat runs with warm-up 2400 (2 x 1200)" "$(grep -c '^1-repeat k=1 w=2400' "$TMP/lcalls")" "1"
+  check "ladder: fresh-metal resident repeat runs with warm-up 2400 (2 x 1200) and K doubled" "$(grep -c '^1-repeat k=2 w=2400' "$TMP/lcalls")" "1"
+  # aws-prelim keeps K x1 on the repeat (sealed preliminary procedure)
+  check "ladder: aws-prelim repeat keeps K x1" "$(E15_WARMUP_S=30 ladder; grep -c '^1-repeat k=1 w=60' "$TMP/lcalls")" "1"
+  # fresh-metal: a repeat still unseeded with K x2 is re-run once with K doubled again (tag repeat-k2) and counts
+  printf '1=%s\n1-repeat=%s\n1-repeat-k2=%s\n8=%s\n' '{"holds":false,"holds_abs":false,"repeat_required":true,"unseeded_sessions":0}' \
+    '{"holds":false,"holds_abs":false,"unseeded_sessions":3}' "$ok" "$both_bad" >"$TMP/recs"
+  rm -rf "$TROOT/runs"; : >"$TMP/lcalls"
+  E15_HOST_PROFILE=fresh-metal E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$STUBRUNG" RECS="$TMP/recs" LADDER_CALLS="$TMP/lcalls" \
+    PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/ladder.sh" default resident-inf >"$TMP/l.out" 2>&1
+  check "ladder: fresh-metal unseeded repeat -> repeat-k2 with K x4, which counts" "$?/$(grep -c '^1-repeat-k2 k=4 w=2400' "$TMP/lcalls")/$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["n_max"])' "$TROOT/runs/default/resident-inf/ladder.json")" "0/1/1"
+  check "ladder.json records the repeat's unseeded rig error" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["rungs"][0]["rig_errors"]))' "$TROOT/runs/default/resident-inf/ladder.json")" "1"
 fi
 
 # classprobe.sh: one sequential rung per class, override corpus, tag probe-<class>, warm-up 0

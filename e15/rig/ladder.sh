@@ -116,8 +116,21 @@ for n in "${E15_LADDER[@]}"; do
   repeated=false
   if [ "$(rec_field "$dir/record.json" repeat_required)" = true ]; then
     log "N=$n: repeat_required (footprint drift > 10%); re-running once with warm-up $((WARMUP * 2)) s"
-    dir=$(run_rung "$n" repeat E15_WARMUP_S=$((WARMUP * 2)) "${kmult[@]}")
+    # fresh-metal: the repeat's doubled warm-up cycles each slot through more sessions than K covers
+    # (K uses the mean span; sessions start at a random call index), so its K is doubled from the
+    # start; the pool size is never measured, so verdicts do not change. aws-prelim: as sealed.
+    rk=1
+    [ "${#kmult[@]}" -eq 0 ] || rk=${kmult[0]#E15_K_MULT=}
+    [ "$E15_HOST_PROFILE" != fresh-metal ] || rk=$((rk * 2))
+    dir=$(run_rung "$n" repeat E15_WARMUP_S=$((WARMUP * 2)) E15_K_MULT="$rk")
     rig_check "$dir"
+    if [ "$(unseeded "$dir")" != 0 ] && [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+      # the sealed unseeded rule: once more with K doubled
+      rig_errors+=("repeat unseeded_sessions=$(unseeded "$dir")")
+      log "N=$n (repeat): rig_error: $(unseeded "$dir") unseeded session(s); re-running once with K doubled ($((rk * 2)))"
+      dir=$(run_rung "$n" repeat-k2 E15_WARMUP_S=$((WARMUP * 2)) E15_K_MULT=$((rk * 2)))
+      rig_check "$dir"
+    fi
     [ "$(unseeded "$dir")" = 0 ] || die "N=$n (repeat): $(unseeded "$dir") unseeded session(s): rig error, ladder stopped"
     repeated=true
   fi
