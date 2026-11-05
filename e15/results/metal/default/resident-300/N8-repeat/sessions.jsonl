@@ -1,0 +1,6 @@
+{"session":"e15-default-resident-300-n8-repeat-1793879291-2-4","trace":"claude:a4794df2-a318-a9ca-d52c-961656a0da50","provider":"claude","window_calls":3,"planned_ms":656522,"observed_ms":647297.466}
+{"session":"e15-default-resident-300-n8-repeat-1793879291-1-1","trace":"claude:7ddfe9ee-2430-4517-811e-b99e8a21c0f6","provider":"claude","window_calls":4,"planned_ms":10228,"observed_ms":10103.525}
+{"session":"e15-default-resident-300-n8-repeat-1793879291-0-0","trace":"codex:fd646ec4-f85e-20fd-8234-970a29706975","provider":"codex","window_calls":46,"planned_ms":735759,"observed_ms":734388.269}
+{"session":"e15-default-resident-300-n8-repeat-1793879291-4-2","trace":"claude:dd346930-9ba6-9290-778d-99e08cd0006d","provider":"claude","window_calls":25,"planned_ms":619397,"observed_ms":614461.378}
+{"session":"e15-default-resident-300-n8-repeat-1793879291-3-0","trace":"claude:7b3314b9-1328-1833-0900-e2bcd0c0d808","provider":"claude","window_calls":20,"planned_ms":767363,"observed_ms":767337.655}
+{"session":"e15-default-resident-300-n8-repeat-1793879291-6-0","trace":"codex:05ac5546-8f1e-84bc-ca07-0b62a0d924fc","provider":"codex","window_calls":14,"planned_ms":781365,"observed_ms":781600.147}
