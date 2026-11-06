@@ -9,5 +9,9 @@
 {"n":64,"dir":"/srv/e15/runs/default/sbx/N64","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
 {"n":80,"dir":"/srv/e15/runs/default/sbx/N80","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
 {"n":96,"dir":"/srv/e15/runs/default/sbx/N96","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
-{"n":128,"dir":"/srv/e15/runs/default/sbx/N128-1s","sealed_rung":false,"holds_1s":true,"holds_cpu":true}
-{"n":160,"dir":"/srv/e15/runs/default/sbx/N160-1s","sealed_rung":false,"holds_1s":false,"holds_cpu":false}
+{"n":128,"dir":"/srv/e15/runs/default/sbx/N128-1s","sealed_rung":false,"holds_1s":true,"holds_cpu":true,"grace_artefact_rerun":false}
+{"n":160,"dir":"/srv/e15/runs/default/sbx/N160-1s-g900","sealed_rung":false,"holds_1s":true,"holds_cpu":true,"grace_artefact_rerun":true}
+{"n":192,"dir":"/srv/e15/runs/default/sbx/N192-1s","sealed_rung":false,"holds_1s":true,"holds_cpu":true,"grace_artefact_rerun":false}
+{"n":256,"dir":"/srv/e15/runs/default/sbx/N256-1s","sealed_rung":false,"holds_1s":false,"holds_cpu":true,"grace_artefact_rerun":false}
+{"n":320,"dir":"/srv/e15/runs/default/sbx/N320-1s","sealed_rung":false,"holds_1s":false,"holds_cpu":true,"grace_artefact_rerun":false}
+{"n":384,"dir":"/srv/e15/runs/default/sbx/N384-1s-g900","sealed_rung":false,"holds_1s":false,"holds_cpu":false,"grace_artefact_rerun":true}
