@@ -1,4 +1,6 @@
-PARTIAL (2026-11-05 10:37Z): the sealed chain stopped this ladder on a rig error at the N=56 repeat
-(1 unseeded session, 3 exit-90 calls from it). N=1..48 hold; N=56 first run held. Per the ruling in
-progress.md the N=56 repeat is re-run with K doubled (N56-repeat-k2) after the sealed chain, the ladder
-resumes from N=64, and ladder.json is assembled from ladder-rungs.part1.jsonl + ladder.part2.json.
+Default resident-inf ladder, sealed metal procedure. n_max 128, n_max_abs 128 (ladder.json, assembled):
+- 3d653a2 chain: N=1..48 and N=56's first run (ladder-rungs.part1.jsonl, default-resident-inf.part1.log); its N=56 repeat
+  hit 1 unseeded session (rig error, kept here as N56-repeat for the record; not a verdict).
+- An N=56 repeat-k2 at K=16 (K_MULT was a no-op before ca6fa27) was unseeded again and is on the host under
+  runs/_aborted-resident-inf-N56-repeat-k2-kfloor (not pulled, a rig error).
+- ca6fa27: N56-repeat-k2 at K=32 holds and counts; the ladder resumed from N=64 (ladder.part2.json, ladder.log).
