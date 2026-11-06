@@ -1,0 +1,60 @@
+{
+  "point": "default",
+  "arm": "resident-300",
+  "start_n": 128,
+  "ladder": [
+    1,
+    8,
+    16,
+    24,
+    32,
+    40,
+    48,
+    56,
+    64,
+    80,
+    96,
+    128,
+    160,
+    192,
+    256,
+    320,
+    384,
+    448,
+    512,
+    576,
+    640,
+    704,
+    768,
+    896,
+    1024
+  ],
+  "rungs_below_start_assumed_held": true,
+  "rungs": [
+    {
+      "n": 128,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00015490923103578247,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N128"
+    },
+    {
+      "n": 160,
+      "holds": false,
+      "holds_abs": false,
+      "repeated": false,
+      "median_class_pace": 0.00021212956137439676,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N160"
+    }
+  ],
+  "n_max": 128,
+  "stopped_at": 160,
+  "n_max_abs": 128,
+  "stopped_at_abs": 160,
+  "abs_rule": "condition 4 as p95(class excess) <= B + 250 ms (B = the arm's N=1 within-class excess p95; excess = added latency minus the per-class N=1 probe median)",
+  "n1_overhead_ms": -25.995500000000007,
+  "n1_median_pace": -0.001982249903834943
+}

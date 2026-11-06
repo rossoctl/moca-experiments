@@ -1,0 +1,161 @@
+{
+  "point": "default",
+  "arm": "resident-300",
+  "start_n": 1,
+  "ladder": [
+    1,
+    8,
+    16,
+    24,
+    32,
+    40,
+    48,
+    56,
+    64,
+    80,
+    96,
+    128,
+    160,
+    192,
+    256,
+    320,
+    384,
+    448,
+    512,
+    576,
+    640,
+    704,
+    768,
+    896,
+    1024
+  ],
+  "rungs": [
+    {
+      "n": 1,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": null,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N1"
+    },
+    {
+      "n": 8,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": true,
+      "median_class_pace": -0.0001571018978914207,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N8-repeat"
+    },
+    {
+      "n": 16,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00012744977668477375,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N16"
+    },
+    {
+      "n": 24,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 7.134783019202562e-05,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N24"
+    },
+    {
+      "n": 32,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00011310090825400465,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N32"
+    },
+    {
+      "n": 40,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 2.7648002319802245e-05,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N40"
+    },
+    {
+      "n": 48,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 5.012446611274424e-05,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N48"
+    },
+    {
+      "n": 56,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00012766401623465207,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N56"
+    },
+    {
+      "n": 64,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00013626217267204144,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N64"
+    },
+    {
+      "n": 80,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 4.6271810192344276e-05,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N80"
+    },
+    {
+      "n": 96,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": true,
+      "median_class_pace": null,
+      "rig_errors": [
+        "repeat unseeded (N96-repeat, and N96-repeat-k2 at K=16: K_MULT was a no-op before ca6fa27, moved to runs/_aborted-*-kfloor); re-run with K doubled after ca6fa27"
+      ],
+      "dir": "/srv/e15/runs/default/resident-300/N96-repeat-k2"
+    },
+    {
+      "n": 128,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00015490923103578247,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N128"
+    },
+    {
+      "n": 160,
+      "holds": false,
+      "holds_abs": false,
+      "repeated": false,
+      "median_class_pace": 0.00021212956137439676,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/resident-300/N160"
+    }
+  ],
+  "n_max": 128,
+  "stopped_at": 160,
+  "n_max_abs": 128,
+  "stopped_at_abs": 160,
+  "n1_overhead_ms": -25.995500000000007,
+  "n1_median_pace": -0.001982249903834943,
+  "abs_rule": "condition 4 = p95(class excess) <= B + 250 ms",
+  "assembled": "sealed chain to N=96; its repeat hit unseeded sessions (rig error); re-run once with K doubled (the sealed unseeded rule) counts; resumed from the next rung (ladder.part2.json)"
+}
