@@ -43,35 +43,60 @@ for arm in $ARMS; do
   [ -s "$L/STOP" ] && break
   base=/srv/e15/runs/default/$arm
   start=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stopped_at"] or "")' "$base/ladder.json")
+  # RESUME_<arm>=N (arm with - as _): continue an earlier climb of this arm from rung N (its earlier rows kept)
+  rv=RESUME_${arm//-/_}; resume=${!rv:-}
+  last_delta=""
   [ -n "$start" ] || { echo "CLIMB $arm SKIP no stopped_at"; continue; }
   sup=$base/supplementary-1s
-  mkdir -p "$sup"; : >"$sup/climb.jsonl"
+  mkdir -p "$sup"
+  if [ -n "$resume" ]; then cp "$sup/climb.jsonl" "$sup/climb.before-resume-N$resume.jsonl"; fi
+  : >"$sup/climb.jsonl"
   # the sealed ladder's own rungs, re-judged (no re-run)
   n_1s=null n_cpu=null alive_1s=1 alive_cpu=1 stop_1s=null stop_cpu=null
-  for n in "${LADDER[@]}"; do
-    [ "$n" -le "$start" ] || break
-    d=$base/N$n; [ -f "$d/record.json" ] || continue
+  while read -r n d; do
+    [ -f "$d/record.json" ] || continue
     read -r h1 hc _ < <(judge "$d")
     [ "$alive_1s" = 1 ] && { if [ "$h1" = true ]; then n_1s=$n; else alive_1s=0; stop_1s=$n; fi; }
     [ "$alive_cpu" = 1 ] && { if [ "$hc" = true ]; then n_cpu=$n; else alive_cpu=0; stop_cpu=$n; fi; }
     printf '{"n":%s,"dir":"%s","sealed_rung":true,"holds_1s":%s,"holds_cpu":%s}\n' "$n" "$d" "$h1" "$hc" >>"$sup/climb.jsonl"
-  done
+  done < <(python3 -c 'import json,sys
+for r in json.load(open(sys.argv[1]))["rungs"]: print(r["n"], r["dir"])' "$base/ladder.json")
   echo "CLIMB $arm START from=$start (re-judged sealed rungs: n_max_1s=$n_1s n_max_cpu=$n_cpu) $(date -u +%FT%TZ)"
   for n in "${LADDER[@]}"; do
     [ "$n" -gt "$start" ] || continue
     [ "$alive_cpu" = 1 ] || break
     [ -s "$L/STOP" ] && break
-    if [ "$n" -gt 128 ]; then # disk headroom at K x2 (a repeat's K): the refusal estimate scales with K
-      km=2; [ "$arm" = sbx ] && km=1   # sbx has no footprint repeat
-      need=$(python3 -c 'import sys; print(int(int(sys.argv[1]) * 16 * int(sys.argv[2]) * 22 * 1.1 * 1024))' "$n" "$km")
-      free_kb=$(df -k --output=avail /srv/e15 | tail -1)
-      [ "$need" -lt "$free_kb" ] || { echo "CLIMB $arm N=$n DISK need ${need}kB free ${free_kb}kB at K x$km: stop"; break; }
+    prev=$sup/climb.before-resume-N$resume.jsonl
+    if [ -n "$resume" ] && [ "$n" -lt "$resume" ]; then
+      # resumed climb: rungs below the resume point keep their earlier verdicts (not re-run)
+      read -r h1 hc pd < <(python3 -c 'import json,sys
+for l in open(sys.argv[1]):
+    r=json.loads(l)
+    if r["n"]==int(sys.argv[2]) and not r["sealed_rung"]: print(str(r["holds_1s"]).lower(), str(r["holds_cpu"]).lower(), r["dir"])' "$prev" "$n")
+      [ "$alive_1s" = 1 ] && { if [ "$h1" = true ]; then n_1s=$n; else alive_1s=0; stop_1s=$n; fi; }
+      if [ "$hc" = true ]; then n_cpu=$n; else alive_cpu=0; stop_cpu=$n; fi
+      last_delta=$(python3 "$T/measured_delta.py" "$pd" 2>/dev/null || echo "${last_delta:-22}")
+      printf '{"n":%s,"dir":"%s","sealed_rung":false,"holds_1s":%s,"holds_cpu":%s,"grace_artefact_rerun":false,"measured_delta_mib":%s}\n' "$n" "$pd" "$h1" "$hc" "$last_delta" >>"$sup/climb.jsonl"
+      continue
     fi
+    # disk sizing (ruling 2026-11-06): the per-image delta measured on the previous climb rung (peak disk_used growth
+    # / images, x1.5, floor 2 MiB; tools/measured_delta.py), passed to rung.sh as E15_WS_DELTA_MB (its own refusal
+    # check then uses it); checked here at K x2 (a repeat's K) for resident arms. The < 10 GiB free sentinel guards.
+    export E15_WS_DELTA_MB=${last_delta:-22}
+    km=2; [ "$arm" = sbx ] && km=1
+    need=$(python3 -c 'import sys; print(int(int(sys.argv[1]) * 16 * int(sys.argv[2]) * int(sys.argv[3]) * 1.1 * 1024))' "$n" "$km" "$E15_WS_DELTA_MB")
+    free_kb=$(df -k --output=avail /srv/e15 | tail -1)
+    [ "$need" -lt "$free_kb" ] || { echo "CLIMB $arm N=$n DISK need ${need}kB free ${free_kb}kB at K x$km, delta ${E15_WS_DELTA_MB} MiB: stop"; break; }
+    echo "CLIMB $arm N=$n disk check: delta ${E15_WS_DELTA_MB} MiB/image, need $((need / 1048576)) GiB at K x$km, free $((free_kb / 1048576)) GiB"
+    if [ -n "$resume" ] && [ "$n" = "$resume" ] && [ -f "$base/N$n-1s/record_cpu.json" ]; then
+      d=$base/N$n-1s   # the rung already ran; judge it (and apply the grace-artefact rule) without re-running
+    else
     ( bash "$T/perfsample.sh" "$base/N$n-1s.perf.jsonl" 1230 900 ) &
     ppid=$!
     E15_TAG=1s bash "$R/rung.sh" "$arm" "$n" default >"$L/climb-$arm-N$n.log" 2>&1 || { kill $ppid 2>/dev/null; echo "CLIMB $arm N=$n RIG_ERROR $(tail -1 "$L/climb-$arm-N$n.log")"; break; }
     kill $ppid 2>/dev/null; wait $ppid 2>/dev/null
     d=$base/N$n-1s; mv "$base/N$n-1s.perf.jsonl" "$d/perf.jsonl" 2>/dev/null
+    fi
     if [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("unseeded_sessions") or 0)' "$d/record.json")" != 0 ]; then
       echo "CLIMB $arm N=$n first run unseeded: re-run with K x2 (tag 1s-k2)"
       E15_TAG=1s-k2 E15_K_MULT=2 bash "$R/rung.sh" "$arm" "$n" default >"$L/climb-$arm-N$n-k2.log" 2>&1 || { echo "CLIMB $arm N=$n k2 RIG_ERROR"; break; }
@@ -86,9 +111,26 @@ for arm in $ARMS; do
       d=$base/N$n-1s-repeat; mv "$base/N$n-1s-repeat.perf.jsonl" "$d/perf.jsonl" 2>/dev/null
       read -r h1 hc rep < <(judge "$d")
     fi
+    art=false
+    if [ "$hc" != true ] && [ "$(python3 "$T/grace_artefact.py" "$d")" = yes ]; then
+      # ruling 2026-11-06: only grace-end cuts failed condition 1 -> window-end artefact; re-run once with grace 900 s
+      echo "CLIMB $arm N=$n grace-end artefact in $d: re-run with E15_GRACE_S=900 (tag 1s-g900)"
+      art=true
+      gtag=1s-g900; [ "$d" = "$base/N$n-1s" ] || gtag=$(basename "$d" | sed "s/^N$n-//")-g900
+      wu=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["warmup_s"])' "$d/params.json")
+      km=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("workspaces_k_mult") or 1)' "$d/params.json")
+      ( bash "$T/perfsample.sh" "$base/N$n-$gtag.perf.jsonl" $((wu + 30)) 900 ) &
+      ppid=$!
+      E15_TAG=$gtag E15_GRACE_S=900 E15_WARMUP_S=$wu E15_K_MULT=$km bash "$R/rung.sh" "$arm" "$n" default >"$L/climb-$arm-N$n-$gtag.log" 2>&1 ||
+        { kill $ppid 2>/dev/null; echo "CLIMB $arm N=$n $gtag RIG_ERROR"; break; }
+      kill $ppid 2>/dev/null; wait $ppid 2>/dev/null
+      d=$base/N$n-$gtag; mv "$base/N$n-$gtag.perf.jsonl" "$d/perf.jsonl" 2>/dev/null
+      read -r h1 hc rep < <(judge "$d")
+    fi
     [ "$alive_1s" = 1 ] && { if [ "$h1" = true ]; then n_1s=$n; else alive_1s=0; stop_1s=$n; fi; }
     if [ "$hc" = true ]; then n_cpu=$n; else alive_cpu=0; stop_cpu=$n; fi
-    printf '{"n":%s,"dir":"%s","sealed_rung":false,"holds_1s":%s,"holds_cpu":%s}\n' "$n" "$d" "$h1" "$hc" >>"$sup/climb.jsonl"
+    last_delta=$(python3 "$T/measured_delta.py" "$d" 2>/dev/null || echo "${last_delta:-22}")
+    printf '{"n":%s,"dir":"%s","sealed_rung":false,"holds_1s":%s,"holds_cpu":%s,"grace_artefact_rerun":%s,"measured_delta_mib":%s}\n' "$n" "$d" "$h1" "$hc" "$art" "$last_delta" >>"$sup/climb.jsonl"
     echo "CLIMB $arm N=$n holds_1s=$h1 holds_cpu=$hc $(date -u +%FT%TZ)"
   done
   printf '{"arm":"%s","start_n":%s,"n_max_1s":%s,"stopped_at_1s":%s,"n_max_cpu":%s,"stopped_at_cpu":%s,"ladder_top":1024}\n' \
