@@ -361,10 +361,20 @@ fi
 
 # rung.sh: K has a floor of 16 workspaces per slot
 if [ -f "$RIG/rung.sh" ]; then
-  check "rung.sh K floor: max(16, formula)" "$(grep -c 'print(max(16, (int(math.ceil' "$RIG/rung.sh")" "1"
+  check "rung.sh K floor: max(16, formula) (aws-prelim, sealed)" "$(grep -c 'print(max(16, (int(math.ceil' "$RIG/rung.sh")" "1"
+  check "rung.sh K: fresh-metal multiplies the floored K" "$(grep -c 'print(max(16, int(math.ceil(w / s)) + 3) \* int(sys.argv\[3\]))' "$RIG/rung.sh")" "1"
   kf=$(sed -n '/^K=\$(python3/p' "$RIG/rung.sh" | sed 's/^K=\$(//; s/)$//')
+  kfm=$(sed -n '/^  K=\$(python3/p' "$RIG/rung.sh" | sed 's/^  K=\$(//; s/)$//')
   # shellcheck disable=SC2001
   check "rung.sh K: short run gets 16" "$(eval "$(echo "$kf" | sed 's/"\$((WARMUP + WINDOW))" "\$span_min" "\$K_MULT"/"1500" "30" "1"/')")" "16"
+  # K_MULT multiplies the floored K: a doubled pool on a short-formula run is 32, not the floor 16 again
+  # shellcheck disable=SC2001
+  check "rung.sh K: fresh-metal K_MULT=2 at the default span (3300 s, 123 min) gets 32" "$(eval "$(echo "$kfm" | sed 's/"\$((WARMUP + WINDOW))" "\$span_min" "\$K_MULT"/"3300" "123" "2"/')")" "32"
+  # shellcheck disable=SC2001
+  # shellcheck disable=SC2001
+  check "rung.sh K: aws-prelim K_MULT=2 at the default span stays 16 (sealed)" "$(eval "$(echo "$kf" | sed 's/"\$((WARMUP + WINDOW))" "\$span_min" "\$K_MULT"/"3300" "123" "2"/')")" "16"
+  # shellcheck disable=SC2001
+  check "rung.sh K: fresh-metal K_MULT=1 equals the sealed formula (long run)" "$(eval "$(echo "$kfm" | sed 's/"\$((WARMUP + WINDOW))" "\$span_min" "\$K_MULT"/"36000" "30" "1"/')")" "23"
 fi
 
 # (3) rung.sh refuses N>1 with no baseline before touching anything

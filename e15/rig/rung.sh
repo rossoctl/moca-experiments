@@ -220,6 +220,10 @@ refuse_shared_paths "$E15_WORKSPACES" "$E15_JAIL"
 sudo -n find "$E15_WORKSPACES" "$E15_JAIL" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 span_min=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["table"]["mean_span_min"])' "$CORPUS_DIR/corpus-report.json")
 K=$(python3 -c 'import math,sys; w,s=float(sys.argv[1]),float(sys.argv[2])*60; print(max(16, (int(math.ceil(w/s))+3)*int(sys.argv[3])))' "$((WARMUP + WINDOW))" "$span_min" "$K_MULT")
+# fresh-metal: K_MULT multiplies the floored K (above, at the 123-min mean span the floor of 16 wins for
+# any K_MULT <= 4, so doubling did nothing); aws-prelim keeps the sealed formula above.
+[ "$E15_HOST_PROFILE" != fresh-metal ] ||
+  K=$(python3 -c 'import math,sys; w,s=float(sys.argv[1]),float(sys.argv[2])*60; print(max(16, int(math.ceil(w / s)) + 3) * int(sys.argv[3]))' "$((WARMUP + WINDOW))" "$span_min" "$K_MULT")
 WS_COPY=$(workspace_copy_mode)
 if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
   # Reflink is required there (setup.sh probes it on every run; no sparse fallback). Each copy is
