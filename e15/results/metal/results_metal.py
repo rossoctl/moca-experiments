@@ -161,6 +161,13 @@ w("| 9 | %s | n_max SBX %s, resident ∞ %s; resident ∞ first failed rung bind
   % (P[9]["claim"], ms, mr, fmr and fmr.get("binding"), mem_bound, verdict(c9)))
 w("")
 
+w("Notes. Prediction 8 is stated on the primary verdict: metal 0.625 is not above the preliminary 1.0. On the "
+  "absolute verdict the metal ratio (0.625) is above the preliminary 0.125, because the preliminary SBX n_max_abs was 1 "
+  "(nested lifecycle overhead against B + 250); that is information, not the sealed claim. Prediction 9's SBX range "
+  "[1, 1] is also missed (SBX held N=8): the calibration rung's 600 s warm-up drew a window with 8 cold first scans "
+  "in 132 calls, the ladder's 1200 s warm-up 3 in 100. Both mem512 arms fail N=16 on the same cold-first-scan tail "
+  "(a new session's scan #1 reads its own fresh 512 MiB data.bin from EBS); neither is memory-bound (resident VMs at "
+  "the 1024 MiB cap, MemAvailable 370 GiB, e15.slice memory.events high 0).\n")
 w("## Per-rung detail: relative slowdown (supplementary, not sealed)\n")
 w("Condition 4 is in absolute milliseconds. A call that runs for minutes fails it on a slowdown of a few percent: "
   "3% of a 240 s pytest run is 7 s of excess. The table gives, per rung, the median and p95 of observed ÷ planned "
