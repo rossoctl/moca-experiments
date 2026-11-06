@@ -1,0 +1,16 @@
+{"n":1,"dir":"/srv/e15/runs/default/resident-inf/N1","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":8,"dir":"/srv/e15/runs/default/resident-inf/N8","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":16,"dir":"/srv/e15/runs/default/resident-inf/N16-repeat","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":24,"dir":"/srv/e15/runs/default/resident-inf/N24","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":32,"dir":"/srv/e15/runs/default/resident-inf/N32","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":40,"dir":"/srv/e15/runs/default/resident-inf/N40-repeat","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":48,"dir":"/srv/e15/runs/default/resident-inf/N48-repeat","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":56,"dir":"/srv/e15/runs/default/resident-inf/N56-repeat-k2","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":64,"dir":"/srv/e15/runs/default/resident-inf/N64","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":80,"dir":"/srv/e15/runs/default/resident-inf/N80-repeat","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":96,"dir":"/srv/e15/runs/default/resident-inf/N96-repeat","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":128,"dir":"/srv/e15/runs/default/resident-inf/N128-repeat","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":160,"dir":"/srv/e15/runs/default/resident-inf/N160-repeat","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":192,"dir":"/srv/e15/runs/default/resident-inf/N192-1s","sealed_rung":false,"holds_1s":true,"holds_cpu":true,"grace_artefact_rerun":false}
+{"n":256,"dir":"/srv/e15/runs/default/resident-inf/N256-1s","sealed_rung":false,"holds_1s":false,"holds_cpu":true,"grace_artefact_rerun":false}
+{"n":320,"dir":"/srv/e15/runs/default/resident-inf/N320-1s-repeat","sealed_rung":false,"holds_1s":false,"holds_cpu":true,"grace_artefact_rerun":false}
