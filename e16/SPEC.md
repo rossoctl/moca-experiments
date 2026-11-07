@@ -1,7 +1,7 @@
 # E16 — low duty cycle: does SBX hold more sessions than resident VMs when sessions are mostly idle?
 
-Version: 0.1 (draft for review), 2026-11-07
-Status: **Design. Not approved. Nothing is built.**
+Version: 0.1, 2026-11-07
+Status: **Design. Approved by the user 2026-11-07.**
 Parent: E15 (`e15/SPEC.md`, metal procedure in its §13; results in `e15/results/metal/RESULTS-METAL.md`).
 E16 reuses E15's instrument, rig scripts and metal host unchanged except where this document says so.
 "E15 §n" refers to E15's spec.
