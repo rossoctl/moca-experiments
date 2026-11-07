@@ -1,0 +1,14 @@
+{"n":1,"dir":"/srv/e15/runs/default/resident-300/N1","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":8,"dir":"/srv/e15/runs/default/resident-300/N8-repeat","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":16,"dir":"/srv/e15/runs/default/resident-300/N16","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":24,"dir":"/srv/e15/runs/default/resident-300/N24","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":32,"dir":"/srv/e15/runs/default/resident-300/N32","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":40,"dir":"/srv/e15/runs/default/resident-300/N40","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":48,"dir":"/srv/e15/runs/default/resident-300/N48","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":56,"dir":"/srv/e15/runs/default/resident-300/N56","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":64,"dir":"/srv/e15/runs/default/resident-300/N64","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":80,"dir":"/srv/e15/runs/default/resident-300/N80","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":96,"dir":"/srv/e15/runs/default/resident-300/N96-repeat-k2","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":128,"dir":"/srv/e15/runs/default/resident-300/N128","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":160,"dir":"/srv/e15/runs/default/resident-300/N160","sealed_rung":true,"holds_1s":true,"holds_cpu":true}
+{"n":192,"dir":"/srv/e15/runs/default/resident-300/N192-1s","sealed_rung":false,"holds_1s":true,"holds_cpu":true,"grace_artefact_rerun":false}
