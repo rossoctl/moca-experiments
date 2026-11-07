@@ -1,0 +1,185 @@
+{
+  "bins_min": [
+    0,
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    35,
+    40,
+    45,
+    50,
+    55
+  ],
+  "median_mib": [
+    56.80078125,
+    77.4453125,
+    88.91796875,
+    98.580078125,
+    109.56640625,
+    112.49609375,
+    116.515625,
+    119.232421875,
+    124.20703125,
+    124.25390625,
+    124.11328125,
+    118.375
+  ],
+  "p95_mib": [
+    140.99609375,
+    165.021484375,
+    177.91015625,
+    190.44921875,
+    193.78515625,
+    194.9921875,
+    194.65234375,
+    201.9609375,
+    200.421875,
+    199.099609375,
+    199.32421875,
+    188.52734375
+  ],
+  "vms_per_bin": [
+    8407,
+    6754,
+    5454,
+    4658,
+    4066,
+    3553,
+    3031,
+    1756,
+    1405,
+    1169,
+    917,
+    149
+  ],
+  "growth_20_60_pct": null,
+  "vms_20_60": 0,
+  "vms": 8407,
+  "max_age_min": 55,
+  "growth_20_last": {
+    "to_min": 55,
+    "pct": 24.482418665790327,
+    "vms": 149
+  },
+  "min_vms": 20,
+  "rungs": [
+    "e15/results/metal/default/resident-inf/N64",
+    "e15/results/metal/default/resident-inf/N80",
+    "e15/results/metal/default/resident-inf/N80-repeat",
+    "e15/results/metal/default/resident-inf/N96",
+    "e15/results/metal/default/resident-inf/N96-repeat",
+    "e15/results/metal/default/resident-inf/N128",
+    "e15/results/metal/default/resident-inf/N128-repeat",
+    "e15/results/metal/default/resident-inf/N160",
+    "e15/results/metal/default/resident-inf/N160-repeat",
+    "e15/results/metal/default/resident-inf/supplementary-1s/N192-1s",
+    "e15/results/metal/default/resident-inf/supplementary-1s/N256-1s",
+    "e15/results/metal/default/resident-inf/supplementary-1s/N320-1s",
+    "e15/results/metal/default/resident-inf/supplementary-1s/N320-1s-repeat",
+    "e15/results/metal/default/resident-inf/supplementary-1s/N384-1s",
+    "e15/results/metal/default/resident-inf/supplementary-1s/N384-1s-repeat",
+    "e15/results/metal/default/resident-inf/supplementary-1s/N448-1s",
+    "e15/results/metal/default/resident-inf/supplementary-1s/N448-1s-repeat",
+    "e15/results/metal/default/resident-inf/supplementary-1s/N448-1s-repeat-g900"
+  ],
+  "per_rung": [
+    {
+      "rung": "e15/results/metal/default/resident-inf/N64",
+      "vms": 120,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N80",
+      "vms": 154,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N80-repeat",
+      "vms": 177,
+      "max_age_min": 50
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N96",
+      "vms": 181,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N96-repeat",
+      "vms": 207,
+      "max_age_min": 55
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N128",
+      "vms": 236,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N128-repeat",
+      "vms": 273,
+      "max_age_min": 55
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N160",
+      "vms": 301,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N160-repeat",
+      "vms": 340,
+      "max_age_min": 55
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/supplementary-1s/N192-1s",
+      "vms": 356,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/supplementary-1s/N256-1s",
+      "vms": 480,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/supplementary-1s/N320-1s",
+      "vms": 590,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/supplementary-1s/N320-1s-repeat",
+      "vms": 658,
+      "max_age_min": 55
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/supplementary-1s/N384-1s",
+      "vms": 720,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/supplementary-1s/N384-1s-repeat",
+      "vms": 819,
+      "max_age_min": 55
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/supplementary-1s/N448-1s",
+      "vms": 844,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/supplementary-1s/N448-1s-repeat",
+      "vms": 968,
+      "max_age_min": 55
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/supplementary-1s/N448-1s-repeat-g900",
+      "vms": 983,
+      "max_age_min": 55
+    }
+  ],
+  "rules": {
+    "bin_s": 300,
+    "new_vm_on_drop_gt": 0.5,
+    "new_vm_on_absence_gt_s": 60
+  }
+}

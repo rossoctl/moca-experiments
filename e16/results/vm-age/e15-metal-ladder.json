@@ -1,0 +1,131 @@
+{
+  "bins_min": [
+    0,
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    35,
+    40,
+    45,
+    50,
+    55
+  ],
+  "median_mib": [
+    56.5390625,
+    75.0859375,
+    90.55859375,
+    101.3466796875,
+    113.001953125,
+    116.998046875,
+    117.8203125,
+    126.08203125,
+    130.912109375,
+    131.15625,
+    130.5625,
+    125.466796875
+  ],
+  "p95_mib": [
+    137.7578125,
+    160.40234375,
+    174.57421875,
+    192.380859375,
+    198.921875,
+    201.953125,
+    203.08984375,
+    216.578125,
+    213.26171875,
+    215.16796875,
+    203.12109375,
+    191.5703125
+  ],
+  "vms_per_bin": [
+    1989,
+    1597,
+    1281,
+    1086,
+    964,
+    834,
+    701,
+    371,
+    314,
+    265,
+    205,
+    4
+  ],
+  "growth_20_60_pct": null,
+  "vms_20_60": 0,
+  "vms": 1989,
+  "max_age_min": 55,
+  "growth_20_last": {
+    "to_min": 50,
+    "pct": 26.89927483959147,
+    "vms": 205
+  },
+  "min_vms": 20,
+  "rungs": [
+    "e15/results/metal/default/resident-inf/N64",
+    "e15/results/metal/default/resident-inf/N80",
+    "e15/results/metal/default/resident-inf/N80-repeat",
+    "e15/results/metal/default/resident-inf/N96",
+    "e15/results/metal/default/resident-inf/N96-repeat",
+    "e15/results/metal/default/resident-inf/N128",
+    "e15/results/metal/default/resident-inf/N128-repeat",
+    "e15/results/metal/default/resident-inf/N160",
+    "e15/results/metal/default/resident-inf/N160-repeat"
+  ],
+  "per_rung": [
+    {
+      "rung": "e15/results/metal/default/resident-inf/N64",
+      "vms": 120,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N80",
+      "vms": 154,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N80-repeat",
+      "vms": 177,
+      "max_age_min": 50
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N96",
+      "vms": 181,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N96-repeat",
+      "vms": 207,
+      "max_age_min": 55
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N128",
+      "vms": 236,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N128-repeat",
+      "vms": 273,
+      "max_age_min": 55
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N160",
+      "vms": 301,
+      "max_age_min": 35
+    },
+    {
+      "rung": "e15/results/metal/default/resident-inf/N160-repeat",
+      "vms": 340,
+      "max_age_min": 55
+    }
+  ],
+  "rules": {
+    "bin_s": 300,
+    "new_vm_on_drop_gt": 0.5,
+    "new_vm_on_absence_gt_s": 60
+  }
+}
