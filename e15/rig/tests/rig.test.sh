@@ -256,6 +256,52 @@ SH
   check "ladder: stops where both are false" "$(lj stopped_at_abs)" "32"
   check "ladder: ran 5 rungs" "$(wc -l <"$TMP/lcalls" | tr -d ' ')" "5"
 
+  # E16: E15_LADDER_RUNGS, an explicit rung list (fresh-metal only)
+  ladder_rungs() { # PROFILE RUNGS
+    rm -rf "$TROOT/runs"
+    : >"$TMP/lcalls"
+    E15_LADDER_RUNGS="$2" E15_HOST_PROFILE="$1" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_RUNG="$STUBRUNG" RECS="$TMP/recs" \
+      LADDER_CALLS="$TMP/lcalls" PATH="$SPATH" E15_MANIFEST="$TMP/m.md" bash "$RIG/ladder.sh" default sbx >"$TMP/l.out" 2>&1
+  }
+  ljj() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(d.get(sys.argv[2], "absent"), separators=(",", ":")))' "$TROOT/runs/default/sbx/ladder.json" "$1"; }
+  printf '256=%s
+384=%s
+512=%s
+' "$ok" "$both_bad" "$ok" >"$TMP/recs"
+  ladder_rungs fresh-metal "256 384 512"
+  check "E16 ladder: explicit rungs exit 0" "$?" "0"
+  check "E16 ladder: rung.sh called for 256, 384 only" "$(cut -d' ' -f1 "$TMP/lcalls" | tr '\n' ' ')" "256 384 "
+  check "E16 ladder: n_max 256, stopped_at 384" "$(lj n_max)/$(lj stopped_at)" "256/384"
+  check "E16 ladder: rungs_requested [256,384,512]" "$(ljj rungs_requested)" "[256,384,512]"
+  check "E16 ladder: start_n is the first requested rung" "$(lj start_n)" "256"
+  printf '256=%s
+384=%s
+512=%s
+' "$ok" "$abs_only" "$both_bad" >"$TMP/recs"
+  ladder_rungs fresh-metal "256 384 512"
+  check "E16 ladder: climbs while either verdict holds" "$(cut -d' ' -f1 "$TMP/lcalls" | tr '\n' ' ')/$(lj n_max)/$(lj n_max_abs)" "256 384 512 /256/384"
+  printf '256=%s
+256-repeat=%s
+384=%s
+' '{"holds":true,"holds_abs":true,"unseeded_sessions":0,"repeat_required":true}' "$ok" "$both_bad" >"$TMP/recs"
+  ladder_rungs fresh-metal "256 384"
+  check "E16 ladder: repeats keep the E15 rule (warm-up x2, K x2)" "$(grep -c '^256-repeat k=2 w=2400' "$TMP/lcalls")/$(lj n_max)" "1/256"
+  ladder_rungs fresh-metal "256 300 512"
+  check "E16 ladder: a rung not on the ladder exits 2" "$?" "2"
+  check "E16 ladder: ... with the message" "$(grep -c '^ladder.sh: E15_LADDER_RUNGS: N=300 is not on the ladder$' "$TMP/l.out")" "1"
+  check "E16 ladder: ... and runs nothing" "$(wc -l <"$TMP/lcalls" | tr -d ' ')/$([ -f "$TROOT/runs/default/sbx/ladder.json" ] && echo yes || echo no)" "0/no"
+  ladder_rungs fresh-metal "384 256"
+  check "E16 ladder: a descending list exits 2, runs nothing" "$?/$(wc -l <"$TMP/lcalls" | tr -d ' ')" "2/0"
+  ladder_rungs fresh-metal "256 x"
+  check "E16 ladder: a non-number exits 2" "$?" "2"
+  printf '1=%s
+8=%s
+' "$ok" "$both_bad" >"$TMP/recs"
+  ladder_rungs aws-prelim "256 384 512"
+  check "E16 ladder: aws-prelim ignores E15_LADDER_RUNGS (climbs from 1)" "$?/$(cut -d' ' -f1 "$TMP/lcalls" | tr '\n' ' ')/$(ljj rungs_requested)" "0/1 8 /\"absent\""
+  ladder_rungs fresh-metal ""
+  check "E16 ladder: unset on fresh-metal -> the ladder from 1, no rungs_requested" "$?/$(cut -d' ' -f1 "$TMP/lcalls" | tr '\n' ' ')/$(ljj rungs_requested)" "0/1 8 /\"absent\""
+
   # probe-only knobs exported in the caller's shell never reach a measured rung
   printf '1=%s\n8=%s\n' "$ok" "$both_bad" >"$TMP/recs"
   rm -rf "$TROOT/runs"

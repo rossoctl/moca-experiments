@@ -24,6 +24,12 @@
 #    n1_median_pace}
 # Environment passes through to rung.sh (E15_WARMUP_S, E15_WINDOW_S, ...). E15_RUNG overrides the
 # rung command (tests only).
+#
+# E16 (fresh-metal only): E15_LADDER_RUNGS="256 384 512" climbs exactly these N, ascending, each on
+# E15_LADDER, with every rule above unchanged (it stops at the first rung where both verdicts are
+# broken); START_N is then the first of them (a START_N argument is refused). ladder.json adds
+# rungs_requested. A requested N not on the ladder: exit 2, nothing run. aws-prelim ignores the
+# variable (the sealed procedure).
 set -euo pipefail
 E15_PROG=ladder.sh
 # Probe-only knobs (classprobe.sh) must never reach a measured rung: rung.sh would start every
@@ -55,6 +61,46 @@ e15_on_ladder "$START" || {
   echo "ladder.sh: START_N $START is not on the ladder" >&2
   usage
 }
+# The rungs to climb: E15_LADDER from START_N, or (E16, fresh-metal) E15_LADDER_RUNGS.
+CLIMB=()
+REQUESTED=""
+if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ -n "${E15_LADDER_RUNGS:-}" ]; then
+  [ $# -le 2 ] || {
+    echo "ladder.sh: E15_LADDER_RUNGS and START_N are exclusive" >&2
+    exit 2
+  }
+  prev=0
+  for n in $E15_LADDER_RUNGS; do
+    case "$n" in "" | *[!0-9]*)
+      echo "ladder.sh: E15_LADDER_RUNGS: '$n' is not a number" >&2
+      exit 2
+      ;;
+    esac
+    e15_on_ladder "$n" || {
+      echo "ladder.sh: E15_LADDER_RUNGS: N=$n is not on the ladder" >&2
+      exit 2
+    }
+    [ "$n" -gt "$prev" ] || {
+      echo "ladder.sh: E15_LADDER_RUNGS: N=$n does not ascend" >&2
+      exit 2
+    }
+    prev=$n
+    CLIMB+=("$n")
+  done
+  [ ${#CLIMB[@]} -gt 0 ] || {
+    echo "ladder.sh: E15_LADDER_RUNGS names no rung" >&2
+    exit 2
+  }
+  START=${CLIMB[0]}
+  REQUESTED="${CLIMB[*]}"
+else
+  started=0
+  for n in "${E15_LADDER[@]}"; do
+    [ "$started" = 1 ] || [ "$n" = "$START" ] || continue
+    started=1
+    CLIMB+=("$n")
+  done
+fi
 
 RUNG=${E15_RUNG:-$HERE/rung.sh}
 WARMUP=${E15_WARMUP_S:-$(e15_default_warmup "$ARM")}
@@ -95,12 +141,7 @@ unseeded() { local v; v=$(rec_field "$1/record.json" unseeded_sessions); [ "$v" 
 
 n_max=null stopped=null n_max_abs=null stopped_abs=null
 alive=1 alive_abs=1
-started=0
-for n in "${E15_LADDER[@]}"; do
-  if [ "$started" = 0 ]; then
-    [ "$n" = "$START" ] || continue
-    started=1
-  fi
+for n in "${CLIMB[@]}"; do
   kmult=()
   rig_errors=()
   dir=$(run_rung "$n" "")
@@ -158,9 +199,9 @@ for n in "${E15_LADDER[@]}"; do
   [ "$alive" = 1 ] || [ "$alive_abs" = 1 ] || break
 done
 
-python3 - "$OUTDIR/ladder.json" "$rungs_json" "$POINT" "$ARM" "$START" "$n_max" "$stopped" "$n_max_abs" "$stopped_abs" "${E15_LADDER[*]}" <<'PY'
+python3 - "$OUTDIR/ladder.json" "$rungs_json" "$POINT" "$ARM" "$START" "$n_max" "$stopped" "$n_max_abs" "$stopped_abs" "${E15_LADDER[*]}" "$REQUESTED" <<'PY'
 import json, sys
-out, rungs, point, arm, start, n_max, stopped, n_max_abs, stopped_abs, ladder = sys.argv[1:]
+out, rungs, point, arm, start, n_max, stopped, n_max_abs, stopped_abs, ladder, requested = sys.argv[1:]
 rows = [json.loads(l) for l in open(rungs) if l.strip()]
 overhead = n1_pace = None
 try:
@@ -174,7 +215,9 @@ json.dump({"point": point, "arm": arm, "start_n": int(start), "ladder": [int(x) 
            "rungs": rows, "n_max": num(n_max), "stopped_at": num(stopped),
            "n_max_abs": num(n_max_abs), "stopped_at_abs": num(stopped_abs),
            "abs_rule": "condition 4 as p95(class excess) <= B + 250 ms (B = the arm's N=1 within-class excess p95; excess = added latency minus the per-class N=1 probe median)",
-           "n1_overhead_ms": overhead, "n1_median_pace": n1_pace},
+           "n1_overhead_ms": overhead, "n1_median_pace": n1_pace,
+           # E16: present only when E15_LADDER_RUNGS chose the rungs (fresh-metal)
+           **({"rungs_requested": [int(x) for x in requested.split()]} if requested else {})},
           open(out, "w"), indent=2)
 PY
 rm -f "$rungs_json"
