@@ -1,0 +1,16 @@
+{
+  "source_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+  "duty_min": 0.01,
+  "duty_max": 0.02,
+  "sessions": 456,
+  "users": 40,
+  "top_user_share": 0.24342105263157895,
+  "by_provider": {
+    "claude": 295,
+    "codex": 161
+  },
+  "occupied_pct": 1.4882577180700054,
+  "work_pct": 1.5216702859311266,
+  "calls_per_s_per_session": 0.011227404877377015,
+  "mean_span_h": 2.4875063334551655
+}
