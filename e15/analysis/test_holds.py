@@ -1112,3 +1112,103 @@ def test_record_main_ignore_c4_needs_out(tmp_path):
     assert json.loads((tmp_path / "record_cpu.json").read_text())["ignore_c4"] is True
     with pytest.raises(SystemExit):
         R.main([str(tmp_path), "--params", str(tmp_path / "params.json"), "--ignore-c4"])
+
+
+# --- E16 Task 4: replayed duty and distinct-trace share (informational) -------------------------
+
+import datetime as _dt  # noqa: E402
+import gzip as _gzip  # noqa: E402
+import shutil as _shutil  # noqa: E402
+
+T0 = 1_800_000_000.0
+
+
+def _wcall(session, trace, start_s, observed_ms, in_window=True, status="ok"):
+    """A calls.jsonl row whose call started start_s after T0 (ts = send time, record.go/replay.go)."""
+    ts = _dt.datetime.fromtimestamp(T0 + start_s, _dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    return dict(ts=ts, t_ms=start_s * 1000.0, session=session, trace=trace, provider="a", call=0,
+                **{"class": "x"}, execs=1, planned_dur_ms=1000, tail_ms=0, observed_ms=observed_ms,
+                status=status, cause="ok", in_window=in_window)
+
+
+def _duty_rung(tmp_path, calls, warmup=100, window=900):
+    (tmp_path / "calls.jsonl").write_text("".join(json.dumps(c) + "\n" for c in calls))
+    (tmp_path / "driver-cpu.jsonl").write_text(json.dumps(dict(header=True, num_cpu=1, t0_epoch=T0)) + "\n")
+    return R.build(str(tmp_path), dict(arm="sbx", n=2, warmup_s=warmup, window_s=window, rung_start_ts=T0))
+
+
+def test_replayed_duty_basic(tmp_path):
+    # window [100, 1000] s. s1: [200, 209] and [205, 223] overlap -> [200, 223] = 23 s; plus
+    # [500, 504.5] = 4.5 s -> 27.5 s / 900.
+    # s2: one call at 990 s for 30 s, clipped to the window end -> 10 s / 900.
+    # A call outside the window (in_window false) does not count.
+    calls = [_wcall("s1", "t1", 200, 9000), _wcall("s1", "t1", 205, 18000),
+             _wcall("s1", "t1", 500, 4500), _wcall("s2", "t2", 990, 30000),
+             _wcall("s2", "t2", 50, 99000, in_window=False)]
+    r = _duty_rung(tmp_path, calls)
+    d1, d2 = 27.5 / 900, 10.0 / 900
+    assert r["replayed_duty"]["mean"] == pytest.approx((d1 + d2) / 2, abs=1e-12)
+    assert r["replayed_duty"]["median"] == pytest.approx((d1 + d2) / 2, abs=1e-12)
+    calls.append(_wcall("s3", "t3", 300, 900))  # 0.9 s -> 0.001
+    r = _duty_rung(tmp_path, calls)
+    assert r["replayed_duty"]["median"] == pytest.approx(d2, abs=1e-12)
+    assert r["replayed_duty"]["mean"] == pytest.approx((d1 + d2 + 0.001) / 3, abs=1e-12)
+    assert r["replayed_duty"]["sessions"] == 3
+
+
+def test_replayed_duty_counts_failed_calls(tmp_path):
+    # occupancy is time a command ran, whatever its status
+    r = _duty_rung(tmp_path, [_wcall("s1", "t1", 200, 9000, status="err")])
+    assert r["replayed_duty"]["median"] == pytest.approx(9.0 / 900, abs=1e-12)
+
+
+def test_distinct_trace_share(tmp_path):
+    calls = [_wcall("s1", "tA", 200, 100), _wcall("s2", "tA", 210, 100),
+             _wcall("s3", "tB", 220, 100), _wcall("s4", "tC", 230, 100),
+             _wcall("s5", "tD", 50, 100, in_window=False)]
+    assert _duty_rung(tmp_path, calls)["distinct_trace_share"] == 0.75
+
+
+def test_no_window_calls_null(tmp_path):
+    r = _duty_rung(tmp_path, [_wcall("s1", "t1", 50, 100, in_window=False)])
+    assert r["replayed_duty"] is None and r["distinct_trace_share"] is None
+    r = _duty_rung(tmp_path, [])
+    assert r["replayed_duty"] is None and r["distinct_trace_share"] is None
+
+
+FIXTURE_RUNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "results", "metal",
+                            "default", "sbx", "N8")
+FIXTURE_CORPUS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata",
+                              "metal-sbx-N8-corpus.jsonl.gz")
+FIXTURE_BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "results", "metal",
+                                "baseline", "default", "sbx", "N1", "baseline.json")
+# Keys that legitimately differ from the committed record: the paths, remapped to this checkout
+# (the record holds /srv/e15 paths), and the keys later E15 re-judge commits added to every record.
+REMAPPED = {"baseline_path", "corpus"}
+LATER_KEYS = {"ignore_c4", "p95_limit_override_ms"}
+NEW_KEYS = {"replayed_duty", "distinct_trace_share"}
+
+
+def test_existing_records_unchanged(tmp_path):
+    """Re-build the E15 metal sbx N=8 rung: every pre-existing field is identical to the committed
+    record (sealed E15 records re-judge identically); only the two E16 fields are added."""
+    for f in os.listdir(FIXTURE_RUNG):
+        src = os.path.join(FIXTURE_RUNG, f)
+        if f.endswith(".gz"):
+            with _gzip.open(src, "rb") as i, open(tmp_path / f[:-3], "wb") as o:
+                _shutil.copyfileobj(i, o)
+        else:
+            _shutil.copy(src, tmp_path / f)
+    corpus = tmp_path / "corpus.jsonl"
+    with _gzip.open(FIXTURE_CORPUS, "rb") as i, open(corpus, "wb") as o:
+        _shutil.copyfileobj(i, o)
+    params = json.load(open(tmp_path / "params.json"))
+    params.update(baseline_path=FIXTURE_BASELINE, corpus=str(corpus))
+    old = json.load(open(tmp_path / "record.json"))
+    new = json.loads(json.dumps(R.build(str(tmp_path), params), sort_keys=True))
+    assert NEW_KEYS <= set(new) and not (NEW_KEYS & set(old))
+    for k in set(old) - REMAPPED:
+        assert new[k] == old[k], k
+    assert set(new) - set(old) == NEW_KEYS | LATER_KEYS
+    assert new["holds"] is True and new["replayed_duty"]["sessions"] > 0
+    assert 0 < new["distinct_trace_share"] <= 1

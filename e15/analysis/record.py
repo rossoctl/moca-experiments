@@ -200,6 +200,57 @@ def driver_cpu(rows, start, end):
     return out
 
 
+def _median(xs):
+    xs = sorted(xs)
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
+
+
+def replayed_duty(calls, start_s, end_s):
+    """E16 (informational, no verdict uses it): the duty cycle replayed in the window, per session.
+
+    A call runs [send, send + observed_ms]. The driver stamps a call's `ts` and `t_ms` when it is
+    SENT, not when it completes (e15/driver/replay.go runCall: Ts/TMs from `send`, before the
+    Exec), so the start is `t_ms` (ms since the driver's t0, the window's origin) and the end is
+    t_ms + observed_ms. Over sessions with at least one in-window call: the union of their
+    in-window calls' intervals clipped to [start_s, end_s], divided by the window length.
+    Returns {"median", "mean", "sessions"}, or None when no call is in the window."""
+    lo, hi = start_s * 1000.0, end_s * 1000.0
+    per = {}
+    for c in calls:
+        if not c.get("in_window") or c.get("t_ms") is None:
+            continue
+        a = max(lo, float(c["t_ms"]))
+        b = min(hi, float(c["t_ms"]) + float(c.get("observed_ms") or 0.0))
+        per.setdefault(c.get("session"), []).append((a, max(a, b)))
+    if not per or hi <= lo:
+        return None
+    duties = []
+    for iv in per.values():
+        iv.sort()
+        busy, cs, ce = 0.0, iv[0][0], iv[0][1]
+        for a, b in iv[1:]:
+            if a > ce:
+                busy += ce - cs
+                cs, ce = a, b
+            else:
+                ce = max(ce, b)
+        busy += ce - cs
+        duties.append(busy / (hi - lo))
+    return {"median": _median(duties), "mean": sum(duties) / len(duties), "sessions": len(duties)}
+
+
+def distinct_trace_share(calls):
+    """E16 (informational): distinct recorded traces / distinct sessions among in-window calls
+    (below 1 when the sampler replays a recorded session more than once at a time); None when no
+    call is in the window."""
+    win = [c for c in calls if c.get("in_window")]
+    sessions = {c.get("session") for c in win}
+    if not sessions:
+        return None
+    return len({c.get("trace") for c in win}) / float(len(sessions))
+
+
 def build(rung_dir, params, p95_limit_ms=None, ignore_c4=False):
     p = dict(params)
     arm = p.get("arm", "sbx")
@@ -253,6 +304,8 @@ def build(rung_dir, params, p95_limit_ms=None, ignore_c4=False):
         if d:
             rec.update(d)
     rec["driver"] = driver_cpu(cpu_rows, start, end)
+    rec["replayed_duty"] = replayed_duty(calls, start, end)
+    rec["distinct_trace_share"] = distinct_trace_share(calls)
     h_epoch = rec["driver"]["header"].get("t0_epoch")
     mismatch = rs is not None and h_epoch is not None and abs(h_epoch - rs) > 2
     rec["time_origin_mismatch"] = bool(mismatch)
