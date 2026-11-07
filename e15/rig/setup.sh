@@ -8,7 +8,8 @@
 # Inputs, staged before the first run (rsync from the laptop):
 #   /srv/e15/src/e15/              this repo's e15/ directory
 #   /srv/e15/corpora/<point>/      corpus.jsonl + corpus-report.json per point
-#                                  (default short long no-infra no-chains smoke)
+#                                  (default short long no-infra no-chains smoke; lowduty for E16,
+#                                  fresh-metal: its sha256 is checked and recorded, step 8a)
 #   /srv/e15/wheels/*.whl          pytest and its py3.9 dependencies (pip download on the laptop)
 #   /srv/e15/project-src/          optional: a clone holding project.lock's commit (E15_PROJECT_SRC)
 #
@@ -200,7 +201,7 @@ sctl start "$E15_SLICE" "$E15_VM_SLICE"
 m_note "e15.slice MemoryMax=$slice_max MemoryHigh=$slice_high bytes (host RAM $((mem_kb / 1024)) MiB - 3 GiB; MemoryMax - 1 GiB); undone with the slice unit's UNDO line"
 # The worker env is written per rung (lib.sh worker_env), nothing to undo; the value is recorded.
 [ "$E15_HOST_PROFILE" != fresh-metal ] ||
-  m_note "worker SH_MAX_RUNS=$E15_MAX_RUNS (fresh-metal; aws-prelim 512): written per rung into the rung's worker.env, nothing outside $E15_ROOT to undo"
+  m_note "worker SH_MAX_RUNS=$E15_MAX_RUNS SH_MAX_COMMITTED_MB=$E15_MAX_COMMITTED_MB (fresh-metal; aws-prelim 512 and 1048576; E16 overrides E15_MAX_RUNS/E15_MAX_COMMITTED_MB): written per rung into the rung's worker.env, nothing outside $E15_ROOT to undo"
 # Pool cgroups need the cpu/memory/pids controllers enabled below e15-vms.slice.
 sudo -n sh -c "echo '+memory +pids +cpu' > $E15_VMCG/cgroup.subtree_control" 2>/dev/null || true
 
@@ -360,6 +361,25 @@ while read -r tpoint; do
     e15_artifact "$E15_P_TEMPLATE_STAMP" "$tsha" "$E15_P_TEMPLATE"
   fi
 done < <(e15_templates)
+
+# --- 8a. the lowduty corpus (E16, fresh-metal) -------------------------------------------------
+# Staged like the other corpora (rsync to $E15_CORPORA/lowduty/: e16/extract/duty_band.py's
+# corpus.jsonl + corpus-report.json). Checked against the report's corpus_sha256 and recorded in
+# state/artifacts. Absent: a note only (E15's points do not need it).
+if [ "$METAL" = 1 ]; then
+  ld=$E15_CORPORA/lowduty
+  if [ -f "$ld/corpus.jsonl" ]; then
+    [ -f "$ld/corpus-report.json" ] || die "$ld has corpus.jsonl but no corpus-report.json"
+    ldsha=$(sha256_of "$ld/corpus.jsonl")
+    ldwant=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("corpus_sha256") or "")' "$ld/corpus-report.json")
+    [ "$ldsha" = "$ldwant" ] || die "$ld/corpus.jsonl sha256 $ldsha is not its report's corpus_sha256 ${ldwant:-(none)}"
+    e15_artifact corpus-lowduty "$ldsha" "$ld/corpus.jsonl"
+    log "lowduty corpus sha256 $ldsha"
+    m_note "lowduty corpus $ld/corpus.jsonl sha256 $ldsha (staged; nothing to undo)"
+  else
+    log "note: no $ld/corpus.jsonl staged; point lowduty cannot run"
+  fi
+fi
 
 # --- 7b. workspace disk estimate (fresh-metal: reflinked copies, the per-session delta) -------
 # aws-prelim is XFS with reflink (rung.sh's default); it has no estimate. fresh-metal: reflink was

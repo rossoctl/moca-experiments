@@ -665,6 +665,27 @@ if [ -f "$RIG/points.sh" ]; then
   check "worker_env: SH_MAX_RUNS 512 on aws-prelim (sbx, resident-inf)" "$(wruns aws-prelim sbx) $(wruns aws-prelim resident-inf)" "SH_MAX_RUNS=512 SH_MAX_RUNS=512"
   check "worker_env: SH_MAX_RUNS 2048 on fresh-metal (sbx, resident-inf, resident-300)" "$(wruns fresh-metal sbx) $(wruns fresh-metal resident-inf) $(wruns fresh-metal resident-300)" "SH_MAX_RUNS=2048 SH_MAX_RUNS=2048 SH_MAX_RUNS=2048"
   check "setup.sh records the fresh-metal SH_MAX_RUNS in the manifest" "$(grep -c 'm_note "worker SH_MAX_RUNS=' "$RIG/setup.sh")" "1"
+  # E16: per-run admission overrides E15_MAX_COMMITTED_MB / E15_MAX_RUNS, fresh-metal only
+  wadm() { # PROFILE COMMITTED RUNS ARM ("" leaves a variable unset)
+    env -u E15_MAX_COMMITTED_MB -u E15_MAX_RUNS ${2:+E15_MAX_COMMITTED_MB=$2} ${3:+E15_MAX_RUNS=$3} \
+      E15_HOST_PROFILE="$1" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; worker_env "$3" "$2"; grep -E "^SH_MAX_(COMMITTED_MB|RUNS)=" "$2" | sort | tr "\n" " "' _ "$RIG/lib.sh" "$TMP/wenv" "${4:-resident-inf}" 2>&1
+  }
+  check "E16: fresh-metal honours E15_MAX_COMMITTED_MB and E15_MAX_RUNS" "$(wadm fresh-metal 4194304 4096)" "SH_MAX_COMMITTED_MB=4194304 SH_MAX_RUNS=4096 "
+  check "E16: fresh-metal overrides reach the sbx worker too" "$(wadm fresh-metal 4194304 4096 sbx)" "SH_MAX_COMMITTED_MB=4194304 SH_MAX_RUNS=4096 "
+  check "E16: fresh-metal, both unset -> E15 metal values" "$(wadm fresh-metal "" "")" "SH_MAX_COMMITTED_MB=1048576 SH_MAX_RUNS=2048 "
+  check "E16: aws-prelim ignores both overrides (sealed values)" "$(wadm aws-prelim 4194304 4096)" "SH_MAX_COMMITTED_MB=1048576 SH_MAX_RUNS=512 "
+  check "E16: aws-prelim, both unset -> sealed values" "$(wadm aws-prelim "" "")" "SH_MAX_COMMITTED_MB=1048576 SH_MAX_RUNS=512 "
+  check "E16: fresh-metal refuses a non-integer override (exit 3)" \
+    "$(E15_MAX_RUNS=lots E15_HOST_PROFILE=fresh-metal E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"' _ "$RIG/lib.sh" >/dev/null 2>&1; echo $?)/$(E15_MAX_COMMITTED_MB=0 E15_HOST_PROFILE=fresh-metal E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"' _ "$RIG/lib.sh" >/dev/null 2>&1; echo $?)" "3/3"
+  check "setup.sh records the fresh-metal SH_MAX_COMMITTED_MB in the manifest" "$(grep -c 'm_note "worker SH_MAX_RUNS=$E15_MAX_RUNS SH_MAX_COMMITTED_MB=$E15_MAX_COMMITTED_MB' "$RIG/setup.sh")" "1"
+  # E16: point lowduty (the (1%, 2%] duty band of the default corpus)
+  check "points: lowduty" "$(pt lowduty)" "sbx resident-inf control|lowduty|$plain"
+  check "points: e15_point_arms lowduty" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_point_arms lowduty' _ "$RIG/lib.sh" "$RIG/points.sh")" "sbx resident-inf control"
+  check "point_sig: lowduty differs from default" "$([ -n "$(psig lowduty)" ] && [ "$(psig default)" != "$(psig lowduty)" ] && echo apart || echo same)" "apart"
+  check "points: lowduty does not fall back to default's baseline" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_point lowduty; echo "$E15_P_FALLBACK"' _ "$RIG/lib.sh" "$RIG/points.sh")" "0"
+  check "setup.sh: lowduty corpus checked against its report and recorded as an artifact (fresh-metal)" \
+    "$(grep -c 'e15_artifact corpus-lowduty "\$ldsha" "\$ld/corpus.jsonl"' "$RIG/setup.sh")/$(grep -c '\[ "\$ldsha" = "\$ldwant" \] || die' "$RIG/setup.sh")/$(grep -B4 'ld=\$E15_CORPORA/lowduty' "$RIG/setup.sh" | grep -c '^if \[ "\$METAL" = 1 \]; then$')" "1/1/1"
+  check "points: lowduty builds no template of its own" "$(E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; e15_templates' _ "$RIG/lib.sh" "$RIG/points.sh" | grep -c lowduty)" "0"
   check "rung.sh starts the worker with the point's image size" "$(grep -c 'start_worker "\$ARM" "\$DIR" "\$E15_P_IMAGE_MB"' "$RIG/rung.sh")" "1"
   check "rung.sh copies the point's template, not E15_TEMPLATE" "$(grep -c 'E15_TEMPLATE' "$RIG/rung.sh")/$(grep -c '"\$TEMPLATE" "\$RUN_ID"' "$RIG/rung.sh")" "0/1"
 fi

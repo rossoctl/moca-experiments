@@ -4,7 +4,7 @@
 #
 #   ARM    sbx | resident-inf | resident-300 | control
 #   N      session population (>= 1)
-#   POINT  default | short | long | no-infra | no-chains | smoke | mem512   (points.sh: corpus
+#   POINT  default | short | long | no-infra | no-chains | smoke | mem512 | lowduty   (points.sh: corpus
 #          /srv/e15/corpora/<its corpus>, library, workspace template, image size)
 #
 # Environment (defaults are SPEC §10.2's):

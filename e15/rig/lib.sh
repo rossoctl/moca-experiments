@@ -138,7 +138,29 @@ E15_FLOOR_MB=1536
 # session holds one unparked run for its whole life, so 512 would refuse a metal resident rung above
 # N=512 before any host resource binds; the metal ladder goes past that (SPEC §13). aws-prelim
 # keeps 512, the preliminary run's value.
+# SH_MAX_COMMITTED_MB: the worker's admission budget (moca charges every VM its full guest RAM);
+# 1 TiB on both profiles.
+# E16 (e16/SPEC.md §5): E15_MAX_COMMITTED_MB and E15_MAX_RUNS from the environment override both,
+# on fresh-metal only (a positive integer, else lib.sh exits 3). aws-prelim ignores them: its sealed
+# values stand. Unset on fresh-metal: the E15 metal values above.
+_e15_env_committed=${E15_MAX_COMMITTED_MB:-}
+_e15_env_runs=${E15_MAX_RUNS:-}
+E15_MAX_COMMITTED_MB=1048576
 if [ "$E15_HOST_PROFILE" = fresh-metal ]; then E15_MAX_RUNS=2048; else E15_MAX_RUNS=512; fi
+if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
+  for _e15_v in "E15_MAX_COMMITTED_MB=$_e15_env_committed" "E15_MAX_RUNS=$_e15_env_runs"; do
+    case "${_e15_v#*=}" in
+    "") ;;
+    0 | *[!0-9]*)
+      printf 'lib.sh: %s is not a positive integer\n' "$_e15_v" >&2
+      exit 3
+      ;;
+    esac
+  done
+  [ -z "$_e15_env_committed" ] || E15_MAX_COMMITTED_MB=$_e15_env_committed
+  [ -z "$_e15_env_runs" ] || E15_MAX_RUNS=$_e15_env_runs
+fi
+unset _e15_env_committed _e15_env_runs _e15_v
 
 # Points (SPEC §10.3): points.sh (sourced after this file).
 
@@ -752,7 +774,7 @@ worker_env() {
     echo "SH_STANDBY_DEPTH=$depth"
     echo "WORKER_MAX_CONCURRENT=256"
     echo "SH_MAX_RUNS=$E15_MAX_RUNS"
-    echo "SH_MAX_COMMITTED_MB=1048576"
+    echo "SH_MAX_COMMITTED_MB=$E15_MAX_COMMITTED_MB"
     echo "SH_HOST_MEM_FLOOR_MB=$E15_FLOOR_MB"
     echo "SH_WORKSPACE_IMAGE_MB=$image_mb"
     echo "SH_WORKSPACE_IDLE=24h"

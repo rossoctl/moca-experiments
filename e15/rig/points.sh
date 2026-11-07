@@ -51,6 +51,12 @@ e15_point() {
     E15_P_FALLBACK=0
     ;;
   short) E15_P_ARMS="sbx resident-inf" ;;
+  # lowduty (E16): the default corpus's sessions with duty cycle in (1%, 2%]
+  # (e16/extract/duty_band.py); default library and template; its own baselines, no fallback.
+  lowduty)
+    E15_P_ARMS="sbx resident-inf control"
+    E15_P_FALLBACK=0
+    ;;
   long | no-infra | no-chains) E15_P_ARMS="sbx resident-inf resident-300" ;;
   # smoke: the bring-up point, a dense subset of the default corpus, every arm.
   smoke) E15_P_ARMS="sbx resident-inf resident-300 control" ;;
