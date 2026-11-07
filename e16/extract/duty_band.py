@@ -41,6 +41,16 @@ def read_lines(path):
             yield line
 
 
+def read_source_report(src):
+    """The source corpus's corpus-report.json beside it, or {}."""
+    path = os.path.join(os.path.dirname(os.path.abspath(src)), "corpus-report.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
 def parse_args(argv):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--in", dest="src", required=True)
@@ -85,6 +95,15 @@ def main(argv=None):
         work_pct=100 * t["work"] / span if span else None,
         calls_per_s_per_session=t["calls"] / (span / 1000) if span else None,
         mean_span_h=span / 3_600_000 / n if n else None)
+    # The fields rung.sh reads from a point's corpus-report.json (K from table.mean_span_min;
+    # H_s and exclude recorded in params.json), H_s and exclude from the source corpus's report.
+    src_report = read_source_report(args.src)
+    report.update(
+        H_s=src_report.get("H_s"), exclude=src_report.get("exclude"),
+        corpus_sha256=hashlib.sha256(b"".join(kept)).hexdigest(),
+        table=dict(occupied_pct=report["occupied_pct"], work_pct=report["work_pct"],
+                   calls_per_s=report["calls_per_s_per_session"],
+                   mean_span_min=span / 60_000 / n if n else None))
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "corpus.jsonl"), "wb") as f:
         f.writelines(kept)

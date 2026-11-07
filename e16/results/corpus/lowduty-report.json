@@ -12,5 +12,14 @@
   "occupied_pct": 1.4882577180700054,
   "work_pct": 1.5216702859311266,
   "calls_per_s_per_session": 0.011227404877377015,
-  "mean_span_h": 2.4875063334551655
+  "mean_span_h": 2.4875063334551655,
+  "H_s": 1800,
+  "exclude": null,
+  "corpus_sha256": "0790d748aff79df6fc0f60897b41bbaabb238131d6b1cafb84b6cffce36a0588",
+  "table": {
+    "occupied_pct": 1.4882577180700054,
+    "work_pct": 1.5216702859311266,
+    "calls_per_s": 0.011227404877377015,
+    "mean_span_min": 149.25038000730996
+  }
 }

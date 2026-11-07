@@ -87,3 +87,21 @@ def test_report_counts(tmp_path):
     assert report["work_pct"] == 100 * (1500 + 1200 + 1800) / 300_000
     assert report["calls_per_s_per_session"] == 6 / 300
     assert report["mean_span_h"] == 100_000 / 3_600_000
+
+
+def test_report_has_rung_fields(tmp_path):
+    """rung.sh reads table.mean_span_min, H_s and exclude from the point's corpus-report.json;
+    H_s and exclude come from the source corpus's report beside the input."""
+    ss = [session("a", "u1", "claude", with_duty(1500))]
+    (tmp_path / "corpus-report.json").write_text(json.dumps({"H_s": 1800, "exclude": None}))
+    kept, report, _ = run(tmp_path, ss)
+    assert report["H_s"] == 1800 and report["exclude"] is None
+    assert report["table"]["mean_span_min"] == 100_000 / 60_000
+    assert report["table"]["occupied_pct"] == report["occupied_pct"]
+    body = (tmp_path / "out" / "corpus.jsonl").read_bytes()
+    assert report["corpus_sha256"] == hashlib.sha256(body).hexdigest()
+
+
+def test_report_without_source_report(tmp_path):
+    _, report, _ = run(tmp_path, [session("a", "u1", "claude", with_duty(1500))])
+    assert report["H_s"] is None and report["exclude"] is None
