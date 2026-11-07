@@ -162,7 +162,7 @@ w("| 9 | %s | n_max SBX %s, resident ∞ %s; resident ∞ first failed rung bind
 w("")
 
 w("Notes. Prediction 8 is stated on the primary verdict: metal 0.625 is not above the preliminary 1.0. On the "
-  "absolute verdict the metal ratio (0.625) is above the preliminary 0.125, because the preliminary SBX n_max_abs was 1 "
+  "absolute verdict the metal ratio n_max_abs(SBX)/n_max_abs(resident ∞) = 80/128 = 0.625 is above the preliminary 1/8 = 0.125, because the preliminary SBX n_max_abs was 1 "
   "(nested lifecycle overhead against B + 250); that is information, not the sealed claim. Prediction 9's SBX range "
   "[1, 1] is also missed (SBX held N=8): the calibration rung's 600 s warm-up drew a window with 8 cold first scans "
   "in 132 calls, the ladder's 1200 s warm-up 3 in 100. Both mem512 arms fail N=16 on the same cold-first-scan tail "
@@ -192,30 +192,79 @@ for (point, arm), L in lad.items():
     w("")
 
 w("## Supplementary (not sealed): 1-second limit and CPU wall\n")
-w("User decisions 2026-11-04/05, recorded before the rungs they judge. Not part of the sealed procedure; "
-  "predictions-metal.json is untouched. `holds_1s`: SPEC §8 conditions 1–3 unchanged, condition 4 = p95 excess "
-  "≤ 1000 ms (both verdicts). `holds_cpu`: conditions 1–3 only. Each default arm climbs from its sealed "
-  "first-failed rung (re-judged, not re-run) up the metal ladder until a rung fails conditions 1–3; rungs run "
-  "with the sealed procedure (tag 1s).\n")
-w("| arm | n_max (sealed) | n_max_1s | n_max_cpu | first rung failing 1–3 | its reason |")
-w("|---|---|---|---|---|---|")
+w("User decisions 2026-11-04/05/06, recorded before the rungs they judge. They are not part of the sealed procedure, "
+  "and predictions-metal.json is untouched. `holds_1s` keeps SPEC §8 conditions 1–3 and replaces condition 4 with "
+  "p95 excess ≤ 1000 ms (both verdicts). `holds_cpu` is conditions 1–3 only (no failed call, no refusal, median "
+  "class pace ≤ 10%). Each default arm climbs from its sealed first-failed rung (re-judged, not re-run) up the metal "
+  "ladder until a rung fails conditions 1–3. New rungs use the sealed rung procedure (tag `1s`, warm-up 1200 s, "
+  "sum-drift repeat at 2400 s with K doubled).\n")
+w("Grace-end artefact rule (ruling 2026-11-06): a climb rung whose only condition-1 failures are calls cancelled "
+  "at the grace deadline is re-run once with a 900 s grace (tag `-g900`); the re-run counts, and both records are "
+  "kept. This touches no sealed verdict. Every sealed first failure (all seven ladders) had 0 failed calls and failed "
+  "condition 4 only.\n")
+SUPN = {"sbx": "", "resident-inf": "", "resident-300": ""}
+REASON = {
+    "sbx": "N=384 (-g900 re-run; the first run was a grace-end artefact): one interpreter call planned 1,416 s ran "
+           "1,536 s (+8.5%) and hit the driver's per-call timeout (planned + 120 s); class pace +0.13%, host CPU 34%, PSI 0",
+    "resident-inf": "N=448 (-g900 re-run of the drift repeat; the repeat was a grace-end artefact): one interpreter call "
+                    "planned 1,064 s ran 1,185 s (+11%) and hit its timeout; class pace +0.10%, host CPU 40%, PSI 0",
+    "resident-300": "N=512: one interpreter call planned 371 s ran 492 s (+33%) and hit its timeout; class pace +0.25%, "
+                    "host CPU mean 54% (p95 84%), CPU PSI 0.3 (the first CPU pressure of the run)",
+}
+w("| arm | n_max (sealed) | n_max_1s | first rung failing 1 s | n_max_cpu | first rung failing conditions 1–3 and why | p95-tail classes at the 1 s failure |")
+w("|---|---|---|---|---|---|---|")
+import collections
 for arm in ("sbx", "resident-inf", "resident-300"):
-    cj = opt(os.path.join(M, "default", arm, "supplementary-1s", "climb.json"))
+    base = os.path.join(M, "default", arm, "supplementary-1s")
+    cj = opt(os.path.join(base, "climb.json"))
     if not cj:
-        w("| %s | %s | (climb not finished) | | | |" % (arm, nm.get(("default", arm))))
+        w("| %s | %s | (climb not finished) | | | | |" % (arm, nm.get(("default", arm))))
         continue
-    reason = ""
-    stop = cj.get("stopped_at_cpu")
-    if stop:
-        cands = glob.glob(os.path.join(M, "default", arm, "supplementary-1s", "N%d-1s*" % stop))
-        for d in sorted(cands):
-            rc = opt(os.path.join(d, "record_cpu.json"))
-            if rc:
-                reason = "failed calls %d, refusals %s, class pace %s, binding %s" % (
-                    rc["failed_calls"], rc.get("refusals"), rc.get("median_class_pace"), rc.get("binding"))
-    w("| %s | %s | %s | %s | %s | %s |" % (arm, nm.get(("default", arm)), cj.get("n_max_1s"), cj.get("n_max_cpu"),
-                                           stop, reason or ("ladder top reached" if stop is None else "")))
+    rows_ = [json.loads(x) for x in open(os.path.join(base, "climb.jsonl")) if x.strip()]
+    tail = ""
+    s1 = cj.get("stopped_at_1s")
+    r1row = [r for r in rows_ if r["n"] == s1]
+    if r1row:
+        dname = os.path.basename(r1row[-1]["dir"])
+        d = os.path.join(base, dname) if not r1row[-1]["sealed_rung"] else os.path.join(M, "default", arm, dname)
+        cp = os.path.join(d, "calls.jsonl")
+        bl = opt(os.path.join(M, "baseline", "default", arm, "N1", "baseline.json"))
+        if os.path.exists(cp) and bl:
+            cm = bl["class_medians"]
+            ex = []
+            for x in open(cp):
+                c = json.loads(x)
+                if c.get("in_window") and c.get("status") == "ok":
+                    ex.append(((c["observed_ms"] - (c["planned_dur_ms"] - c.get("tail_ms", 0))) - cm.get(c["class"], 0), c["class"]))
+            ex.sort()
+            top = ex[-max(1, len(ex) // 20):]
+            tail = ", ".join("%s %d" % kv for kv in collections.Counter(c for _, c in top).most_common(5))
+    capped = cj.get("stopped_at_cpu") is None and cj.get("n_max_cpu") is not None
+    ncpu = ("≥ %s" % cj.get("n_max_cpu")) if capped else cj.get("n_max_cpu")
+    w("| %s | %s | %s | %s | %s | %s | %s |" % (arm, nm.get(("default", arm)), cj.get("n_max_1s"), s1, ncpu,
+                                                REASON.get(arm) or ("N=%s" % cj.get("stopped_at_cpu")), tail))
 w("")
+w("### SBX vs resident: relative slowdown and host counters by rung\n")
+w("Long calls are calls planned at 30 s or more. Slowdown is observed ÷ planned run time. The perf columns are 60 s "
+  "`perf stat -a` samples every 300 s in each climb rung's window (climb rungs only). aperf/mperf is about 1.58 on "
+  "the idle host, the turbo ratio.\n")
+import subprocess
+w(subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "compare_slowdown.py"), M],
+                 capture_output=True, text=True).stdout)
+w("Reading. (1) Every sealed first failure happened far below any host resource wall. Host CPU was 9–13% at the "
+  "default point and 2% at mem512, CPU PSI 0, MemAvailable ≥ 356 GiB. perf was sampled only on climb rungs; at the "
+  "nearest ones (SBX N=128/160, resident N=192) IPC was ≥ 4.3, LLC miss < 10% and turbo 1.48–1.52× base. Each failed condition 4 on a p95 tail of CPU-heavy calls (interpreter, test, opaque, build): "
+  "minutes-long calls running 2–5% slow. Condition 4 is in absolute milliseconds, so a few-percent slowdown on a "
+  "4–25 minute call is several seconds of excess. (2) At equal N and equal host CPU (for example N=32, 4.4% in all three "
+  "arms) SBX's long calls run slower than resident's: long-call median 1.004 vs 1.000 at N=32, 1.016 vs 1.008/1.004 "
+  "at N=96, 1.047 vs 1.019/1.021 at N=160. The gap widens with N while the host counters stay unsaturated. This fits "
+  "per-VM cold state (each SBX command starts in a fresh guest with a cold page cache and cold CPU caches), not host "
+  "contention. That is why SBX's sealed n_max (80) is below resident's (128). (3) Without condition 4, both arms "
+  "climb far higher. n_max_cpu is SBX 320, resident ∞ 384, resident 300 s 448. Each stops on one long interpreter "
+  "call stretched 8–33% past its per-call timeout (planned + 120 s), with class pace still ≤ 0.25%. Turbo falls with "
+  "load (1.58 idle → 1.33 at N=448–512) and DRAM read rises to 1.5–2.6 GB/s, so frequency loss explains part of every "
+  "arm's slowdown at high N. CPU PSI first appears at resident 300 s N=512 (0.3; host CPU p95 84%). (4) The 1 s limit "
+  "gives n_max_1s = 192 for all three arms.\n")
 with open(os.path.join(M, "RESULTS-METAL.md"), "w") as f:
     f.write("\n".join(out) + "\n")
 print("wrote", os.path.join(M, "RESULTS-METAL.md"))
