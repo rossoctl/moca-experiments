@@ -5,10 +5,10 @@ Pick the row that matches what you have. Each experiment's own README, `RUNBOOK.
 
 | You have | You can do |
 |---|---|
-| A laptop, no cluster, no root | Run the cluster-free tests (`microvm/tests/*.test.sh`, `e15/rig/tests/rig.test.sh`, `e18/test`, the pytest suites under `e15/` and `e16/`). Re-derive the E15/E16 summaries from the raw traces (below). |
-| A laptop with Docker or Podman Compose | E18 (crash recovery on the Compose trial): `e18/run.sh`. |
+| A laptop, no cluster, no root | Run the cluster-free tests (`experiments/e10-e13-microvm/tests/*.test.sh`, `experiments/e15-session-density/rig/tests/rig.test.sh`, `experiments/e18-crash-recovery/test`, the pytest suites under `experiments/e15-session-density/` and `experiments/e16-low-duty/`). Re-derive the E15/E16 summaries from the raw traces (below). |
+| A laptop with Docker or Podman Compose | E18 (crash recovery on the Compose trial): `experiments/e18-crash-recovery/run.sh`. |
 | A Linux KVM host with root | E10–E14: the microVM drivers and the sandbox-service work. |
-| An AWS bare-metal instance (E15 and E16 used an m7i.metal-24xl) | E15–E17: the trace-replay ladders on a metal host, via the rig scripts in `e15/rig` and `e16/rig`. |
+| An AWS bare-metal instance (E15 and E16 used an m7i.metal-24xl) | E15–E17: the trace-replay ladders on a metal host, via the rig scripts in `experiments/e15-session-density/rig` and `experiments/e16-low-duty/rig`. |
 | A Kind or OpenShift cluster | E1, E3, E4, E6, E7 (archived; the Knative deployment they target is deprecated). |
 
 ## Re-deriving E15 and E16 results from raw traces
@@ -19,8 +19,8 @@ recompute them from the raw traces:
 ```bash
 data/fetch-data.sh                       # downloads and verifies; see data/MANIFEST.md
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m pytest e15/analysis e16/analysis e15/extract e16/extract e16/rig    # tests
-python3 e16/analysis/results.py                 # regenerates e16/results/summary.json
+.venv/bin/python -m pytest experiments/e15-session-density/analysis experiments/e16-low-duty/analysis experiments/e15-session-density/extract experiments/e16-low-duty/extract experiments/e16-low-duty/rig    # tests
+python3 experiments/e16-low-duty/analysis/results.py                 # regenerates experiments/e16-low-duty/results/summary.json
 ```
 
 The tracelab analysis (`analysis/tracelab/`) fetches its own inputs, the same way and with the
@@ -33,7 +33,7 @@ scripts/fetch_results.sh        # data-v1 + data-v2 -> data/results/, data/corpo
 .venv/bin/python analysis/e16.py
 ```
 
-E17's derived results are in `e17/results/` (report `E17A-REPORT.md`, per-rung `latency.json` and
+E17's derived results are in `experiments/e17-lease/results/` (report `E17A-REPORT.md`, per-rung `latency.json` and
 `record-*.json`). Its raw rung traces are not published yet; they will be a `data-v2` archive.
 
 If a recomputed number differs from the committed one, the committed `RESULTS` file wins until
@@ -42,7 +42,7 @@ the difference is explained; open an issue.
 ## Rigs
 
 - **Metal host (E15–E17).** AWS m7i.metal-24xl (96 vCPU, 377 GiB), Ubuntu, host profile
-  `fresh-metal`, work dir `/srv/e15`. `e15/rig` has the setup and run scripts; `e16/rig` adds the
+  `fresh-metal`, work dir `/srv/e15`. `experiments/e15-session-density/rig` has the setup and run scripts; `experiments/e16-low-duty/rig` adds the
   E16 chain. The scripts reach the host over SSH and need `RIG_IP` in the environment and a key
   at `~/.ssh/id_ed25519` (override the key path by editing `K=` in the script). Nothing in the
   repo holds a host address.
@@ -58,15 +58,15 @@ main repo each result was measured against is recorded in that experiment's resu
 
 ## Notes by experiment family
 
-- `microvm/` — E10 (lifecycle), E11 (density/replenishment), E12 (vsock egress), E13 (restore
+- `experiments/e10-e13-microvm/` — E10 (lifecycle), E11 (density/replenishment), E12 (vsock egress), E13 (restore
   capacity/telemetry): bare-metal microVM experiments, their `EXPERIMENTS.md`/`METAL-RUNBOOK.md`
   write-ups, `predictions.json`, and their tests. **Start at
-  [`microvm/RESULTS-SUMMARY.md`](microvm/RESULTS-SUMMARY.md)** — the acceptance bar and the
+  [`experiments/e10-e13-microvm/RESULTS-SUMMARY.md`](experiments/e10-e13-microvm/RESULTS-SUMMARY.md)** — the acceptance bar and the
   decision it produced, the latency decomposition, the instrument defects the density
   conclusions rested on, and which published numbers were retracted. `EXPERIMENTS.md`
   remains the source of truth.
 
-**A note on `microvm/` (E10/E11) too:** their cluster-free structural tests (`e10-lifecycle.test.sh`,
+**A note on `experiments/e10-e13-microvm/` (E10/E11) too:** their cluster-free structural tests (`e10-lifecycle.test.sh`,
 `e11-density.test.sh`, `e12-vsock-egress-probe.test.sh`, `e13-*.test.sh`) run standalone here —
 those are what CI actually gates on. The drivers themselves (`e10-lifecycle.sh`, `e11-density.sh`)
 are bare-metal/root-only regardless of repo, and additionally need: a sibling checkout of the
@@ -78,22 +78,22 @@ be satisfied by an env var at all, since `pnpm --filter` resolves workspace pack
 current repo's own `pnpm-workspace.yaml`. In practice: run the drivers from a checkout of the
 main repo (or a sibling of it with `REMOTE_WORKER_DIR`/`PROTO_FILE`/`PROTO_IMPORT_PATH` set --
 `VMPOOLCTL` derives from `REMOTE_WORKER_DIR` automatically unless set separately),
-same caveat as `knative/`'s cluster experiments and `experiments/`'s E2/E5. `e11-density.test.sh`'s
+same caveat as `experiments/e01-e07-knative/`'s cluster experiments and `experiments/e02-e05-harness/`'s E2/E5. `e11-density.test.sh`'s
 Go seam-closure check specifically skips gracefully (like its "no go on PATH" check) when no
 `remote-worker/` checkout is found, rather than failing.
-- `sbx/` — E14: stock coding agents (Claude Code, OpenCode) whose every command runs in a fresh
+- `experiments/e14-sbx/` — E14: stock coding agents (Claude Code, OpenCode) whose every command runs in a fresh
   microVM, reached through the sandbox-service prototype (SBX1 wave 0). Three rounds, ending in
   a 40-run SWE-bench Verified comparison of stock against remote. **Start at
-  [`sbx/RESULTS-SUMMARY.md`](sbx/RESULTS-SUMMARY.md)**; `EXPERIMENTS.md` is the record,
+  [`experiments/e14-sbx/RESULTS-SUMMARY.md`](experiments/e14-sbx/RESULTS-SUMMARY.md)**; `EXPERIMENTS.md` is the record,
   `RUNBOOK.md` the replication steps, and `HARNESS.md` every script and config used, embedded
   as markdown.
-- `experiments/` — the original `@sh/experiments` workspace package: M6's E2/E5 in-process
+- `experiments/e02-e05-harness/` — the original `@sh/experiments` workspace package: M6's E2/E5 in-process
   experiment runners, the E11 density-analysis module (`src/microvm-density.ts`, consumed by
-  `microvm/e11-density.sh`), and `swebench/` — the SWE-bench sandbox-sharing evaluation harness
+  `experiments/e10-e13-microvm/e11-density.sh`), and `swebench/` — the SWE-bench sandbox-sharing evaluation harness
   (`gen_swebench_deck.py` for bake-list/deck generation, prediction merging, report summarizing,
   and its own `RUNBOOK.md`).
 
-**A note on the `knative/` experiments (E1/E3/E4/E6/E7):** these require a live Kind/OpenShift
+**A note on the `experiments/e01-e07-knative/` experiments (E1/E3/E4/E6/E7):** these require a live Kind/OpenShift
 cluster and the main repo's deployment manifests to actually run — they're preserved here as a
 point-in-time record of what was measured, not necessarily guaranteed to stay runnable
 standalone. The main repo's own direction is moving off Kubernetes entirely (see its
@@ -109,7 +109,7 @@ and stayed behind:
 - `harness/src/swebench-setup.ts` — real production code, imported by `harness/src/run-leaf.ts`
   (SWE-bench-as-a-workload provisioning inside the live leaf-execution path).
 - `remote-worker/` (the whole Go module, including `cmd/exec-driver` and `cmd/null-responder`,
-  which `microvm/tests/e11-density.test.sh`'s seam-closure check wants) — kept as one coherent
+  which `experiments/e10-e13-microvm/tests/e11-density.test.sh`'s seam-closure check wants) — kept as one coherent
   module rather than fragmented across two repos. `cmd/vmpoolctl` specifically cannot leave it
   at all: it imports a Go `internal/` package, which no other module may ever import.
 - `deploy/knative/swebench-sandbox-buildconfig.yaml` and `swebench-sandbox-pool.yaml` — K8s
@@ -122,6 +122,6 @@ and stayed behind:
   main repo's `lib.sh`; the copy of `lib.sh` here calls it too, but the call is guarded (`||
   true`), so cost-report output silently comes out empty here rather than erroring.
 
-`experiments/swebench/RUNBOOK.md` and the code here that references any of the above use paths
+`experiments/e02-e05-harness/swebench/RUNBOOK.md` and the code here that references any of the above use paths
 relative to the main repo and are marked inline (`# [main repo]`) as such.
 

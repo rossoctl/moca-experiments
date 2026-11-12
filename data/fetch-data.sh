@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Download the raw experiment archives from the data-v1 release, verify their sha256, and
-# extract them at the repo root. See data/MANIFEST.md.
+# unpack them into the experiment directories. See data/MANIFEST.md.
+#
+# The archives were built before the 2026-11 experiments/e02-e05-harness/ reorganization, so their members
+# still carry the old paths (experiments/e15-session-density/results/..., experiments/e16-low-duty/results/...); dest_of/member_of map them.
 #   data/fetch-data.sh [name ...]     names: e15-metal e16-resident-inf e16-sbx (default: all)
 set -euo pipefail
 
@@ -19,6 +22,22 @@ sha_of() {
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
+# dest_of <name>: where the archive's tree goes; member_of <name>: its path inside the archive.
+dest_of() {
+  case "$1" in
+    e15-metal) echo experiments/e15-session-density/results/metal ;;
+    e16-resident-inf) echo experiments/e16-low-duty/results/resident-inf ;;
+    e16-sbx) echo experiments/e16-low-duty/results/sbx ;;
+  esac
+}
+member_of() {
+  case "$1" in
+    e15-metal) echo e15/results/metal ;;
+    e16-resident-inf) echo e16/results/resident-inf ;;
+    e16-sbx) echo e16/results/sbx ;;
+  esac
+}
+
 names=("$@")
 [ ${#names[@]} -gt 0 ] || names=(e15-metal e16-resident-inf e16-sbx)
 
@@ -35,6 +54,10 @@ for n in "${names[@]}"; do
     echo "checksum mismatch for $f: expected $want, got $got" >&2
     exit 1
   fi
-  tar -xzf "$tmp/$f" -C "$ROOT"
-  echo "extracted $n"
+  mkdir -p "$tmp/x"
+  tar -xzf "$tmp/$f" -C "$tmp/x"
+  dest="$(dest_of "$n")"; member="$(member_of "$n")"
+  mkdir -p "$ROOT/$dest"
+  cp -R "$tmp/x/$member/." "$ROOT/$dest/"
+  echo "extracted $n to $dest"
 done

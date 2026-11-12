@@ -12,6 +12,15 @@ Experiments from E15 on follow one file set. Older ones (E1–E14) keep their ow
 | `results/` | Summaries and per-run records (`record.json`, `params.json`, `summary.json`). Raw traces are not stored here; see `data/MANIFEST.md`. |
 | `rig/`, `driver/`, `analysis/`, `extract/` | Run scripts, the replay driver, and the analysis and tests. Later experiments reuse E15's instrument and say so in their SPEC. |
 
+## Where things live
+
+Experiments live under `experiments/<id>-<slug>/`, one directory per experiment, named by
+the experiment id plus a short description of its question (`e15-session-density`,
+`e16-low-duty`). Experiments that share a rig or a design keep their own directory and
+reference each other by path. Cross-experiment analysis (currently `analysis/tracelab/`)
+lives under `analysis/`. Raw data is never committed; it is published as a release archive
+and listed in `data/MANIFEST.md`. Renames are recorded in `docs/MOVED.md`.
+
 ## Rules
 
 - **Seal before you run.** Commit `predictions.json` before the measured runs. A prediction that

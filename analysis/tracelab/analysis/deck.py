@@ -836,10 +836,10 @@ def main():
     plt.rcParams.update({"font.size": 11})
     trace_src = ("Source: TraceLab v0.0.2 (uw-syfi/TraceLab, CC BY 4.0) via the E15 replay corpora; "
                  "tracelab/out/tables/%s.csv")
-    run_src = ("Source: rossoctl/moca-experiments e15/results — AWS @%s, metal @%s (both final); "
+    run_src = ("Source: rossoctl/moca-experiments experiments/e15-session-density/results — AWS @%s, metal @%s (both final); "
                "tracelab/out/tables/%%s.csv" % (sha_a, sha_m))
-    e16_src = ("Source: rossoctl/moca-experiments e16/results @%s (final) and "
-               "e15/results metal @%s; tracelab/out/tables/%%s.csv" % (sha_e, sha_m))
+    e16_src = ("Source: rossoctl/moca-experiments experiments/e16-low-duty/results @%s (final) and "
+               "experiments/e15-session-density/results metal @%s; tracelab/out/tables/%%s.csv" % (sha_e, sha_m))
 
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(W), Inches(H)
@@ -916,7 +916,7 @@ def main():
         "• AWS m7i.metal-24xl: 96 vCPU, 377 GiB, bare metal (E15 metal, E16).",
         "• moca's memory admission set never to bind: the host is measured, not the policy."],
         13, INK)
-    add_text(s, 0.6, 6.95, 12.1, 0.35, "Source: e15/SPEC.md §3–§7, e16/SPEC.md §4–§5 "
+    add_text(s, 0.6, 6.95, 12.1, 0.35, "Source: experiments/e15-session-density/SPEC.md §3–§7, experiments/e16-low-duty/SPEC.md §4–§5 "
              "(rossoctl/moca-experiments).", 9.5, MUTED)
 
     s = text_slide(prs, "Method · calibrate, then seal the predictions before any rung",
@@ -940,13 +940,13 @@ def main():
         "• Anything decided after seeing data: the 1 s limit, conditions 1–3 only, the "
         "post-seal SBX extension, staggered end-sessions, no-wedge re-judges.",
         "• Reported beside the verdict, never as the verdict."], 13, INK)
-    add_text(s, 0.6, 6.95, 12.1, 0.35, "Source: e15/SPEC.md §8, §10.1, §11; "
-             "e15/predictions*.json; e16/predictions.json.", 9.5, MUTED)
+    add_text(s, 0.6, 6.95, 12.1, 0.35, "Source: experiments/e15-session-density/SPEC.md §8, §10.1, §11; "
+             "experiments/e15-session-density/predictions*.json; experiments/e16-low-duty/predictions.json.", 9.5, MUTED)
 
     chart_slide(prs, "Method · how one rung runs",
                 "N slots, warm-up, a 15-minute measured window, four conditions; the ladder "
                 "stops at the first failed rung",
-                chart_rung(plt), "Source: e15/SPEC.md §5.7, §8, §10.2, §13; e16/SPEC.md §8. "
+                chart_rung(plt), "Source: experiments/e15-session-density/SPEC.md §5.7, §8, §10.2, §13; experiments/e16-low-duty/SPEC.md §8. "
                 "Holds = no failed call · no refusal · class pace ≤ 10% · p95 excess ≤ limit.",
                 notes=N["method_rung"])
 
@@ -1008,7 +1008,7 @@ def main():
         "• 2. Both arms fail on the latency tail, host CPU < 25%.",
         "• 3. Resident's VM memory at its n_max < 189 GiB, in [109, 163].",
         "• 4. Driver < 1% of host CPU."], 13, INK)
-    add_text(s, 0.6, 6.95, 12.1, 0.35, e16_src % "e16_band" + "; e16/SPEC.md, e16/predictions.json",
+    add_text(s, 0.6, 6.95, 12.1, 0.35, e16_src % "e16_band" + "; experiments/e16-low-duty/SPEC.md, experiments/e16-low-duty/predictions.json",
              9.5, MUTED)
 
     chart_slide(prs, "E16 · neither arm fails on latency up to 1,536 sessions",
@@ -1028,7 +1028,7 @@ def main():
     rd = table("e16_readings")
     s = text_slide(prs, "E16 verdict: the hypothesis is falsified",
                    "At 1.5% duty SBX does not hold more sessions than resident ∞. Three "
-                   "readings, in e16/RESULTS.md's order", N["e16_verdict"])
+                   "readings, in experiments/e16-low-duty/RESULTS.md's order", N["e16_verdict"])
     add_text(s, 0.6, 1.75, 12.1, 2.6, [
         "• %s: SBX %s vs resident ∞ %s → %s." % (rd[0]["reading"], rd[0]["SBX n_max"],
                                                  rd[0]["resident ∞ n_max"], rd[0]["verdict"]),
@@ -1067,7 +1067,7 @@ def main():
     add_text(s, 0.6, 6.95, 12.1, 0.35, e16_src % "e16_end_sessions", 9.5, MUTED)
 
     # ---- what binds before memory ----
-    bsrc = ("Source: e15/results metal @%s and e16/results @%s; tracelab/out/tables/%%s.csv "
+    bsrc = ("Source: experiments/e15-session-density/results metal @%s and experiments/e16-low-duty/results @%s; tracelab/out/tables/%%s.csv "
             "(analysis/binding.py)" % (sha_m, sha_e))
     chart_slide(prs, "What binds before memory? The latency tail, in both arms",
                 "Each limit as % of its own ceiling, at each arm's last held rung on metal",
@@ -1079,7 +1079,7 @@ def main():
                 chart_coldstart(plt), bsrc % "cold_start + slowdown_long", notes=N["coldstart"])
     chart_slide(prs, "The counters point to cold caches and lower clocks, not saturation",
                 "perf on the E15 metal climb rungs (60 s every 5 min): LLC misses, IPC, turbo",
-                chart_perf(plt), "Source: e15/results/metal/RESULTS-METAL.md @%s; "
+                chart_perf(plt), "Source: experiments/e15-session-density/results/metal/RESULTS-METAL.md @%s; "
                 "tracelab/out/tables/perf_e15_climb.csv" % sha_m, notes=N["perf"])
 
     # ---- summary ----

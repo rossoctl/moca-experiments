@@ -66,9 +66,9 @@ copy_filtered() {
 mkdir -p "$OUT" "$CORP"
 
 # 1. The non-raw records, summaries and calibration that stay in git.
-copy_filtered "$ROOT/../../e15/results/metal" "$OUT/metal"
-copy_filtered "$ROOT/../../e16/results" "$OUT/e16"
-cp "$ROOT/../../e16/predictions.json" "$ROOT/../../e16/RESULTS.md" "$OUT/e16/"
+copy_filtered "$ROOT/../../experiments/e15-session-density/results/metal" "$OUT/metal"
+copy_filtered "$ROOT/../../experiments/e16-low-duty/results" "$OUT/e16"
+cp "$ROOT/../../experiments/e16-low-duty/predictions.json" "$ROOT/../../experiments/e16-low-duty/RESULTS.md" "$OUT/e16/"
 
 # 2. The raw traces from data-v1, filtered on top.
 E15_METAL="$(fetch moca-experiments-e15-metal-raw.tar.gz data-v1 \
@@ -107,16 +107,16 @@ cat > "$ROOT/data/results-lock.json" <<EOF
     "path": "-> data/results/aws"
   },
   "metal": {
-    "branch": "e15/metal-run",
+    "branch": "experiments/e15-session-density/metal-run",
     "commit": "7a90a7653d21dcb14ab58d189dc735062d0fc6b9",
     "release": "data-v1",
     "asset": "moca-experiments-e15-metal-raw.tar.gz",
     "sha256": "99cfe2d0692600d264ea52d8c5e24c7bfdd4147b01dc02207bd50bb7f7b7dacb",
-    "path": "e15/results/metal -> data/results/metal",
+    "path": "experiments/e15-session-density/results/metal -> data/results/metal",
     "status": "final"
   },
   "e16": {
-    "branch": "e16/low-duty-spec",
+    "branch": "experiments/e16-low-duty/low-duty-spec",
     "commit": "c8dba135b7d0f514ae21d2d4dd0ccaf77008952d",
     "release": "data-v1",
     "assets": ["moca-experiments-e16-resident-inf-raw.tar.gz", "moca-experiments-e16-sbx-raw.tar.gz"],
@@ -124,7 +124,7 @@ cat > "$ROOT/data/results-lock.json" <<EOF
       "moca-experiments-e16-resident-inf-raw.tar.gz": "01719466c3716608e9db65a2dff068dc7c9f6965ebbd336ab825283eae7eb311",
       "moca-experiments-e16-sbx-raw.tar.gz": "3fc449e171882cf1eabd43c0006226387b4c91ad3938c812f410c5dc2a35df81"
     },
-    "path": "e16/results -> data/results/e16",
+    "path": "experiments/e16-low-duty/results -> data/results/e16",
     "status": "final"
   },
   "corpora": {

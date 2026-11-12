@@ -8,7 +8,7 @@ Everything here is read-only input. Never modify a source.
 `default`, `short`, `long`, `no-infra`, `no-chains`. The `mem512` point replays the
 `default` corpus and has no files of its own.
 
-- Extracted from the TraceLab v0.0.2 DuckDB by `e15/extract/extract.py` in
+- Extracted from the TraceLab v0.0.2 DuckDB by `experiments/e15-session-density/extract/extract.py` in
   [rossoctl/moca-experiments](https://github.com/rossoctl/moca-experiments), branch
   `docs/e15-session-density-spec`.
 - sha256 of each uncompressed `corpus.jsonl`: see `data/corpora/MANIFEST.md`
@@ -38,18 +38,18 @@ Everything here is read-only input. Never modify a source.
 
 - Source repo: [rossoctl/moca-experiments](https://github.com/rossoctl/moca-experiments)
   (public).
-  - AWS preliminary run: branch `docs/e15-session-density-spec`, `e15/results/`
+  - AWS preliminary run: branch `docs/e15-session-density-spec`, `experiments/e15-session-density/results/`
     (points, `calibration/`, `default/<arm>/supplementary/`).
-  - Metal run (in progress): branch `e15/metal-run`, `e15/results/metal/`.
+  - Metal run (in progress): branch `experiments/e15-session-density/metal-run`, `experiments/e15-session-density/results/metal/`.
 - Fetch with `scripts/fetch_results.sh` into `data/results/{aws,metal}/`
   (git-ignored). The source commit shas are recorded in `data/results-lock.json`.
 - `worker.log.gz` is intentionally not fetched: rung logs may contain tokens.
-- Sealed predictions: `e15/predictions.json` (AWS) and `e15/predictions-metal.json`
+- Sealed predictions: `experiments/e15-session-density/predictions.json` (AWS) and `experiments/e15-session-density/predictions-metal.json`
   (metal). Sealed numbers are never changed; results are reported against them.
 
 ## E15 design and record
 
-- Spec: `e15/SPEC.md` (v0.9) and metal changes in SPEC §13 on `e15/metal-run`.
-- Record: `e15/EXPERIMENTS.md` (source of truth), `e15/RESULTS-SUMMARY.md`.
-- Driver: `e15/driver/replay.go` (session draw, random start index, spread);
-  extractor: `e15/extract/extract.py`; rung record: `e15/analysis/record.py`.
+- Spec: `experiments/e15-session-density/SPEC.md` (v0.9) and metal changes in SPEC §13 on `experiments/e15-session-density/metal-run`.
+- Record: `experiments/e15-session-density/EXPERIMENTS.md` (source of truth), `experiments/e15-session-density/RESULTS-SUMMARY.md`.
+- Driver: `experiments/e15-session-density/driver/replay.go` (session draw, random start index, spread);
+  extractor: `experiments/e15-session-density/extract/extract.py`; rung record: `experiments/e15-session-density/analysis/record.py`.

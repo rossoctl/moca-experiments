@@ -1,7 +1,7 @@
 """Speaker notes for the summary deck (analysis/deck.py). One entry per slide key.
 
 Plain sentences, said aloud. Numbers come from out/tables and the results docs
-(EXPERIMENTS.md, RESULTS-METAL.md, e16/RESULTS.md); when a table changes, check
+(EXPERIMENTS.md, RESULTS-METAL.md, experiments/e16-low-duty/RESULTS.md); when a table changes, check
 the note that quotes it.
 """
 

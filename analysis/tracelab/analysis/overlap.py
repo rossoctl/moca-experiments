@@ -2,7 +2,7 @@
 """Expected concurrency of heavy calls when N sessions are replayed together
 (PROMPT §3, fifth bullet).
 
-Emulates the driver's draw (e15/driver/corpus.go Sampler, replay.go Run):
+Emulates the driver's draw (experiments/e15-session-density/driver/corpus.go Sampler, replay.go Run):
   - sessions with >= 3 calls, shuffled with a seeded PRNG, drawn without
     replacement (reshuffled on exhaustion);
   - per-user cap: a user already holding floor(0.15 * N) (min 1) live

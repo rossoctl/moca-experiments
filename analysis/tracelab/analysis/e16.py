@@ -3,7 +3,7 @@
 
 E16 replays the (1%, 2%] duty band of the E15 default corpus (point `lowduty`,
 456 sessions) on the E15 metal host, SBX against resident ∞, with physical
-memory as the only memory limit. Hypothesis (e16/SPEC.md §1, the user's): at
+memory as the only memory limit. Hypothesis (experiments/e16-low-duty/SPEC.md §1, the user's): at
 duty <= 2%, SBX holds more sessions than resident ∞. E16 is complete; every
 E16 row carries the e16 results commit (final).
 

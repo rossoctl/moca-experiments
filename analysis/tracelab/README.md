@@ -5,13 +5,13 @@ Analysis of experiments E15 and E16 (both complete), and of the TraceLab traces 
 E15 asks one question: on the same hardware, does SBX (a fresh Firecracker microVM for each shell
 command) hold more concurrent coding-agent sessions per host than resident microVMs (one VM kept
 per session)? A Go driver replays recorded Claude Code and Codex sessions from TraceLab, and each
-call runs a real command of its class. The design is `../../e15/SPEC.md` and the record is
-`../../e15/results/metal/RESULTS-METAL.md` (metal) and `../../e15/SPEC.md` (AWS preliminary), all in
+call runs a real command of its class. The design is `../../experiments/e15-session-density/SPEC.md` and the record is
+`../../experiments/e15-session-density/results/metal/RESULTS-METAL.md` (metal) and `../../experiments/e15-session-density/SPEC.md` (AWS preliminary), all in
 [rossoctl/moca-experiments](https://github.com/rossoctl/moca-experiments).
 
 E16 asks the same question for mostly idle sessions. Its hypothesis is: at a duty cycle of 2% or
 less, SBX holds more sessions than resident VMs. It replays the (1%, 2%] duty band of the E15
-corpus on the E15 metal host. Its spec is `../../e16/SPEC.md` and its record `../../e16/RESULTS.md`.
+corpus on the E15 metal host. Its spec is `../../experiments/e16-low-duty/SPEC.md` and its record `../../experiments/e16-low-duty/RESULTS.md`.
 
 The full write-up with figures is in [REPORT.md](REPORT.md). A 16-slide summary deck is
 [out/e15-e16-tracelab-summary.pptx](out/e15-e16-tracelab-summary.pptx).
@@ -93,7 +93,7 @@ hold tokens; the archives carry them, but the analysis does not read them.
    → [turns_shell_calls](out/tables/turns_shell_calls.md)
 
 10. **E16 (final @c8dba13): at 1.5% duty the arms do not separate; the hypothesis is falsified.**
-    Read three ways (`e16/RESULTS.md` order):
+    Read three ways (`experiments/e16-low-duty/RESULTS.md` order):
     - **Sealed:** SBX ≥ 1,024 (its sealed ladder's top) against resident ∞ 1,024. A tie, so the
       hypothesis "SBX holds more" is **falsified**.
     - **Post-seal SBX extension** (decided after seeing SBX's ladder): SBX ≥ 1,536 against

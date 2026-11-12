@@ -5,7 +5,7 @@ DuckDB (`a7bab286…`, CC BY 4.0, uw-syfi/TraceLab), and the run results from ro
 E15 AWS at `3c295c9` and E15 metal at `7a90a76`, E16 at `c8dba13`, all final, published as the
 `data-v1` and `data-v2` release archives and fetched by `scripts/fetch_results.sh`.
 Section references to `EXPERIMENTS.md` are to the pre-reorg E15 record; in this repo its content is
-in `../../e15/results/metal/RESULTS-METAL.md` and `../../e15/SPEC.md`. The AWS host is a 4-vCPU nested m8i.xlarge,
+in `../../experiments/e15-session-density/results/metal/RESULTS-METAL.md` and `../../experiments/e15-session-density/SPEC.md`. The AWS host is a 4-vCPU nested m8i.xlarge,
 so its `n_max` values are not capacity numbers (SPEC A4).
 
 ## 1. How idle are sessions?
@@ -147,7 +147,7 @@ the AWS ratio of 1.0. Our tables give the same n_max values.
 
 ## 8. E16: does SBX win when sessions are mostly idle?
 
-**Hypothesis** (the user's, `e16/SPEC.md` §1): when each session is busy at most 2% of the time,
+**Hypothesis** (the user's, `experiments/e16-low-duty/SPEC.md` §1): when each session is busy at most 2% of the time,
 SBX holds more concurrent sessions than resident VMs. The reasoning: a resident VM holds memory for
 its whole session, while SBX holds a VM only while a command runs. Lower duty raises both arms'
 latency limits, but leaves resident's memory per session unchanged, so at some duty cycle memory
@@ -163,7 +163,7 @@ disagree. Table: [e16_band](out/tables/e16_band.md).
 
 ![E16 ladder](out/figures/e16_ladder.png)
 
-**Verdict.** The hypothesis is falsified. `e16/RESULTS.md` reads the result three ways, and we keep
+**Verdict.** The hypothesis is falsified. `experiments/e16-low-duty/RESULTS.md` reads the result three ways, and we keep
 its order:
 
 | reading | SBX n_max | resident ∞ n_max | verdict |

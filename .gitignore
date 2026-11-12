@@ -6,15 +6,15 @@ __pycache__/
 # Raw per-run experiment output -- EXPERIMENTS.md/METAL-RUNBOOK.md carry the numbers that
 # matter; the underlying per-VM JSON/log files are throwaway rig artifacts, not evidence to
 # keep in git. (Carried over from the main repo's .gitignore when these scripts moved here.)
-microvm/e12-results/
-microvm/e13-results/
-microvm/e13-control-results/
-microvm/e13-telemetry/
-microvm/.results/
-microvm/.results-*/
+experiments/e10-e13-microvm/e12-results/
+experiments/e10-e13-microvm/e13-results/
+experiments/e10-e13-microvm/e13-control-results/
+experiments/e10-e13-microvm/e13-telemetry/
+experiments/e10-e13-microvm/.results/
+experiments/e10-e13-microvm/.results-*/
 
-# E2 writes each run's measured table here; experiments/RESULTS.md is the committed baseline.
-experiments/.results/
+# E2 writes each run's measured table here; experiments/e02-e05-harness/RESULTS.md is the committed baseline.
+experiments/e02-e05-harness/.results/
 .venv/
 
 # Raw per-run traces belong in release archives, not git (docs/CONVENTIONS.md).
