@@ -7,6 +7,8 @@ the sealed `predictions*.json`, and the analysis code. The raw traces are only n
 re-derive those summaries from scratch.
 
 They are published as release assets of this repository, one archive per experiment arm.
+E17's raw rung traces (from 2026-11-12) are not published yet: they have not been pulled from the experiment host
+and will arrive as `data-v2` once pulled. E17's derived results are in git under `e17/results/`.
 Archive paths are repo-relative, so extracting at the repo root puts every file back where
 the analysis scripts expect it.
 

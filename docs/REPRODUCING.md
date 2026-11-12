@@ -23,6 +23,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 python3 e16/analysis/results.py                 # regenerates e16/results/summary.json
 ```
 
+E17's derived results are in `e17/results/` (report `E17A-REPORT.md`, per-rung `latency.json` and
+`record-*.json`). Its raw rung traces are not published yet; they will be a `data-v2` archive.
+
 If a recomputed number differs from the committed one, the committed `RESULTS` file wins until
 the difference is explained; open an issue.
 

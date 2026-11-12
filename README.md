@@ -16,7 +16,7 @@ the steps to repeat it.
 | E15 | Sessions per host: SBX per-Exec microVMs vs resident microVMs, trace replay | done: resident holds as many or more on every host and point | [`e15/results/metal/RESULTS-METAL.md`](e15/results/metal/RESULTS-METAL.md), spec [`e15/SPEC.md`](e15/SPEC.md) |
 | E15b | Per-turn command bundling, SBX vs resident | spec approved, not built | [`e15/SPEC-bundled.md`](e15/SPEC-bundled.md) |
 | E16 | Does SBX beat resident at duty cycle ≤ 2%? | done: tie at the sealed point, hypothesis falsified | [`e16/RESULTS.md`](e16/RESULTS.md) |
-| E17 | Lease mode: does a warm guest with an idle timeout pay? | design approved, nothing built | [`e17/SPEC.md`](e17/SPEC.md) |
+| E17 | Lease mode: does a warm guest with an idle timeout pay? | E17a done: level 1 misses its import/grep bar (short commands gain ~90%); level 2 being built | [`e17/results/E17A-REPORT.md`](e17/results/E17A-REPORT.md), spec [`e17/SPEC.md`](e17/SPEC.md) |
 | E18 | Crash recovery latency on the Compose trial | done | [`e18/RESULTS.md`](e18/RESULTS.md) |
 
 ## Reproducing
