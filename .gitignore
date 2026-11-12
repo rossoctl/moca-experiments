@@ -29,3 +29,7 @@ experiments/.results/
 **/results/**/worker.log.gz
 **/results/**/warmcold.jsonl
 !**/testdata/**
+
+# tracelab fetches these from the data-v1/data-v2 releases (scripts/fetch_results.sh)
+analysis/tracelab/data/results/
+analysis/tracelab/data/corpora/
