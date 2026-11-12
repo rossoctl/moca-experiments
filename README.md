@@ -19,6 +19,11 @@ the steps to repeat it.
 | E17 | Lease mode: does a warm guest with an idle timeout pay? | E17a done: level 1 misses its import/grep bar (short commands gain ~90%); level 2 being built | [`e17/results/E17A-REPORT.md`](e17/results/E17A-REPORT.md), spec [`e17/SPEC.md`](e17/SPEC.md) |
 | E18 | Crash recovery latency on the Compose trial | done | [`e18/RESULTS.md`](e18/RESULTS.md) |
 
+Analysis: [`analysis/tracelab/`](analysis/tracelab/README.md) re-derives the E15 and E16 tables and
+figures from the published raw data, and holds the write-up ([`REPORT.md`](analysis/tracelab/REPORT.md))
+and the summary deck. Its [fetch script](analysis/tracelab/scripts/fetch_results.sh) verifies and
+unpacks the `data-v1` and `data-v2` archives.
+
 ## Reproducing
 
 [`docs/REPRODUCING.md`](docs/REPRODUCING.md) says what each experiment needs: cluster-free tests

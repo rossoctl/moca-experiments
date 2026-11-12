@@ -7,8 +7,9 @@ the sealed `predictions*.json`, and the analysis code. The raw traces are only n
 re-derive those summaries from scratch.
 
 They are published as release assets of this repository, one archive per experiment arm.
-E17's raw rung traces (from 2026-11-12) are not published yet: they have not been pulled from the experiment host
-and will arrive as `data-v2` once pulled. E17's derived results are in git under `e17/results/`.
+E17's raw rung traces (from 2026-11-12) are not published yet: they have not been pulled from the
+experiment host and will arrive as `data-v3` once pulled. E17's derived results are in git under
+`e17/results/`.
 Archive paths are repo-relative, so extracting at the repo root puts every file back where
 the analysis scripts expect it.
 
@@ -19,6 +20,20 @@ the analysis scripts expect it.
 | `moca-experiments-e16-sbx-raw.tar.gz` | 65 | 170 MB | `e16/results/sbx/` | `3fc449e171882cf1eabd43c0006226387b4c91ad3938c812f410c5dc2a35df81` |
 
 Release: `data-v1`. The file lists inside each archive are in `data/*.files`.
+
+### Analysis inputs (`data-v2`)
+
+The tracelab analysis (`analysis/tracelab/`) also needs the E15 AWS preliminary results and the
+replay corpora. They are not in git either; they are release `data-v2`:
+
+| Archive | Size | Extracts under | sha256 |
+|---|---|---|---|
+| `moca-experiments-tracelab-aws.tar.gz` | 11 MB | `analysis/tracelab/data/results/aws/` | `d07f2dac5801b84c2e346f9562bdf922227da087bb39d4b5e7dde519ef29f821` |
+| `moca-experiments-tracelab-corpora.tar.gz` | 42 MB | `analysis/tracelab/data/corpora/` | `5a9ab88b51a2493f73680edaa8a05fad8bb941c34bb1ea805db8eee649a5e5a7` |
+
+`analysis/tracelab/scripts/fetch_results.sh` downloads `data-v1` and `data-v2`, verifies every
+checksum, and unpacks them into `analysis/tracelab/data/`. That is the supported way to reproduce
+the analysis; `data/fetch-data.sh` covers the per-experiment archives only.
 
 ## Fetch
 
@@ -46,4 +61,4 @@ Files with the same names under `e15/results/calibration/` and `e16/results/cali
 ## Changing an archive
 
 Release assets can be replaced, so the checksum in this table is the source of truth. Never
-replace an asset without publishing a new tag (`data-v2`) and updating this table.
+replace an asset without publishing a new tag (`data-v3`) and updating this table.

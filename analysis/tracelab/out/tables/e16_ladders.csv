@@ -1,0 +1,3 @@
+arm,n_max,n_max_abs,first failed rung,rungs run,seed votes,B ms,N=1 overhead ms/call,source
+sbx,1536,1536,none yet,"256, 384, 512, 640, 768, 896, 1024, 1280, 1536",N=1024: held/held → held; N=1536: held/held → held,111.9,-16.5,final @c8dba13
+resident-inf,1024,1024,1280,"256, 384, 512, 640, 768, 896, 1024, 1280",N=896: held/failed/held → held; N=1024: failed/held/held → held; N=1280: failed/failed → failed,131.8,-73.6,final @c8dba13

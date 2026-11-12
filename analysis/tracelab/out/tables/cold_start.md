@@ -1,0 +1,9 @@
+| experiment | arm | N=1 overhead ms/call | B: N=1 excess p95 ms | read class median added ms | shell_read class median added ms | source |
+|---|---|---|---|---|---|---|
+| E15 metal default | sbx | 33.7 | 115.1 | 33.7 | -57.9 | final @7a90a76 |
+| E15 metal default | resident-inf | -27.8 | 126.2 | -12.9 | -106.6 | final @7a90a76 |
+| E15 metal default | resident-300 | -26.0 | 123.8 | -13.7 | -105.9 | final @7a90a76 |
+| E15 metal mem512 | sbx | 389.8 | 251.0 | 484.1 | 389.8 | final @7a90a76 |
+| E15 metal mem512 | resident-inf | -18.1 | 130.2 | 58.5 | -34.7 | final @7a90a76 |
+| E16 lowduty | sbx | -16.5 | 111.9 | 32.5 | -34.2 | final @c8dba13 |
+| E16 lowduty | resident-inf | -73.6 | 131.8 | -15.1 | -77.6 | final @c8dba13 |

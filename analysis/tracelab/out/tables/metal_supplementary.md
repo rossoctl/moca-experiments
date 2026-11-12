@@ -1,0 +1,5 @@
+| arm | n_max_1s (supp.) | n_max_cpu (supp.) | climb rungs (✕ = fails conditions 1-3) | source |
+|---|---|---|---|---|
+| sbx | 192 | 320 | 128, 160, 192, 256, 320, 384✕ | final @7a90a76 (supplementary, not sealed) |
+| resident-inf | 192 | 384 | 192, 256, 320, 384, 448✕ | final @7a90a76 (supplementary, not sealed) |
+| resident-300 | 192 | 448 | 192, 256, 320, 384, 448, 512✕ | final @7a90a76 (supplementary, not sealed) |

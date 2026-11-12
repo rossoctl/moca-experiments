@@ -16,3 +16,16 @@ microvm/.results-*/
 # E2 writes each run's measured table here; experiments/RESULTS.md is the committed baseline.
 experiments/.results/
 .venv/
+
+# Raw per-run traces belong in release archives, not git (docs/CONVENTIONS.md).
+# The small fixtures under */testdata/ and the calibration files already tracked stay
+# tracked; --force anything new that is genuinely small.
+**/results/**/calls.jsonl
+**/results/**/calls.jsonl.gz
+**/results/**/samples.jsonl
+**/results/**/samples.jsonl.gz
+**/results/**/sessions.jsonl
+**/results/**/driver-cpu.jsonl
+**/results/**/worker.log.gz
+**/results/**/warmcold.jsonl
+!**/testdata/**

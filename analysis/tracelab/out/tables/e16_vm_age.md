@@ -1,0 +1,52 @@
+| source | VM age min | median MiB | p95 MiB | VMs | source commit |
+|---|---|---|---|---|---|
+| E16 long rung (N=256, 3 h, 1.5% duty) | 0 | 61.9 | 172.4 | 1723 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 5 | 94.6 | 195.5 | 734 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 10 | 109.2 | 201.9 | 602 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 15 | 114.4 | 208.3 | 531 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 20 | 118.4 | 208.6 | 497 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 25 | 121.5 | 212.2 | 476 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 30 | 128.4 | 212.2 | 447 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 35 | 135.3 | 212.2 | 398 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 40 | 136.8 | 214.1 | 376 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 45 | 137.3 | 213.1 | 353 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 50 | 140.1 | 217.7 | 329 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 55 | 141.9 | 217.7 | 314 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 60 | 142.4 | 214.9 | 300 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 65 | 143.9 | 215.8 | 282 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 70 | 143.9 | 215.8 | 262 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 75 | 145.7 | 219.5 | 250 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 80 | 147.0 | 227.8 | 238 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 85 | 146.8 | 228.0 | 223 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 90 | 147.1 | 228.0 | 210 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 95 | 148.3 | 232.3 | 193 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 100 | 148.3 | 233.2 | 181 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 105 | 151.7 | 233.1 | 166 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 110 | 149.2 | 234.7 | 156 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 115 | 149.1 | 232.9 | 148 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 120 | 147.9 | 230.2 | 143 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 125 | 148.2 | 231.7 | 137 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 130 | 146.0 | 230.4 | 131 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 135 | 146.0 | 231.3 | 124 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 140 | 146.1 | 231.4 | 117 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 145 | 149.1 | 231.5 | 111 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 150 | 152.7 | 231.3 | 104 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 155 | 152.7 | 238.5 | 96 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 160 | 150.7 | 231.3 | 90 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 165 | 152.3 | 230.1 | 83 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 170 | 154.2 | 238.7 | 76 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 175 | 153.3 | 240.1 | 72 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 180 | 147.1 | 230.3 | 63 | final @c8dba13 |
+| E16 long rung (N=256, 3 h, 1.5% duty) | 185 | 146.9 | 220.0 | 49 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 0 | 54.7 | 142.1 | 3315 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 5 | 76.7 | 168.0 | 1712 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 10 | 91.9 | 179.9 | 1300 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 15 | 101.5 | 198.2 | 1056 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 20 | 113.9 | 199.5 | 917 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 25 | 117.1 | 200.9 | 760 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 30 | 118.1 | 202.9 | 618 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 35 | 126.9 | 216.6 | 323 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 40 | 131.2 | 209.1 | 269 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 45 | 131.2 | 212.2 | 221 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 50 | 126.7 | 203.1 | 166 | final @c8dba13 |
+| E15 metal ladder rungs (9.5% duty) | 55 | 166.4 | 168.0 | 4 | final @c8dba13 |

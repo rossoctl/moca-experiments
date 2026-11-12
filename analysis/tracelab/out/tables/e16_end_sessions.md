@@ -1,0 +1,19 @@
+| N | seed | run | end-sessions sent | ok | failed | N - 320 | failed window calls | holds | source |
+|---|---|---|---|---|---|---|---|---|---|
+| 256 | 1 | first | 856 | 856 | 0 | 0 | 0 | True | final @c8dba13 |
+| 384 | 1 | first | 1300 | 1236 | 64 | 64 | 0 | True | final @c8dba13 |
+| 512 | 1 | first | 1692 | 1500 | 192 | 192 | 0 | True | final @c8dba13 |
+| 512 | 1 | repeat | 1950 | 1759 | 191 | 192 | 0 | True | final @c8dba13 |
+| 640 | 1 | first | 2091 | 1771 | 320 | 320 | 0 | True | final @c8dba13 |
+| 640 | 1 | repeat | 2452 | 2132 | 320 | 320 | 0 | True | final @c8dba13 |
+| 768 | 1 | first | 2504 | 2056 | 448 | 448 | 0 | True | final @c8dba13 |
+| 896 | 1 | first | 2921 | 2345 | 576 | 576 | 0 | True | final @c8dba13 |
+| 896 | 2 | first | 2970 | 2227 | 743 | 576 | 9 | False | final @c8dba13 |
+| 896 | 3 | first | 3018 | 2292 | 726 | 576 | 14 | False | final @c8dba13 |
+| 896 | 3 | repeat | 3493 | 2918 | 575 | 576 | 0 | True | final @c8dba13 |
+| 1024 | 1 | first | 3348 | 2443 | 905 | 704 | 14 | False | final @c8dba13 |
+| 1024 | 2 | first | 3421 | 2717 | 704 | 704 | 0 | True | final @c8dba13 |
+| 1024 | 3 | first | 3435 | 2733 | 702 | 704 | 0 | True | final @c8dba13 |
+| 1280 | 1 | first | 4164 | 3037 | 1127 | 960 | 24 | False | final @c8dba13 |
+| 1280 | 2 | first | 4255 | 3156 | 1099 | 960 | 16 | False | final @c8dba13 |
+| 1280 | 2 | repeat | 4970 | 3853 | 1117 | 960 | 13 | False | final @c8dba13 |

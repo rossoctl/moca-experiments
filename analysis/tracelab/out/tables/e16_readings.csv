@@ -1,0 +1,4 @@
+reading,SBX n_max,resident ∞ n_max,verdict,note,source
+sealed (SPEC §7.2),≥ 1024,1024,tie → FALSIFIED,sealed ladders; SBX censored at its sealed top,final @c8dba13
+post-seal SBX extension,≥ 1536,1024,SBX ahead — not a sealed verdict,resident's limit is the run-end burst (moca#705); no-wedge re-judges hold,final @c8dba13
+"supplementary, staggered end-sessions",≥ 1536,≥ 1536,no separation,run-end burst removed; every rung valid; both censored at 1536,final @c8dba13

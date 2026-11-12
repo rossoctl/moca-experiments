@@ -1,0 +1,4 @@
+| corpus | sessions | users | top user share % | occupied % | work % | calls/s per session | mean span h | sha256 |
+|---|---|---|---|---|---|---|---|---|
+| E15 default | 4147 | 52 |  | 9.54 | 8.21 | 0.0174 | 2.05 | 24050ae8… |
+| E16 lowduty (1%, 2%] | 456 | 40 | 24.3 | 1.49 | 1.52 | 0.0112 | 2.49 | 0790d748… |

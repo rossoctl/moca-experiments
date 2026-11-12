@@ -1,0 +1,15 @@
+| experiment | arm | rung | N | latency % of limit | host CPU p95 % | memory used % | disk read % of max | admission % of RAM (default rule, not binding) | concurrent Execs % of 320 | closest to its ceiling | why it failed | source |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| E15 metal default | resident-300 | last hold | 128 | 90.3 | 14.4 | 3.5 | 0.4 | 24.0 | 7.2 | latency |  | final @7a90a76 |
+| E15 metal default | resident-300 | first failure | 160 | 119.9 | 19.3 | 3.9 | 0.4 | 28.7 | 8.8 | latency | latency tail | final @7a90a76 |
+| E15 metal default | resident-inf | last hold | 128 | 48.4 | 11.2 | 4.7 | 0.4 | 35.0 | 5.6 | latency |  | final @7a90a76 |
+| E15 metal default | resident-inf | first failure | 160 | 119.6 | 17.2 | 5.5 | 0.4 | 43.7 | 9.1 | latency | latency tail | final @7a90a76 |
+| E15 metal default | sbx | last hold | 80 | 78.1 | 11.9 | 2.0 | 2.0 | 28.7 | 5.3 | latency |  | final @7a90a76 |
+| E15 metal default | sbx | first failure | 96 | 125.4 | 12.6 | 2.0 | 2.0 | 29.0 | 5.9 | latency | latency tail | final @7a90a76 |
+| E15 metal mem512 | resident-inf | last hold | 8 | 24.1 | 1.3 | 2.9 | 0.0 | 2.2 | 0.9 | latency |  | final @7a90a76 |
+| E15 metal mem512 | resident-inf | first failure | 16 | 118.1 | 4.2 | 4.3 | 0.0 | 4.4 | 1.9 | latency | latency tail | final @7a90a76 |
+| E15 metal mem512 | sbx | last hold | 8 | 40.5 | 1.7 | 2.1 | 0.6 | 2.7 | 0.9 | latency |  | final @7a90a76 |
+| E15 metal mem512 | sbx | first failure | 16 | 250.7 | 4.3 | 2.7 | 16.1 | 6.0 | 1.9 | latency | latency tail | final @7a90a76 |
+| E16 lowduty | resident-inf | last hold | 1024 | 54.0 | 20.0 | 23.8 | 0.7 | 279.8 | 9.4 | latency |  | final @c8dba13 |
+| E16 lowduty | resident-inf | first failure | 1280 | 62.9 | 23.6 | 28.9 | 0.7 | 349.7 | 10.6 | latency | failed calls (24) | final @c8dba13 |
+| E16 lowduty | sbx | last hold | 1536 | 86.3 | 28.3 | 3.3 | 12.5 | 282.5 | 14.4 | latency |  | final @c8dba13 |

@@ -1,0 +1,18 @@
+| provider | shell calls in turn (8 = 8+) | turns | calls |
+|---|---|---|---|
+| claude | 1 | 130007 | 130007 |
+| claude | 2 | 6290 | 12580 |
+| claude | 3 | 890 | 2670 |
+| claude | 4 | 169 | 676 |
+| claude | 5 | 33 | 165 |
+| claude | 6 | 15 | 90 |
+| claude | 7 | 11 | 77 |
+| claude | 8 | 27 | 282 |
+| codex | 1 | 87534 | 87534 |
+| codex | 2 | 19059 | 38118 |
+| codex | 3 | 23404 | 70212 |
+| codex | 4 | 11528 | 46112 |
+| codex | 5 | 1484 | 7420 |
+| codex | 6 | 681 | 4086 |
+| codex | 7 | 99 | 693 |
+| codex | 8 | 132 | 1226 |
