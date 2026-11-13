@@ -30,9 +30,14 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
+ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))            # rig staging: /srv/e15/src
+if not os.path.isdir(os.path.join(ROOT, "e15", "analysis")):      # this repo: one level deeper
+    ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(ROOT, "e15", "analysis"))
+_E15 = os.path.join(ROOT, "experiments", "e15-session-density", "analysis")
+if not os.path.isdir(_E15):
+    _E15 = os.path.join(ROOT, "e15", "analysis")  # the rig's staged layout (/srv/e15/src)
+sys.path.insert(0, _E15)
 import holds as H  # noqa: E402
 import warmcold as W  # noqa: E402
 

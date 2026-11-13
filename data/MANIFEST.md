@@ -7,8 +7,7 @@ the sealed `predictions*.json`, and the analysis code. The raw traces are only n
 re-derive those summaries from scratch.
 
 They are published as release assets of this repository, one archive per experiment arm.
-E17's raw rung traces (from 2026-11-12) are not published yet: they have not been pulled from the
-experiment host and will arrive as `data-v3` once pulled. E17's derived results are in git under
+E17's raw rung traces are published as `data-v3` (below). E17's derived results are in git under
 `experiments/e17-lease/results/`.
 The `data-v1` and `data-v2` archives were built before the 2026-11 experiments/ reorganization,
 so their members still use the old paths (`e15/results/...`, `e16/results/...`). The fetch
@@ -21,6 +20,23 @@ scripts map them to the current layout, shown in the **Extracts under** column.
 | `moca-experiments-e16-sbx-raw.tar.gz` | 65 | 170 MB | `experiments/e16-low-duty/results/sbx/` | `3fc449e171882cf1eabd43c0006226387b4c91ad3938c812f410c5dc2a35df81` |
 
 Release: `data-v1`. The file lists inside each archive are in `data/*.files`.
+
+### E17 rung traces (`data-v3`)
+
+The E17a pycache rungs, pulled from the rig's `/srv/e15/runs/pycache` tree (2026-11-13). One
+archive; `calls.jsonl`, `samples.jsonl` and `worker.log` are gzipped as in the E16 archives. The
+rung directories keep the rig's layout (`<arm>/<rung>/`), and the committed `params.json` files
+under `results/e17a/` and `results/calibration/` reference these runs by their rig paths.
+`worker.raw.log` (the same log pre-normalization), `driver.log` and `relay.before-restart.log`
+(empty stubs) are not included. Superseded rungs (`_v03-*`, `_cap30k-*`, `_untuned-*`,
+`.prev-*`) are included: the committed calibration notes keep their records.
+
+| Archive | Files | Size | Extracts under | sha256 |
+|---|---|---|---|---|
+| `moca-experiments-e17-pycache-raw.tar.gz` | 879 | 5.5 MB | `experiments/e17-lease/results/raw/pycache/` | `773b8391594b3c6bd63d7cd887422a7988c9aeea5b6c47da13face7b8da36329` |
+
+Example: `python3 experiments/e17-lease/analysis/latency_report.py experiments/e17-lease/results/raw/pycache/*/N128 --out /tmp/latency`
+regenerates the committed `results/e17a/n128/latency.json` inputs from the raw rungs.
 
 ### Analysis inputs (`data-v2`)
 

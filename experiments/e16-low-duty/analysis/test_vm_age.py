@@ -12,7 +12,7 @@ import vm_age as V
 MiB = 1 << 20
 T0 = 1_800_000_000.0
 HERE = os.path.dirname(os.path.abspath(__file__))
-E15_RI = os.path.join(HERE, "..", "..", "e15", "results", "metal", "default", "resident-inf")
+E15_RI = os.path.join(HERE, "..", "..", "..", "experiments", "e15-session-density", "results", "metal", "default", "resident-inf")
 
 
 def stamp(t):

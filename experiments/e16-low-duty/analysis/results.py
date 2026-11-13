@@ -17,7 +17,12 @@ import json
 import os
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-RES = os.path.join(ROOT, "e16", "results")
+if not os.path.isdir(os.path.join(ROOT, "e15", "analysis")):      # this repo: one level deeper
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+_E16 = os.path.join(ROOT, "experiments", "e16-low-duty")
+if not os.path.isdir(_E16):
+    _E16 = os.path.join(ROOT, "e16")  # the rig's staged layout (/srv/e15/src)
+RES = os.path.join(_E16, "results")
 LADDER = [1, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 128, 160, 192, 256, 320, 384, 448, 512, 576, 640, 704, 768, 896, 1024, 1280, 1536]
 GiB = float(1 << 30)
 
@@ -199,7 +204,7 @@ def supp(a):
 
 
 def main():
-    pred = jl(os.path.join(ROOT, "e16", "predictions.json"))
+    pred = jl(os.path.join(_E16, "predictions.json"))
     sbx, res = arm("sbx"), arm("resident-inf")
     ctl = [rung(d) for d in sorted(glob.glob(os.path.join(RES, "control", "N*"))) if os.path.exists(os.path.join(d, "record.json"))]
     # The sealed verdict (SPEC 7.2) uses the sealed ladders only: SBX's rungs above 1024 are the

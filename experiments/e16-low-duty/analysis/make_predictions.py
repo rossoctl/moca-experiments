@@ -26,9 +26,17 @@ import math
 import os
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+if not os.path.isdir(os.path.join(ROOT, "e15", "analysis")):      # this repo: one level deeper
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
 LADDER = [1, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 128, 160, 192, 256, 320, 384, 448, 512, 576, 640, 704, 768, 896, 1024]
-CAL = os.path.join(ROOT, "e16", "results", "calibration")
-E15 = os.path.join(ROOT, "e15", "results", "metal", "default")
+_E16 = os.path.join(ROOT, "experiments", "e16-low-duty")
+if not os.path.isdir(_E16):
+    _E16 = os.path.join(ROOT, "e16")  # the rig's staged layout (/srv/e15/src)
+_E15 = os.path.join(ROOT, "experiments", "e15-session-density")
+if not os.path.isdir(_E15):
+    _E15 = os.path.join(ROOT, "e15")  # the rig's staged layout (/srv/e15/src)
+CAL = os.path.join(_E16, "results", "calibration")
+E15 = os.path.join(_E15, "results", "metal", "default")
 
 
 def jload(p):
@@ -127,12 +135,12 @@ def arm_model(arm, e15_nmax, e15_stop):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.path.join(ROOT, "e16", "predictions.json"))
+    ap.add_argument("--out", default=os.path.join(_E16, "predictions.json"))
     a = ap.parse_args()
     sbx = arm_model("sbx", 80, 96)
     res = arm_model("resident-inf", 128, 160)
-    lr = jload(os.path.join(ROOT, "e16", "results", "vm-age", "long-rung.json"))
-    long_d = os.path.join(ROOT, "e16", "results", "resident-inf", "N256-long")
+    lr = jload(os.path.join(_E16, "results", "vm-age", "long-rung.json"))
+    long_d = os.path.join(_E16, "results", "resident-inf", "N256-long")
     ll = [s for s in samples(long_d) if s.get("t", -1) >= 600]
     slice_max = max(s["slice_mem_bytes"] for s in ll) / float(1 << 20)
     per_vm_slice = slice_max / 256.0
