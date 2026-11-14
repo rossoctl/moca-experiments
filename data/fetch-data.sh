@@ -19,14 +19,15 @@ sha_of() {
     e16-resident-inf) echo 01719466c3716608e9db65a2dff068dc7c9f6965ebbd336ab825283eae7eb311 ;;
     e16-sbx) echo 3fc449e171882cf1eabd43c0006226387b4c91ad3938c812f410c5dc2a35df81 ;;
     e17-pycache) echo 773b8391594b3c6bd63d7cd887422a7988c9aeea5b6c47da13face7b8da36329 ;;
-    baseline) echo 5001b3e705e2e9386a115dea4c6c97af781d591528d249addb153636e2e66fb3 ;;
+    baseline) echo cb878d9d4eca74189b2efc44413b586bb69813980b16f7ceb32f3923db6c223e ;;
     *) return 1 ;;
   esac
 }
 tag_of() {
   case "$1" in
     e15-metal|e16-resident-inf|e16-sbx) echo data-v1 ;;
-    e17-pycache|baseline) echo data-v3 ;;
+    e17-pycache) echo data-v3 ;;
+    baseline) echo data-v4 ;;
     *) return 1 ;;
   esac
 }

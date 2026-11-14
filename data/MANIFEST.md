@@ -42,7 +42,7 @@ The E17 pycache corpora (`corpus.jsonl` for `pycache` and `pycache-low`, the byt
 predictions ran against, sha256 in `results/bringup/artifacts`) are in the `baseline` archive
 under `experiments/e17-lease/results/raw/corpora/`.
 
-### Baseline and auxiliary rungs (`data-v3`)
+### Baseline and auxiliary rungs (`data-v4`)
 
 The raw halves of the rungs whose small files were committed but whose raw files were not: the
 E15 metal and E16 lowduty calibration seeds and probes, the N8 calibration and control rungs,
@@ -54,7 +54,12 @@ the git-ignored `results/raw/` roots. 103 MB uncompressed.
 
 | Archive | Files | Size | Extracts under | sha256 |
 |---|---|---|---|---|
-| `moca-experiments-baseline-raw.tar.gz` | 1101 | 6.9 MB | repo root (members carry full paths) | `5001b3e705e2e9386a115dea4c6c97af781d591528d249addb153636e2e66fb3` |
+| `moca-experiments-baseline-raw.tar.gz` | 1101 | 6.6 MB | repo root (members carry full paths) | `cb878d9d4eca74189b2efc44413b586bb69813980b16f7ceb32f3923db6c223e` |
+
+`data-v4` supersedes a `baseline` asset briefly published on `data-v3` (2026-11-13, under an
+hour) whose raw-root member paths were wrong: every file under a `results/raw/` root was wrapped
+in an extra directory named after the file itself. The slot paths (baseline/, calibration/) were
+correct on both.
 
 ### Analysis inputs (`data-v2`)
 
