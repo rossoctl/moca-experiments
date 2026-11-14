@@ -36,3 +36,4 @@ analysis/tracelab/data/corpora/
 
 # The fetched raw rung trees (data-v3 and later) are archive content; never commit them.
 **/results/raw/
+**/results/**/raw/

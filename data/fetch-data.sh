@@ -5,7 +5,7 @@
 # The data-v1 archives were built before the 2026-11 experiments/ reorganization, so their
 # members still carry the old paths (e15/results/..., e16/results/...); dest_of/member_of map
 # them. data-v3 already uses the new layout.
-#   data/fetch-data.sh [name ...]     names: e15-metal e16-resident-inf e16-sbx e17-pycache (default: all)
+#   data/fetch-data.sh [name ...]     names: e15-metal e16-resident-inf e16-sbx e17-pycache baseline (default: all)
 set -euo pipefail
 
 REPO="${MOCA_EXPERIMENTS_REPO:-rossoctl/moca-experiments}"
@@ -19,13 +19,14 @@ sha_of() {
     e16-resident-inf) echo 01719466c3716608e9db65a2dff068dc7c9f6965ebbd336ab825283eae7eb311 ;;
     e16-sbx) echo 3fc449e171882cf1eabd43c0006226387b4c91ad3938c812f410c5dc2a35df81 ;;
     e17-pycache) echo 773b8391594b3c6bd63d7cd887422a7988c9aeea5b6c47da13face7b8da36329 ;;
+    baseline) echo 5001b3e705e2e9386a115dea4c6c97af781d591528d249addb153636e2e66fb3 ;;
     *) return 1 ;;
   esac
 }
 tag_of() {
   case "$1" in
     e15-metal|e16-resident-inf|e16-sbx) echo data-v1 ;;
-    e17-pycache) echo data-v3 ;;
+    e17-pycache|baseline) echo data-v3 ;;
     *) return 1 ;;
   esac
 }
@@ -35,6 +36,7 @@ dest_of() {
     e16-resident-inf) echo experiments/e16-low-duty/results/resident-inf ;;
     e16-sbx) echo experiments/e16-low-duty/results/sbx ;;
     e17-pycache) echo experiments/e17-lease/results/raw/pycache ;;
+    baseline) echo . ;;
     *) return 1 ;;
   esac
 }
@@ -44,6 +46,7 @@ member_of() {
     e16-resident-inf) echo e16/results/resident-inf ;;
     e16-sbx) echo e16/results/sbx ;;
     e17-pycache) echo experiments/e17-lease/results/raw/pycache ;;
+    baseline) echo . ;;
     *) return 1 ;;
   esac
 }
@@ -51,7 +54,7 @@ member_of() {
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
 names=("$@")
-[ ${#names[@]} -gt 0 ] || names=(e15-metal e16-resident-inf e16-sbx e17-pycache)
+[ ${#names[@]} -gt 0 ] || names=(e15-metal e16-resident-inf e16-sbx e17-pycache baseline)
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -70,7 +73,13 @@ for n in "${names[@]}"; do
   mkdir -p "$tmp/x"
   tar -xzf "$tmp/$f" -C "$tmp/x"
   dest="$(dest_of "$n")"; member="$(member_of "$n")"
-  mkdir -p "$ROOT/$dest"
-  cp -R "$tmp/x/$member/." "$ROOT/$dest/"
-  echo "extracted $n to $dest"
+  if [ "$member" = "." ]; then
+    # members already carry full repo-relative paths (baseline)
+    tar -xzf "$tmp/$f" -C "$ROOT"
+    echo "extracted $n at the repo root"
+  else
+    mkdir -p "$ROOT/$dest"
+    cp -R "$tmp/x/$member/." "$ROOT/$dest/"
+    echo "extracted $n to $dest"
+  fi
 done

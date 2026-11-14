@@ -1,0 +1,56 @@
+{
+  "sessions": 400,
+  "seed": 1,
+  "duty_target": 0.015,
+  "duty_achieved": {
+    "mean": 0.01499999998320127,
+    "median": 0.015000000191813898,
+    "min": 0.014999997890047457,
+    "max": 0.015000001924044125
+  },
+  "duty_definition": "occupied / span on the replay timeline (e15/extract/extract.py:timeline)",
+  "calls_per_class": {
+    "py_analyze": 3200,
+    "py_grep": 1600,
+    "py_import": 1600,
+    "py_short": 5662,
+    "py_test": 1600
+  },
+  "min_turns": 4,
+  "durations_ms": {
+    "py_analyze": 15421,
+    "py_test": 61434,
+    "py_import": 2000,
+    "py_grep": 2200,
+    "py_short": 300
+  },
+  "durations_from": {
+    "file": "durations-v0.4.json",
+    "sha256": "675db466ea8e859a8129be91db223f9f6e65172c87563ba249d6b065e4a45d3e"
+  },
+  "turns": {
+    "mean": 4.0,
+    "max": 4,
+    "sessions_extended": 0
+  },
+  "turns_per_session": {
+    "min": 4,
+    "median": 4.0,
+    "max": 4
+  },
+  "span_min": {
+    "min": 431.44891666666666,
+    "median": 433.4489,
+    "max": 435.44891666666666
+  },
+  "gap_source": "corpus.jsonl",
+  "gap_source_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+  "gap_pool": 529986,
+  "H_s": 1800,
+  "exclude": null,
+  "corpus_sha256": "8c98f45ba893818275f7a8db9b7c7bfa9aba92b5e76bee0b97856757f7b4e218",
+  "table": {
+    "occupied_pct": 1.4999999983179568,
+    "mean_span_min": 433.50055604166664
+  }
+}

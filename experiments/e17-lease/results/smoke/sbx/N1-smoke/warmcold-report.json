@@ -1,0 +1,15 @@
+{
+  "calls": 3,
+  "cold": 3,
+  "cold_by_reason": {
+    "first": 1,
+    "vm-changed": 2
+  },
+  "dropped_aborted_end_session": [],
+  "dropped_end_session_execs": [],
+  "log_keys_without_calls": [],
+  "unknown": 0,
+  "unknown_by_reason": {},
+  "unknown_keys": {},
+  "warm": 0
+}

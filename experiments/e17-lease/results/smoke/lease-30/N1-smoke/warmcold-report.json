@@ -1,0 +1,22 @@
+{
+  "calls": 3,
+  "cold": 2,
+  "cold_by_reason": {
+    "first": 1,
+    "idle-destroy": 1
+  },
+  "dropped_aborted_end_session": [],
+  "dropped_end_session_execs": [
+    {
+      "reason": "no-vm-no-error",
+      "req": 1059001496240132,
+      "session": "e15-pycache-lease-30-n1-smoke-1794405844-0-0",
+      "vm": null
+    }
+  ],
+  "log_keys_without_calls": [],
+  "unknown": 0,
+  "unknown_by_reason": {},
+  "unknown_keys": {},
+  "warm": 1
+}

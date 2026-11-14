@@ -38,6 +38,24 @@ under `results/e17a/` and `results/calibration/` reference these runs by their r
 Example: `python3 experiments/e17-lease/analysis/latency_report.py experiments/e17-lease/results/raw/pycache/*/N128 --out /tmp/latency`
 regenerates the committed `results/e17a/n128/latency.json` inputs from the raw rungs.
 
+The E17 pycache corpora (`corpus.jsonl` for `pycache` and `pycache-low`, the bytes the sealed
+predictions ran against, sha256 in `results/bringup/artifacts`) are in the `baseline` archive
+under `experiments/e17-lease/results/raw/corpora/`.
+
+### Baseline and auxiliary rungs (`data-v3`)
+
+The raw halves of the rungs whose small files were committed but whose raw files were not: the
+E15 metal and E16 lowduty calibration seeds and probes, the N8 calibration and control rungs,
+E15's initial smoke rungs, the superseded `_aborted-*` rungs named in the committed ladder
+records, the per-class `probe-corpora` inputs, the E16 ladder-assembly working dirs, and the
+E15 rig manifest. Baseline-slot rungs extract beside their committed `record.json` under
+`results/metal/baseline/` and `results/calibration/`; everything with no git slot extracts under
+the git-ignored `results/raw/` roots. 103 MB uncompressed.
+
+| Archive | Files | Size | Extracts under | sha256 |
+|---|---|---|---|---|
+| `moca-experiments-baseline-raw.tar.gz` | 1101 | 6.9 MB | repo root (members carry full paths) | `5001b3e705e2e9386a115dea4c6c97af781d591528d249addb153636e2e66fb3` |
+
 ### Analysis inputs (`data-v2`)
 
 The tracelab analysis (`analysis/tracelab/`) also needs the E15 AWS preliminary results and the
