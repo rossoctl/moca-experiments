@@ -191,6 +191,9 @@ func (r *Refresher) Token() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	r.tok, r.minted = tok, t
+	// The token's exp is iat (whole seconds, floored) + TTL, so the clock the 30% is measured on
+	// starts at the floored second: on a short TTL the unfloored mint time would let a token be
+	// reused up to a second after its exp.
+	r.tok, r.minted = tok, t.Truncate(time.Second)
 	return tok, nil
 }

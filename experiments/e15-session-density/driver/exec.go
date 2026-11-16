@@ -62,6 +62,9 @@ type execResult struct {
 	cause  string // "" when the Exec reached End; else one of the failure causes above
 	msg    string
 	stderr []byte // the last stderrTailMax bytes of the Exec's stderr (the joined script's marker)
+	// events are the LeaseEvents the stream carried, in order, kept on every outcome: a notice is
+	// acknowledged once it is queued on the stream, so a failed call may have consumed one.
+	events []leaseEvent
 }
 
 // stderrTailMax bounds the stderr kept per Exec: enough for the failure marker after any noise.
@@ -124,7 +127,10 @@ func execOne(ctx context.Context, client pb.SandboxExecClient, sandboxID string,
 			break
 		}
 		if err != nil {
-			return execResult{exit: res.exit, cause: rpcCause(err), msg: err.Error(), stderr: res.stderr}
+			return execResult{exit: res.exit, cause: rpcCause(err), msg: err.Error(), stderr: res.stderr, events: res.events}
+		}
+		if l := ev.GetLease(); l != nil {
+			res.events = append(res.events, eventOf(l))
 		}
 		if ch := ev.GetChunk(); ch != nil && ch.GetStream() == pb.Stream_STREAM_STDERR {
 			res.stderr = appendTail(res.stderr, ch.GetData())

@@ -45,6 +45,11 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 		runID     = fs.String("run-id", "", "run identifier, part of every workspace_key")
 		out       = fs.String("out", "", "output directory")
 		scanCmd   = fs.String("scan-cmd", "", "mem512: a command run ONCE at the start of every call of a --scan-classes class (exit 89 if it fails); default off")
+		leaseMode = fs.Bool("lease-mode", false, "E17b: send LeaseControl set_mode before each session's first Exec, authenticate with per-session sandbox tokens, record LeaseEvents, sweep lease status at the end (default off: the E15 driver)")
+		tokenKey  = fs.String("token-key", "", "with --lease-mode: Ed25519 private key (PKCS#8 PEM) the relay's SH_SANDBOX_TOKEN_PUBLIC_KEYS lists")
+		idleTmoS  = fs.Int("idle-timeout-s", 0, "with --lease-mode: the lease idle timeout, seconds (token claim idle_timeout_s); required, >= 1")
+		tokenWrk  = fs.String("token-wrk", "e15", "with --lease-mode: the worker's SANDBOX_ID (token claim wrk); must equal --sandbox-id")
+		tokenIss  = fs.String("token-iss", "", "with --lease-mode: the token issuer, equal to the relay's SH_SANDBOX_TOKEN_ISSUER (required, no default)")
 		scanCls   = fs.String("scan-classes", "", "mem512: comma-separated classes whose calls carry --scan-cmd")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -55,7 +60,26 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 		return code
 	}
 	token := getenv("MOCA_RELAY_EXEC_TOKEN")
-	if token == "" {
+	var lease *LeaseConfig
+	if *leaseMode {
+		// Sandbox tokens replace the worker credential: the relay's sandbox path refuses it.
+		switch {
+		case *tokenIss == "":
+			return fail(2, "--token-iss is required with --lease-mode (it must equal the relay's SH_SANDBOX_TOKEN_ISSUER)")
+		case *tokenKey == "":
+			return fail(2, "--token-key is required with --lease-mode")
+		case *idleTmoS < 1:
+			return fail(2, "--idle-timeout-s >= 1 is required with --lease-mode")
+		case *tokenWrk != *sandboxID:
+			return fail(2, "--token-wrk %q must equal --sandbox-id %q: the relay requires ExecRequest.sandbox_id == the token's wrk", *tokenWrk, *sandboxID)
+		}
+		k, kerr := LoadTokenKey(*tokenKey)
+		if kerr != nil {
+			return fail(2, "loading --token-key: %v", kerr)
+		}
+		lease = &LeaseConfig{Key: k, Iss: *tokenIss, Wrk: *tokenWrk, IdleTimeoutS: *idleTmoS}
+	}
+	if token == "" && lease == nil {
 		return fail(2, "MOCA_RELAY_EXEC_TOKEN is not set: the relay refuses SandboxExec without the worker credential")
 	}
 	if *corpus == "" || *library == "" || *runID == "" || *out == "" || *n < 1 {
@@ -90,6 +114,9 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 		return f
 	}
 	rec := NewRecorder(open("calls.jsonl"), open("sessions.jsonl"), open("driver-cpu.jsonl"))
+	if lease != nil {
+		rec.SetLeaseTail(open("lease-tail.jsonl"))
+	}
 	if err != nil {
 		return fail(1, "opening outputs: %v", err)
 	}
@@ -117,7 +144,7 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 	r, err := NewReplayer(Config{
 		N: *n, Seed: *seed, UserCap: *userCap,
 		Warmup: time.Duration(*warmupS) * time.Second, Window: time.Duration(*windowS) * time.Second,
-		Spread: time.Duration(*spreadS) * time.Second, Grace: time.Duration(*graceS) * time.Second, EndSessionExec: *endSess, EndSessionDefer: *endDefer, EndSessionRate: *endRate, StartAtZero: *startZero, MaxSessions: *maxSess, Scan: scan, SandboxID: *sandboxID, RunID: *runID, Token: token,
+		Spread: time.Duration(*spreadS) * time.Second, Grace: time.Duration(*graceS) * time.Second, EndSessionExec: *endSess, EndSessionDefer: *endDefer, EndSessionRate: *endRate, StartAtZero: *startZero, MaxSessions: *maxSess, Scan: scan, SandboxID: *sandboxID, RunID: *runID, Token: token, Lease: lease,
 	}, ss, lib, pb.NewSandboxExecClient(cc), rec)
 	if err != nil {
 		_ = closeAll()
@@ -132,6 +159,9 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 		return fail(1, "aborting run: the corpus cannot fill N=%d under the per-user cap %.2f: %v", *n, *userCap, runErr)
 	case runErr != nil:
 		return fail(1, "run aborted: %v", runErr)
+	}
+	if n := r.NotLeaseSessions(); n > 0 {
+		return fail(1, "%d session(s) not_lease: the first call carried no lease start event, so it ran outside a lease; this rung is not a lease measurement", n)
 	}
 	return 0
 }

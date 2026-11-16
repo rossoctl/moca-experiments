@@ -36,6 +36,12 @@ type callRecord struct {
 	FailedRC     *int    `json:"failed_rc,omitempty"`   // that step's own exit status (128+sig when killed), from the script's stderr marker
 	InWindow     bool    `json:"in_window"`
 	Msg          string  `json:"msg,omitempty"`
+	// Lease mode only (omitted otherwise): every LeaseEvent the call's stream carried that the
+	// session had not recorded yet (failed calls too); the session's first call; and, on every
+	// row of a session whose first call carried no start event, not_lease.
+	LeaseEvents []leaseEvent `json:"lease_events,omitempty"`
+	FirstLease  bool         `json:"first_lease,omitempty"`
+	NotLease    bool         `json:"not_lease,omitempty"`
 }
 
 // sessionRecord is one sessions.jsonl line, over the session's in-window calls only.
@@ -105,6 +111,7 @@ func (j *jsonl) write(v any) error {
 // Recorder holds one shared buffered writer per output file.
 type Recorder struct {
 	calls, sessions, cpu *jsonl
+	leaseTail            *jsonl // lease mode only; nil otherwise
 	errMu                sync.Mutex
 	err                  error
 }
@@ -130,10 +137,25 @@ func (r *Recorder) CPU(c cpuRecord)         { r.keep(r.cpu.write(c)) }
 func (r *Recorder) CPUHeader(h cpuHeader)   { r.keep(r.cpu.write(h)) }
 func (r *Recorder) CPUFooter(f cpuFooter)   { r.keep(r.cpu.write(f)) }
 
+// SetLeaseTail attaches lease-tail.jsonl's writer (lease mode).
+func (r *Recorder) SetLeaseTail(w io.Writer) {
+	r.leaseTail = &jsonl{w: bufio.NewWriterSize(w, bufSize)}
+}
+
+// LeaseTail writes one end-of-run status row; without SetLeaseTail it is dropped.
+func (r *Recorder) LeaseTail(row leaseTailRow) {
+	if r.leaseTail != nil {
+		r.keep(r.leaseTail.write(row))
+	}
+}
+
 // Flush writes out every buffer and returns the first write error seen during the run.
 func (r *Recorder) Flush() error {
 	var errs []error
-	for _, j := range []*jsonl{r.calls, r.sessions, r.cpu} {
+	for _, j := range []*jsonl{r.calls, r.sessions, r.cpu, r.leaseTail} {
+		if j == nil {
+			continue
+		}
 		j.mu.Lock()
 		errs = append(errs, j.w.Flush())
 		j.mu.Unlock()

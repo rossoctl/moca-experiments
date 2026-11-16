@@ -49,6 +49,10 @@ type Config struct {
 	SandboxID string
 	RunID     string
 	Token     string
+	// Lease (E17b), nil = off, and then nothing below differs from the E15 driver: each session
+	// sends set_mode before its first Exec, authenticates with its own sandbox token (Token is
+	// unused), records LeaseEvents, sends no end-session Exec, and is swept at the end.
+	Lease *LeaseConfig
 }
 
 // Replayer holds a population of N sessions, closed-loop inside each session (SPEC §3).
@@ -72,6 +76,9 @@ type Replayer struct {
 	deferred                  []deferredEnd    // EndSessionDefer: run-end end-session Execs, sent after graceEnd
 	endFailCauses             map[string]int64 // EndSessionDefer only: failed end-session Execs by cause
 
+	leaseMu       sync.Mutex
+	leaseSessions map[string]*leaseSession // lease mode: every session started, by workspace key
+
 	t0, warmEnd, end, graceEnd time.Time
 }
 
@@ -82,7 +89,12 @@ func NewReplayer(cfg Config, sessions []Session, lib *Library, client pb.Sandbox
 	if cfg.Window <= 0 || cfg.Warmup < 0 || cfg.Spread < 0 || cfg.Grace < 0 {
 		return nil, fmt.Errorf("window must be > 0 and warmup, spread, grace >= 0 (got %v, %v, %v, %v)", cfg.Window, cfg.Warmup, cfg.Spread, cfg.Grace)
 	}
-	if cfg.Token == "" {
+	if cfg.Lease != nil {
+		// Leases end by idle timeout, reclaim or the worker stopping; no end-session Exec exists
+		// there (the marker is the resident worker's).
+		cfg.EndSessionExec, cfg.EndSessionDefer = false, false
+	}
+	if cfg.Token == "" && cfg.Lease == nil {
 		return nil, fmt.Errorf("no exec token: set MOCA_RELAY_EXEC_TOKEN to the relay's worker credential; the relay refuses SandboxExec without it")
 	}
 	s, err := NewSampler(sessions, cfg.Seed, cfg.UserCap)
@@ -225,7 +237,9 @@ func (r *Replayer) sleepUntil(ctx context.Context, t time.Time) bool {
 // call starts. It returns an error only for a run-fatal condition (ErrCapUnsatisfiable, a plan
 // error, ctx cancelled); per-call failures are recorded, never returned.
 func (r *Replayer) Run(ctx context.Context) error {
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+r.cfg.Token)
+	if r.cfg.Lease == nil {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+r.cfg.Token)
+	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
@@ -269,6 +283,10 @@ func (r *Replayer) Run(ctx context.Context) error {
 		fc := r.endFailCauses
 		r.deferMu.Unlock()
 		r.rec.CPUFooter(cpuFooter{Footer: true, EndSessionsSent: r.endSent.Load(), EndSessionsOK: r.endOK.Load(), EndSessionsFailed: r.endFailed.Load(), EndSessionsDeferred: nDeferred, EndSessionFailCauses: fc})
+	}
+	if r.cfg.Lease != nil {
+		// Whatever happened to the sessions: not bounded by the grace deadline or a SIGINT.
+		r.sweepLeases(r.endCtx)
 	}
 	if err := context.Cause(ctx); err != nil {
 		return err
@@ -417,6 +435,19 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 			})
 		}
 	}()
+	var ls *leaseSession
+	if r.cfg.Lease != nil {
+		var err error
+		if ls, err = r.beginLeaseSession(ctx, key); err != nil {
+			// The session is failed, not served per-exec: no Exec is sent. Its first call is
+			// recorded as the failure, and the slot waits before it draws the next session.
+			if ctx.Err() == nil && start < len(s.Calls) {
+				r.rec.Call(r.setModeFailedRow(key, s, s.Calls[start], time.Now(), err))
+				r.sleepUntil(ctx, time.Now().Add(setModeFailBackof))
+			}
+			return nil
+		}
+	}
 	for idx := start; idx < len(s.Calls); idx++ {
 		c := s.Calls[idx]
 		plan, err := r.lib.Plan(c, r.cfg.Seed, s.ID)
@@ -434,7 +465,7 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 			return nil
 		}
 		prevEmit = send
-		rec, last := r.runCall(ctx, key, s, c, plan, send)
+		rec, last := r.runCallIn(ctx, key, s, c, plan, send, ls)
 		r.rec.Call(rec)
 		// A call cut at the end of the run never completed, so it is not part of the session's
 		// pace (SPEC §8 condition 3: first to last completed call).
@@ -459,6 +490,11 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 // for the call's whole recorded lifetime (SPEC §5.3) and SBX pays one VM per recorded call, as the
 // real agent did. It returns the call's record and the time its Exec ended.
 func (r *Replayer) runCall(ctx context.Context, key string, s Session, c Call, plan []Planned, send time.Time) (callRecord, time.Time) {
+	return r.runCallIn(ctx, key, s, c, plan, send, nil)
+}
+
+// runCallIn is runCall for a session with lease state ls (nil: the E15 path, unchanged).
+func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call, plan []Planned, send time.Time, ls *leaseSession) (callRecord, time.Time) {
 	timeoutS := uint32((c.DurMs+999)/1000) + 120
 	rec := callRecord{
 		Ts: send.UTC().Format(time.RFC3339Nano), TMs: ms(send.Sub(r.t0)),
@@ -476,9 +512,31 @@ func (r *Replayer) runCall(ctx context.Context, key string, s Session, c Call, p
 		rec.Status, rec.Cause, rec.Msg = "err", causeDeadline, "not started: past the end-of-run grace deadline"
 		return rec, time.Now()
 	}
-	res := execOne(ctx, r.client, r.cfg.SandboxID, r.reqID.Add(1), script, timeoutS, key)
+	first := false
+	execCtx := ctx
+	if ls != nil {
+		first = !ls.started
+		ls.started = true
+		rec.FirstLease = first
+		var terr error
+		if execCtx, terr = ls.bearer(ctx); terr != nil {
+			rec.Status, rec.Cause, rec.Msg = "err", causeExecError, "minting the exec token: "+terr.Error()
+			rec.NotLease = ls.notLease
+			return rec, time.Now()
+		}
+	}
+	res := execOne(execCtx, r.client, r.cfg.SandboxID, r.reqID.Add(1), script, timeoutS, key)
 	last := time.Now()
 	rec.Execs = 1
+	if ls != nil {
+		// Whatever the call's outcome: a notice acknowledged on the stream is consumed even if the
+		// call then failed.
+		rec.LeaseEvents = ls.fresh(res.events)
+		if first && !hasStart(res.events) {
+			ls.notLease = true // the worker ran this session's first Exec outside a lease
+		}
+		rec.NotLease = ls.notLease
+	}
 	rec.Exit = res.exit
 	switch {
 	case res.cause == "" && *res.exit != 0:

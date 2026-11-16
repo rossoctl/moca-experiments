@@ -3,7 +3,7 @@ module github.com/rossoctl/moca-experiments/e15/driver
 go 1.26.0
 
 require (
-	github.com/rossoctl/moca/gen/go v0.0.0-20261029005650-c13d55649777
+	github.com/rossoctl/moca/gen/go v0.0.0-20261114051743-66cbf40a7067
 	google.golang.org/grpc v1.83.2
 )
 
