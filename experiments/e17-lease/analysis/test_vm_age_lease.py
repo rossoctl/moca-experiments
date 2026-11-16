@@ -95,17 +95,18 @@ def test_retired_cgroups_end_to_end(tmp_path):
                                                         "vm-5": "pool-2"}
 
 
-def heavy_fixture(tmp_path, after_mib, delta_mib=0, next_send=None, name="rung", shmem_at=None):
-    """A lease VM (pool-0, ages 0-90 s) with one py_analyze from t=10 to t=30: 100 MiB at its start,
-    peak 900 MiB, then `after_mib` from t=31 on. shmem.json gives its dShmem (None: no shmem.json;
-    "null": the key is there with null)."""
+def heavy_fixture(tmp_path, after_mib, delta_mib=0, next_send=None, name="rung", shmem_at=None,
+                  start_mib=100, peak_mib=900, params=None):
+    """A lease VM (pool-0, ages 0-90 s) with one py_analyze from t=10 to t=30: `start_mib` at its start,
+    peak `peak_mib` (by default 100 and 900 MiB), then `after_mib` from t=31 on. shmem.json gives its
+    dShmem (None: no shmem.json; "null": the key is there with null)."""
     log = [restore(0, "vm-1"), lstart(0, "A", "vm-1"), execl(30, "A", "vm-1")]
 
     def mem(t):
         if t < 10:
-            return {"pool-0": 100 * MIB}
+            return {"pool-0": start_mib * MIB}
         if t <= 30:
-            return {"pool-0": min(900, 100 + 80 * (t - 10)) * MIB}  # up to 900 MiB by t=20
+            return {"pool-0": min(peak_mib, start_mib + 80 * (t - 10)) * MIB}  # 900 MiB by t=20 by default
         return {"pool-0": after_mib * MIB}
     calls = [call("A", 1, "py_analyze", 10, 20000)]
     if shmem_at is not None:  # the turn's py_shmem reading, sent right after the heavy call
@@ -114,7 +115,7 @@ def heavy_fixture(tmp_path, after_mib, delta_mib=0, next_send=None, name="rung",
     if next_send is not None:
         log.append(execl(next_send + 1, "A", "vm-1"))
         calls.append(call("A", 2, "py_short", next_send, 500))
-    d = rung(tmp_path, log, mem, calls, name=name)
+    d = rung(tmp_path, log, mem, calls, name=name, params=params)
     if delta_mib is not None:
         with open(os.path.join(d, "shmem.json"), "w") as f:
             json.dump({"calls": {"A:1": None if delta_mib == "null" else delta_mib * MIB}, "turns": {},
@@ -187,6 +188,74 @@ def test_py_shmem_right_after_does_not_void_the_verdict(tmp_path):
     # a real call within 15 s still voids it, with the reading in between
     e = run_fpr(heavy_fixture(tmp_path, after_mib=300, shmem_at=30, next_send=40, name="near"))["execs"][0]
     assert e["follows"] is None and "next call" in e["why_null"]
+
+
+# ---- E17B-R29: criterion 5's first half is never vacuous ----
+
+def test_vm_pinned_at_its_ceiling_is_not_judged_and_reads_pinned(tmp_path):
+    # E17a's failure mode: free-page reporting returns nothing, the VM sits near its 1024 MiB ceiling
+    # from an earlier heavy call. start 1000, peak 1010, +15 s 1005: no growth to return, so the
+    # relative verdict (1005 <= 1010 - 5) would be a vacuous pass. It is not judged; the absolute
+    # reading shows the VM pinned.
+    f = run_fpr(heavy_fixture(tmp_path, after_mib=1005, start_mib=1000, peak_mib=1010))
+    e = f["execs"][0]
+    assert e["follows"] is None and e["why_null"] == "not_judged_low_growth"
+    assert e["growth_bytes"] == 10 * MIB
+    assert e["ceiling_ratio_15s"] == pytest.approx(1005 / 1024.0)
+    assert f["not_judged_low_growth"] == 1 and f["follows_true"] == 0 and f["share_true"] is None
+    assert f["growth_min_bytes"] == 64 * MIB == L.GROWTH_MIN_BYTES
+    a = f["absolute"]
+    assert a["guest_ram_bytes"] == 1024 * MIB and a["pinned_fraction"] == 0.9
+    assert a["readings"] == 1 and a["pinned"] == 1 and a["pinned_share"] == 1.0
+    assert a["per_vm"] == [{"vm": "vm-1", "readings": 1, "max_ceiling_ratio_15s": pytest.approx(1005 / 1024.0),
+                            "pinned": True}]
+    assert a["pinned_vms"] == 1 and a["pinned_vm_share"] == 1.0
+    assert a["judged_readings"] == 0 and a["pinned_share_of_judged"] is None
+
+
+def test_growth_of_300_mib_that_falls_back_is_judged_true(tmp_path):
+    f = run_fpr(heavy_fixture(tmp_path, after_mib=120, start_mib=100, peak_mib=400))
+    e = f["execs"][0]
+    assert e["growth_bytes"] == 300 * MIB and e["follows"] is True  # 120 <= 400 - 300/2
+    assert f["share_true"] == 1.0 and f["not_judged_low_growth"] == 0
+    a = f["absolute"]
+    assert a["pinned"] == 0 and a["pinned_share"] == 0.0 and a["judged_readings"] == 1
+    assert a["pinned_share_of_judged"] == 0.0 and e["ceiling_ratio_15s"] == pytest.approx(120 / 1024.0)
+
+
+def test_growth_that_stays_is_judged_false(tmp_path):
+    f = run_fpr(heavy_fixture(tmp_path, after_mib=390, start_mib=100, peak_mib=400))
+    assert f["execs"][0]["follows"] is False and f["share_true"] == 0.0  # 390 > 250
+
+
+def test_growth_threshold_boundary(tmp_path):
+    # exactly 64 MiB of growth is judged; 63 MiB is not
+    e = run_fpr(heavy_fixture(tmp_path, after_mib=100, start_mib=100, peak_mib=164, name="at"))["execs"][0]
+    assert e["growth_bytes"] == 64 * MIB and e["follows"] is True
+    e = run_fpr(heavy_fixture(tmp_path, after_mib=100, start_mib=100, peak_mib=163, name="below"))["execs"][0]
+    assert e["follows"] is None and e["why_null"] == "not_judged_low_growth"
+
+
+def test_absolute_reading_uses_the_vms_guest_ram(tmp_path):
+    # a 256 MiB rung: the ceiling is the snapshot's guest RAM (params snapshot_guest_ram_mb)
+    f = run_fpr(heavy_fixture(tmp_path, after_mib=240, start_mib=230, peak_mib=250,
+                              params={"arm": "ship-300", "snapshot_guest_ram_mb": 256}))
+    a = f["absolute"]
+    assert a["guest_ram_bytes"] == 256 * MIB and a["pinned"] == 1
+    assert f["execs"][0]["ceiling_ratio_15s"] == pytest.approx(240 / 256.0)
+
+
+def test_absolute_reading_skips_a_call_whose_next_call_began_within_15s(tmp_path):
+    # its +15 s value is the next call's charge, not this one's: no absolute reading either
+    f = run_fpr(heavy_fixture(tmp_path, after_mib=1005, start_mib=1000, peak_mib=1010, next_send=40))
+    assert f["execs"][0]["ceiling_ratio_15s"] is None and f["absolute"]["readings"] == 0
+    assert f["absolute"]["pinned_share"] is None
+
+
+def test_absolute_reading_does_not_need_dshmem(tmp_path):
+    # a lease's first turn (dShmem null, R24) has no relative verdict but still has the absolute reading
+    f = run_fpr(heavy_fixture(tmp_path, after_mib=1005, start_mib=1000, peak_mib=1010, delta_mib="null"))
+    assert f["execs"][0]["follows"] is None and f["absolute"]["readings"] == 1 and f["absolute"]["pinned"] == 1
 
 
 def test_share_above_thresholds(tmp_path):

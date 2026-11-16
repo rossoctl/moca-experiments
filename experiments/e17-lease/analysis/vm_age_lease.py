@@ -59,6 +59,19 @@ verdict is also null when the 15 s sample or the start sample is missing, the VM
 session's next call began within 15 s (the later Exec's charge is not "falling back"; a reported-only call,
 the turn's py_shmem reading right after its last py_analyze, is not a next call).
 
+NON-VACUITY (ruling E17B-R29). A VM that is already pinned near its ceiling by an earlier heavy call
+(E17a's failure: free-page reporting returned nothing) has start ~ peak, so freed ~ 0 and the verdict
+reads "value_15s <= peak": a pass for a VM that never gave anything back. So an Exec is judged only when
+its growth, peak - start, is at least GROWTH_MIN_BYTES (64 MiB); a smaller one is `not_judged_low_growth`
+(why_null), counted beside share_true. And an ABSOLUTE reading that cannot be vacuous is reported: per
+heavy Exec, ceiling_ratio_15s = value_15s / guest RAM (the VM's ceiling: params snapshot_guest_ram_mb or
+--guest-ram-mib), and `absolute.pinned_share`, the share of readings at or above 0.9 of guest RAM. A
+reading needs only the +15 s sample and no next call within 15 s (otherwise the value is the next call's
+charge), not dShmem or growth, so it covers the low-growth and first-turn Execs the relative verdict
+leaves out: that is where a pinned VM shows. `pinned_share_of_judged` is the same share over the judged
+Execs only; `per_vm` has each lease VM's highest ratio. No pass threshold is set here: it is sealed with
+the predictions (Task 13), and this module reports the numbers.
+
 REPLACEMENT VM (criterion 5, second half). A lease whose first call is cold with reason `idle` (the key's
 previous lease ended by the idle timeout; warmcold_lease.py's cold_reason): its first ok `py_grep`
 observed_ms against the median ok `py_grep` of the `sbx` rung (--sbx) or --sbx-median-ms. Only calls with
@@ -88,6 +101,9 @@ MIN_LIFE_S = 5.0
 SAMPLE_TOL_S = 1.0
 AFTER_S = 15.0
 HEAVY_CLASSES = ("py_analyze", "py_test")
+GROWTH_MIN_BYTES = 64 << 20  # E17B-R29: less growth than this has nothing to return; not judged
+PINNED_FRACTION = 0.9        # E17B-R29: a +15 s charge at or above this share of guest RAM is pinned
+LOW_GROWTH = "not_judged_low_growth"
 LINE_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})Z vmpool: (?:(restore|destroy) phases id=(vm-\d+) "
     r"|lease start workspace_key=\"(?:[^\"\\]|\\.)*\" vm=(?P<start>\S+) "
@@ -239,7 +255,30 @@ def _at_or_before(series, t, tol):
 FREED_DEFINITION = "freed = max(0, peak - start - dShmem); follows: value_15s <= peak - freed/2"
 
 
-def fpr_reading(rows, calls, obs, vm_by_id, shmem):
+def absolute_reading(out, guest_ram_bytes):
+    """The E17B-R29 absolute reading over the heavy Execs that have a ceiling_ratio_15s."""
+    got = [e for e in out if e["ceiling_ratio_15s"] is not None]
+    judged = [e for e in got if e["follows"] is not None]
+
+    def pinned(es):
+        return sum(e["ceiling_ratio_15s"] >= PINNED_FRACTION for e in es)
+    per = {}
+    for e in got:
+        per.setdefault(e["vm"], []).append(e["ceiling_ratio_15s"])
+    per_vm = [{"vm": vm, "readings": len(xs), "max_ceiling_ratio_15s": max(xs),
+               "pinned": max(xs) >= PINNED_FRACTION} for vm, xs in sorted(per.items())]
+    n_pin, n_jpin, n_vpin = pinned(got), pinned(judged), sum(v["pinned"] for v in per_vm)
+    return {"guest_ram_bytes": guest_ram_bytes, "pinned_fraction": PINNED_FRACTION,
+            "basis": "value_15s / guest RAM per heavy Exec with a +15 s sample and no next call within 15 s "
+                     "(growth and dShmem not needed)",
+            "readings": len(got), "pinned": n_pin, "pinned_share": (n_pin / float(len(got))) if got else None,
+            "judged_readings": len(judged),
+            "pinned_share_of_judged": (n_jpin / float(len(judged))) if judged else None,
+            "per_vm": per_vm, "pinned_vms": n_vpin,
+            "pinned_vm_share": (n_vpin / float(len(per_vm))) if per_vm else None}
+
+
+def fpr_reading(rows, calls, obs, vm_by_id, shmem, guest_ram_bytes=1024 << 20):
     by_key = {}
     for c in calls:
         by_key.setdefault(c.get("session"), []).append(c)
@@ -256,7 +295,8 @@ def fpr_reading(rows, calls, obs, vm_by_id, shmem):
         c = cmap[(r["session"], r["call"])]
         e = {"session": r["session"], "call": r["call"], "class": r["class"], "vm": r["vm"],
              "end_bytes": None, "after_15s_bytes": None, "peak_bytes": None, "start_bytes": None,
-             "delta_shmem_bytes": None, "freed_bytes": None, "follows": None, "why_null": None}
+             "delta_shmem_bytes": None, "freed_bytes": None, "growth_bytes": None, "ceiling_ratio_15s": None,
+             "follows": None, "why_null": None}
         out.append(e)
         v = vm_by_id.get(r["vm"])
         if c.get("execs") != 1 or v is None or not v["lease"]:
@@ -276,24 +316,36 @@ def fpr_reading(rows, calls, obs, vm_by_id, shmem):
         e["delta_shmem_bytes"] = ((shmem or {}).get("calls") or {}).get("%s:%s" % (r["session"], r["call"]))
         if None not in (e["peak_bytes"], e["start_bytes"], e["delta_shmem_bytes"]):
             e["freed_bytes"] = max(0, e["peak_bytes"] - e["start_bytes"] - e["delta_shmem_bytes"])
+        if None not in (e["peak_bytes"], e["start_bytes"]):
+            e["growth_bytes"] = e["peak_bytes"] - e["start_bytes"]
         nxt = next_start.get((r["session"], r["call"]))
+        near = nxt is not None and nxt < end + AFTER_S
+        if e["after_15s_bytes"] is not None and not near:
+            e["ceiling_ratio_15s"] = e["after_15s_bytes"] / float(guest_ram_bytes)
         if e["after_15s_bytes"] is None or e["peak_bytes"] is None:
             e["why_null"] = "no sample at +15 s (VM ended?) or within the Exec"
-        elif nxt is not None and nxt < end + AFTER_S:
+        elif near:
             e["why_null"] = "the session's next call began within 15 s"
+        elif e["start_bytes"] is None:
+            e["why_null"] = "no sample at or before the Exec's start"
+        elif e["growth_bytes"] < GROWTH_MIN_BYTES:
+            e["why_null"] = LOW_GROWTH
         elif e["delta_shmem_bytes"] is None:
             e["why_null"] = "no dShmem (shmem.json absent, or null for this call: a tmpfs session, or a turn " \
                             "without a usable delta or over 1 MiB; freed_from_shmem.py)"
-        elif e["start_bytes"] is None:
-            e["why_null"] = "no sample at or before the Exec's start"
         else:
             e["follows"] = e["after_15s_bytes"] <= e["peak_bytes"] - e["freed_bytes"] / 2.0
     n_t = sum(e["follows"] is True for e in out)
     n_f = sum(e["follows"] is False for e in out)
     return {"definition": FREED_DEFINITION, "heavy_classes": list(HEAVY_CLASSES),
+            "growth_min_bytes": GROWTH_MIN_BYTES,
+            "judged_when": "peak - start >= growth_min_bytes (E17B-R29), with dShmem, start, +15 s samples "
+                           "and no next call within 15 s",
             "heavy_execs": len(out), "follows_true": n_t, "follows_false": n_f,
             "follows_null": len(out) - n_t - n_f,
-            "share_true": (n_t / float(n_t + n_f)) if n_t + n_f else None, "execs": out}
+            "not_judged_low_growth": sum(e["why_null"] == LOW_GROWTH for e in out),
+            "share_true": (n_t / float(n_t + n_f)) if n_t + n_f else None,
+            "absolute": absolute_reading(out, guest_ram_bytes), "execs": out}
 
 
 def sbx_median_grep(d):
@@ -387,7 +439,8 @@ def analyse(d, sbx_median_ms=None, shmem=None, guest_ram_mib=None):
                    "samples": seen[v["id"]]} for v in vms]
     out["memory_vs_age"] = mem_vs_age(lease_vms, obs, born_ts)
     out["share_above"] = share_above(lease_vms, obs, guest_ram_mib)
-    out["fpr"] = fpr_reading(rows, W.read_calls(d), obs, {v["id"]: v for v in vms}, shmem)
+    out["fpr"] = fpr_reading(rows, W.read_calls(d), obs, {v["id"]: v for v in vms}, shmem,
+                             int(guest_ram_mib * (1 << 20)))
     return out
 
 
