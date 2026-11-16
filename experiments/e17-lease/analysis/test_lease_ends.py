@@ -314,3 +314,141 @@ def test_fixture_ship_300_squeeze_slice():
     assert r["notices"]["paired"] == 2 and r["notices"]["live_at_stop"] == 1
     d = r["reclaim"]["details"][0]
     assert d["victim"] == "s1" and d["verdict"] == "correct" and not d.get("tie_with")
+
+
+# ---- fix round 1 ----
+
+def reclaim_calls(calls, victim="a", t=100, keys="abc"):
+    log = [start_line(k, "vm-" + k, ts=logts(0)) for k in keys]
+    log.append(end_line(victim, "vm-" + victim, "memory_reclaim", ts=logts(t)))
+    tails = [tail(k, "active") if k != victim else
+             tail(k, "none", {"state": "end", "reason": "memory_reclaim", "at_unix_ms": 1}) for k in keys]
+    return rung_in(log, calls, tails)
+
+
+def rung_in(log, calls, tails, **kw):
+    import tempfile
+    import pathlib
+    d = pathlib.Path(tempfile.mkdtemp(prefix="le-"))
+    return rung(d, log=log, calls=calls, tails=tails, **kw)
+
+
+def test_reclaim_victim_that_resumes_after_the_reclaim_is_judged_on_its_pre_reclaim_idle():
+    calls = [call("a", 1, 9), call("a", 2, 150), call("b", 1, 49), call("c", 1, 59)]
+    r = run(reclaim_calls(calls))
+    assert r["reclaim"]["details"][0]["verdict"] == "correct"
+
+
+def test_reclaim_non_victim_with_a_post_reclaim_call_is_still_idle_at_the_reclaim():
+    # b's last Exec by T ended at 10 (idle 90); a (the victim) ended at 50: the pick is wrong.
+    calls = [call("a", 1, 49), call("b", 1, 9), call("b", 2, 150), call("c", 1, 59)]
+    r = run(reclaim_calls(calls))
+    d = r["reclaim"]["details"][0]
+    assert d["verdict"] == "wrong" and d["longest_idle"] == "b"
+
+
+def test_reclaim_tie_boundary_is_one_second():
+    ok = run(reclaim_calls([call("a", 1, 9.1), call("b", 1, 8.2), call("c", 1, 59)]))
+    assert ok["reclaim"]["details"][0]["verdict"] == "correct"
+    assert ok["reclaim"]["details"][0]["tie_with"] == ["b"]
+    # a ends 10.5 (idle 89.5), b ends 9.0 (idle 91.0): 1.5 s short -> wrong
+    bad = run(reclaim_calls([call("a", 1, 9.5), call("b", 1, 8.0), call("c", 1, 59)]))
+    assert bad["reclaim"]["details"][0]["verdict"] == "wrong"
+
+
+def test_calls_are_ordered_by_call_number_not_file_order():
+    d = rung(tempdir(),
+             log=[start_line("a", "vm-1", ts=logts(0)), end_line("a", "vm-1", "reset", ts=logts(10)),
+                  start_line("a", "vm-2", ts=logts(11)), end_line("a", "vm-2", "idle", ts=logts(50))],
+             calls=[call("a", 2, 20, events=[end_ev("idle", 2)]), call("a", 1, 0, events=[end_ev("reset", 1)])],
+             tails=[tail("a")])
+    r = run(d)
+    assert not r["notices"]["reason_mismatches"] and r["criterion4_pass"]
+
+
+def tempdir():
+    import tempfile
+    import pathlib
+    return pathlib.Path(tempfile.mkdtemp(prefix="le-"))
+
+
+def test_expiring_lease_is_live_at_stop():
+    r = run(rung(tempdir(), log=[start_line("a", "vm-1", ts=logts(0))], calls=[call("a", 1, 0)],
+                 tails=[tail("a", "expiring")]))
+    assert r["notices"]["live_at_stop"] == 1 and r["notices"]["live_at_stop_keys"] == ["a"]
+
+
+def test_set_mode_failed_row_is_not_an_exec_in_the_reclaim_spans():
+    # b's real Exec ended at 10; a set_mode_failed row at 95 ran no Exec and must not make b look active.
+    calls = [call("a", 1, 49), call("b", 1, 9), call("b", 2, 94, dur=0.1, cause="set_mode_failed", status="err"),
+             call("c", 1, 59)]
+    d = reclaim_calls(calls)
+    assert run(d)["reclaim"]["details"][0]["verdict"] == "wrong"
+
+
+def test_row_that_never_ran_an_exec_is_not_a_span():
+    calls = [call("a", 1, 49), call("b", 1, 9), call("b", 2, 94, dur=0.1, cause="deadline", status="err", execs=0),
+             call("c", 1, 59)]
+    assert run(reclaim_calls(calls))["reclaim"]["details"][0]["verdict"] == "wrong"
+
+
+def test_reclaim_victim_executing_across_the_reclaim_is_its_own_verdict():
+    calls = [call("a", 1, 95, dur=20), call("b", 1, 9), call("c", 1, 59)]
+    r = run(reclaim_calls(calls))
+    assert r["reclaim"]["details"][0]["verdict"] == "victim_executing"
+    assert r["reclaim"]["victim_executing"] == 1 and r["reclaim"]["unknown"] == 0 and r["reclaim"]["wrong"] == 0
+    assert not r["criterion3_order_pass"]
+
+
+def test_refusal_counts_when_only_the_earlier_sample_has_an_idle_lease():
+    s = [sample(0, vms=3, executing=1), sample(1, budget=2, vms=3, executing=3)]
+    r = run(rung(tempdir(), calls=[call("a", 1, 0)], tails=[tail("a")], samples=s))
+    assert r["refusals"]["with_idle_lease"] == 2
+
+
+def test_refusal_counts_when_only_the_later_sample_has_an_idle_lease():
+    s = [sample(0, vms=3, executing=3), sample(1, budget=2, vms=3, executing=1)]
+    r = run(rung(tempdir(), calls=[call("a", 1, 0)], tails=[tail("a")], samples=s))
+    assert r["refusals"]["with_idle_lease"] == 2
+
+
+def test_refusal_counter_reset_counts_the_new_value():
+    s = [sample(0, budget=5, vms=2, executing=1), sample(1, budget=2, vms=2, executing=1)]
+    r = run(rung(tempdir(), calls=[call("a", 1, 0)], tails=[tail("a")], samples=s))
+    f = r["refusals"]
+    assert f["counter_resets"] == 1 and f["memory_budget_total"] == 2 and f["with_idle_lease"] == 2
+
+
+def host_sample(t, host=0, vms=0, executing=0):
+    s = sample(t, vms=vms, executing=executing)
+    if host:
+        s["worker"]["refusals"]["host-memory"] = host
+    return s
+
+
+def test_host_memory_refusal_with_idle_lease_is_counted_and_gated_separately():
+    s = [host_sample(0, vms=2, executing=1), host_sample(1, host=3, vms=2, executing=1)]
+    r = run(rung(tempdir(), calls=[call("a", 1, 0)], tails=[tail("a")], samples=s))
+    f = r["refusals"]
+    assert f["host_memory_total"] == 3 and f["host_memory_with_idle_lease"] == 3
+    assert f["memory_budget_total"] == 0 and f["with_idle_lease"] == 0
+    assert not r["criterion3_refusals_pass"]
+
+
+def test_host_memory_refusal_with_all_leases_executing_passes():
+    s = [host_sample(0, vms=2, executing=2), host_sample(1, host=3, vms=2, executing=2)]
+    r = run(rung(tempdir(), calls=[call("a", 1, 0)], tails=[tail("a")], samples=s))
+    assert r["refusals"]["host_memory_total"] == 3 and r["criterion3_refusals_pass"]
+
+
+def test_criterion4_is_null_when_no_lease_ended():
+    r = run(rung(tempdir(), log=[start_line("a", "vm-1", ts=logts(0))], calls=[call("a", 1, 0)],
+                 tails=[tail("a", "active")]))
+    assert r["valid"] and r["criterion4_pass"] is None
+
+
+def test_criterion4_is_false_when_the_rung_is_invalid():
+    r = run(rung(tempdir(), log=[start_line("a", "vm-1", ts=logts(0)), end_line("a", "vm-1", "idle", ts=logts(9))],
+                 calls=[call("a", 1, 0, cause="set_mode_failed", status="err")],
+                 tails=[tail("a", "none", {"state": "end", "reason": "idle", "at_unix_ms": 1})]))
+    assert not r["valid"] and r["criterion4_pass"] is False
