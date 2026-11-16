@@ -8,6 +8,7 @@
 #   POINT  default | short | long | no-infra | no-chains | smoke | mem512 | lowduty   (points.sh: corpus
 #          /srv/e15/corpora/<its corpus>, library, workspace template, image size)
 #          | pycache | pycache-low | pycache-d64 | pycache-d768   (E17, fresh-metal)
+#          | squeeze   (E17b: E17B=1, fresh-metal; arms ship-300 and sbx)
 #
 # Environment (defaults are SPEC §10.2's):
 #   E15_WARMUP_S 600 (fresh-metal resident arms 1200; lib.sh e15_default_warmup)   E15_WINDOW_S 900   E15_SPREAD_S 60   E15_GRACE_S 300   E15_SEED 1
@@ -15,6 +16,10 @@
 #   E15_CORPUS_OVERRIDE  a probe corpus.jsonl to replay instead of POINT's (classprobe.sh)
 #   E15_START_ZERO     1: every session starts at its first call (probe runs)
 #   E15_MAX_SESSIONS   start at most this many sessions, then end the run early (probe runs)
+#   E15_SQUEEZE_MEMMAX_MB  POINT squeeze only (E17b): lower e15.slice to MemoryMax=MB MiB, MemoryHigh 1 GiB below,
+#                      with `systemctl set-property --runtime` before the worker starts; the slice's own values
+#                      (read with `systemctl show` first) are restored at the rung's end and on any error or signal
+#                      (EXIT trap). One manifest line, its UNDO the restore. Recorded in params.json.
 # The N=1 baseline is the pooled N1/baseline.json that baseline.sh writes (see "the N=1 baseline").
 #
 # Steps:
@@ -75,6 +80,19 @@ case " $E15_P_ARMS " in *" $ARM "*) ;; *)
   exit 2
   ;;
 esac
+
+# E17b squeeze knob (points.sh squeeze): validated here, before any host change.
+SQUEEZE_MB=${E15_SQUEEZE_MEMMAX_MB:-}
+if [ -n "$SQUEEZE_MB" ]; then
+  [ "$POINT" = squeeze ] || {
+    echo "rung.sh: E15_SQUEEZE_MEMMAX_MB is for POINT squeeze only (got POINT $POINT)" >&2
+    exit 2
+  }
+  [[ "$SQUEEZE_MB" =~ ^[1-9][0-9]*$ ]] && [ "$SQUEEZE_MB" -gt 1024 ] || {
+    echo "rung.sh: E15_SQUEEZE_MEMMAX_MB must be an integer above 1024 (MemoryHigh is 1 GiB below it), got '$SQUEEZE_MB'" >&2
+    exit 2
+  }
+fi
 
 WARMUP=${E15_WARMUP_S:-$(e15_default_warmup "$ARM")}
 K_MULT=${E15_K_MULT:-1}
@@ -194,11 +212,33 @@ fi
 RUN_ID="$POINT-$ARM-n$N${TAG:+-$TAG}-$(date -u +%s)"
 log "rung $ARM N=$N point=$POINT warmup=${WARMUP}s window=${WINDOW}s -> $DIR"
 
+# rung_host_restore: undo this rung's own host state once its worker is stopped -- the squeezed e15.slice
+# (E15_SQUEEZE_MEMMAX_MB) and the per-rung token key directory (E17b lease arms). Idempotent; never dies. Returns 1
+# only when the slice could not be restored (a rig error at the rung's end); a key directory left with an unexpected
+# file is logged (its token.key is removed first) and does not fail the rung.
+#
+# The key directory needs no manifest line: it is created and removed by this rung on every exit path (the end,
+# die, a signal: the EXIT trap), inside $E15_ROOT/secrets (0700, the login user's), like the rung's workspaces,
+# which rung.sh also creates and wipes without one. A rung killed with SIGKILL leaves it under $E15_SECRETS, which
+# teardown.sh --purge removes with $E15_ROOT. relay-lease.env (the public keyset only) stays for the relay.
+TOKEN_DIR=""
+rung_host_restore() {
+  local rc=0
+  e15_slice_unsqueeze || rc=1
+  if [ -n "$TOKEN_DIR" ]; then
+    e17b_token_dir_remove "$TOKEN_DIR" || true
+    TOKEN_DIR=""
+  fi
+  return "$rc"
+}
+# The trap runs under set -e: a kill of a process that already exited, or a failing stop, must not end it before
+# rung_host_restore (each step is guarded).
 cleanup() {
-  [ -n "${sampler_pid:-}" ] && kill "$sampler_pid" 2>/dev/null
-  [ -n "${watchdog_pid:-}" ] && kill "$watchdog_pid" 2>/dev/null
-  [ -n "${driver_pid:-}" ] && kill "$driver_pid" 2>/dev/null
-  stop_rung_units
+  [ -z "${sampler_pid:-}" ] || kill "$sampler_pid" 2>/dev/null || true
+  [ -z "${watchdog_pid:-}" ] || kill "$watchdog_pid" 2>/dev/null || true
+  [ -z "${driver_pid:-}" ] || kill "$driver_pid" 2>/dev/null || true
+  stop_rung_units || true
+  rung_host_restore || true
 }
 trap cleanup EXIT
 
@@ -296,7 +336,9 @@ if [ "$ARM" != control ]; then
   # go to the relay in a per-rung env file, the private key stays in $E15_SECRETS for the driver's --token-key.
   relay_extra=""
   if e17b_lease_arm "$ARM"; then
-    TOKEN_DIR=$E15_SECRETS/token-$RUN_ID
+    e17b_token_dir_ok "$E15_SECRETS/token-$RUN_ID" ||
+      die "the key directory $E15_SECRETS/token-$RUN_ID is not a token-<run> leaf of $E15_SECRETS (E15_TAG '$TAG'?); nothing minted"
+    TOKEN_DIR=$E15_SECRETS/token-$RUN_ID # removed by rung_host_restore at the rung's end or on any exit
     (umask 077 && "$DRIVER" mint-key --out "$TOKEN_DIR") >"$DIR/mint-key.log" 2>&1 ||
       die "e15-driver mint-key --out $TOKEN_DIR failed; see $DIR/mint-key.log"
     [ -s "$TOKEN_DIR/token.key" ] && [ -s "$TOKEN_DIR/token.pub" ] || die "mint-key left no token.key/token.pub in $TOKEN_DIR"
@@ -315,8 +357,22 @@ if [ "$ARM" = control ]; then
   start_null "$DIR"
   TARGET=127.0.0.1:$E15_PORT_NULL
 else
+  [ -z "$SQUEEZE_MB" ] || e15_slice_squeeze "$SQUEEZE_MB" "squeeze rung $RUN_ID"
   start_worker "$ARM" "$DIR" "$E15_P_IMAGE_MB"
   TARGET=127.0.0.1:$E15_PORT_EXEC
+  # E17b (E17B=1): every arm runs on the lease-v1 snapshot at the pin (the ship arms need it; sbx must run on the
+  # same one). The worker's startup banner (moca remote-worker/cmd/microvm-worker/main.go, leaseBanner) says lease=on
+  # only when the snapshot advertises lease-v1 under firecracker, lease=off otherwise. Checked before the attach
+  # probe and the driver, so a rung on the wrong snapshot measures nothing.
+  if [ "${E17B:-}" = 1 ]; then
+    banner=$(grep -m1 'microvm-worker: relay=' "$DIR/worker.log" || true)
+    [ -n "$banner" ] || die "no startup banner ('microvm-worker: relay=...') in $DIR/worker.log: lease=on cannot be confirmed (E17B=1); the driver was not started"
+    case " $banner " in
+    *" lease=on "*) log "worker banner: lease=on (${banner#*lease=on})" ;;
+    *" lease=off "*) die "the worker's banner says lease=off: the snapshot $E15_SNAPDIR/$E15_SNAPIMG does not advertise lease-v1 (or the VMM is not firecracker); E17b arms need the snapshot-e17b.sh leaf. The driver was not started. Banner: $banner" ;;
+    *) die "the worker's banner has no lease= field (a worker without lease mode?): $banner; the driver was not started" ;;
+    esac
+  fi
   # Attach check: the worker's own "attached" line is not enough (a refused duplicate Hello still
   # logs it). One probe Exec through the relay must reach this worker within E15_ATTACH_TIMEOUT_S
   # (60) before the driver starts; otherwise this is a rig error (exit 1, no record), not a
@@ -455,6 +511,8 @@ fi
 # --- 5. stop the backend, normalise the log --------------------------------------------------
 oom_after=$(oom_count)
 stop_rung_units
+restore_failed=0
+rung_host_restore || restore_failed=1
 trap - EXIT
 if [ -f "$DIR/worker.log" ]; then
   sudo -n chown "$(id -un):$(id -gn)" "$DIR/worker.log"
@@ -557,11 +615,18 @@ p = {
         "set_mode_failed_calls": int("$set_mode_failed"), "rung_failed": json.loads('$rung_failed'),
         "token_issuer": "$(e17b_lease_arm "$ARM" && e17b_token_iss)"}
        if arm.startswith("ship-") else {}),
+    **({"squeeze_memmax_mb": int("$SQUEEZE_MB"),
+        "squeeze_slice": {"MemoryMax": int("${E15_SQUEEZE_MAX:-0}"), "MemoryHigh": int("${E15_SQUEEZE_HIGH:-0}"),
+                          "original_MemoryMax": "${E15_SQUEEZE_ORIG_MAX:-}", "original_MemoryHigh": "${E15_SQUEEZE_ORIG_HIGH:-}",
+                          "restored": "${E15_SQUEEZE_RESTORED:-0}" == "1"}}
+       if "$SQUEEZE_MB" else {}),
     "host_mem_total_kb": int([l.split()[1] for l in open("$E15_MEMINFO") if l.startswith("MemTotal:")][0]),
     "slice_memory_max": readf("$E15_CG/memory.max"),
 }
 json.dump(p, open(os.path.join(d, "params.json"), "w"), indent=2, sort_keys=True)
 PY
+[ "$restore_failed" = 0 ] ||
+  die "e15.slice was not restored (see the WARNING above; params.json written, no record): rig error"
 holds=$(python3 "$E15_SRC/analysis/record.py" "$DIR" --params "$DIR/params.json") ||
   die "record.py failed for $DIR"
 log "rung $ARM N=$N: holds=$holds ($DIR/record.json)"

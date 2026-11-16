@@ -308,10 +308,22 @@ refuse_outside_root() {
 refuse_units() {
   local a
   if [ "$E15_HOST_PROFILE" = fresh-metal ]; then
-    # Every argument is an option, a systemctl verb, or one of E15's own units.
+    # Every argument is an option, a systemctl verb, or one of E15's own units. set-property is for e15.slice's
+    # MemoryMax/MemoryHigh only (the E17b squeeze rung, e15_slice_squeeze): any other unit or property is refused.
+    case " $* " in *" set-property "*)
+      for a in "$@"; do
+        case "$a" in -* | set-property | e15.slice | MemoryMax=* | MemoryHigh=*) ;; *)
+          printf 'refuse_units: set-property %s: only e15.slice MemoryMax/MemoryHigh (fresh-metal rule)\n' "$a" >&2
+          exit 3
+          ;;
+        esac
+      done
+      ;;
+    esac
     for a in "$@"; do
       case "$a" in
       -* | start | stop | restart | reset-failed | daemon-reload | is-active | is-failed | status | show | e15.slice | e15-*) ;;
+      set-property | MemoryMax=* | MemoryHigh=*) ;; # the set-property rule above
       *)
         printf 'refuse_units: %s is not an E15 unit (fresh-metal rule: E15 touches only its own)\n' "$a" >&2
         exit 3
@@ -737,6 +749,57 @@ e15_slice_limits() {
   printf '%s %s\n' "$max" "$((max - 1024 * 1024 * 1024))"
 }
 
+# e15_squeeze_limits MB (E17b squeeze rungs): "MEMORYMAX MEMORYHIGH" in bytes for e15.slice lowered to MB MiB,
+# MemoryHigh = MemoryMax - 1 GiB as in e15_slice_limits.
+e15_squeeze_limits() {
+  local max=$(($1 * 1024 * 1024))
+  printf '%s %s\n' "$max" "$((max - 1024 * 1024 * 1024))"
+}
+
+# e15_slice_squeeze MB WHY (rung.sh, E15_SQUEEZE_MEMMAX_MB): lower e15.slice to MB MiB for one rung with
+# `systemctl set-property --runtime` (a /run drop-in: gone at reboot). The values to restore are read first with
+# `systemctl show`, never recomputed, into E15_SQUEEZE_ORIG_MAX/E15_SQUEEZE_ORIG_HIGH; a squeeze only lowers
+# MemoryMax. One manifest line (m_change) whose UNDO restores them is written before the change, and
+# E15_SQUEEZE_ACTIVE=1 is set before it too (a failed set-property may have applied one property), so
+# e15_slice_unsqueeze restores on every path. Dies on a refusal or a failure.
+e15_slice_squeeze() {
+  local mb=$1 why=$2 cur max high
+  cur=$(sctl show "$E15_SLICE" --property=MemoryMax,MemoryHigh) || die "systemctl show $E15_SLICE failed: the values to restore are unknown, nothing changed"
+  E15_SQUEEZE_ORIG_MAX=$(printf '%s\n' "$cur" | sed -n 's/^MemoryMax=//p')
+  E15_SQUEEZE_ORIG_HIGH=$(printf '%s\n' "$cur" | sed -n 's/^MemoryHigh=//p')
+  [[ "$E15_SQUEEZE_ORIG_MAX" =~ ^[0-9]+$ ]] ||
+    die "$E15_SLICE MemoryMax is '$E15_SQUEEZE_ORIG_MAX', not a byte count (setup.sh sets one): refusing to squeeze it"
+  [[ "$E15_SQUEEZE_ORIG_HIGH" =~ ^([0-9]+|infinity)$ ]] ||
+    die "$E15_SLICE MemoryHigh is '$E15_SQUEEZE_ORIG_HIGH', not a byte count or infinity: refusing to squeeze it"
+  read -r max high < <(e15_squeeze_limits "$mb")
+  [ "$max" -le "$E15_SQUEEZE_ORIG_MAX" ] ||
+    die "E15_SQUEEZE_MEMMAX_MB=$mb ($max bytes) is above $E15_SLICE's MemoryMax $E15_SQUEEZE_ORIG_MAX: a squeeze only lowers it"
+  E15_SQUEEZE_MAX=$max
+  E15_SQUEEZE_HIGH=$high
+  m_init
+  m_change "$E15_SLICE MemoryMax=$max MemoryHigh=$high (runtime, $why; was MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH)" \
+    "sudo -n systemctl set-property --runtime $E15_SLICE MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH"
+  E15_SQUEEZE_ACTIVE=1
+  sctl set-property --runtime "$E15_SLICE" "MemoryMax=$max" "MemoryHigh=$high" ||
+    die "systemctl set-property --runtime $E15_SLICE MemoryMax=$max MemoryHigh=$high failed"
+  log "$E15_SLICE squeezed: MemoryMax=$max MemoryHigh=$high (was $E15_SQUEEZE_ORIG_MAX / $E15_SQUEEZE_ORIG_HIGH)"
+}
+
+# e15_slice_unsqueeze: restore what e15_slice_squeeze read (a no-op when nothing was squeezed). Never dies, so a trap
+# can call it: returns 1 when the restore failed (logged with the command; the manifest's UNDO line has it too).
+e15_slice_unsqueeze() {
+  [ "${E15_SQUEEZE_ACTIVE:-0}" = 1 ] || return 0
+  if sctl set-property --runtime "$E15_SLICE" "MemoryMax=$E15_SQUEEZE_ORIG_MAX" "MemoryHigh=$E15_SQUEEZE_ORIG_HIGH"; then
+    E15_SQUEEZE_ACTIVE=0
+    E15_SQUEEZE_RESTORED=1
+    m_note "$E15_SLICE restored: MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH"
+    log "$E15_SLICE restored: MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH"
+    return 0
+  fi
+  log "WARNING: could not restore $E15_SLICE; run: sudo -n systemctl set-property --runtime $E15_SLICE MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH (the manifest's UNDO line)"
+  return 1
+}
+
 # memavail_kb: MemAvailable in kB from $E15_MEMINFO (empty if unreadable).
 memavail_kb() { awk '$1=="MemAvailable:"{print $2; exit}' "$E15_MEMINFO" 2>/dev/null; }
 
@@ -871,6 +934,35 @@ e17b_lease_arm() { [ "${E17B:-}" = 1 ] && case "$1" in ship-30 | ship-120 | ship
 e17b_idle_timeout_s() { e17b_lease_arm "$1" || die "e17b_idle_timeout_s: $1 is not a ship arm (E17B=1)"; echo "${1#ship-}"; }
 # e17b_token_iss: the token issuer the relay's SH_SANDBOX_TOKEN_ISSUER and the driver's --token-iss share.
 e17b_token_iss() { echo e17b-driver; }
+# e17b_token_dir_ok DIR: DIR is one token-<run> leaf directly under $E15_SECRETS ([A-Za-z0-9._-], no ..), lexically.
+e17b_token_dir_ok() {
+  local leaf=${1#"$E15_SECRETS"/}
+  [ "$leaf" != "$1" ] || return 1
+  case "$leaf" in token-?*) ;; *) return 1 ;; esac
+  case "$leaf" in */* | *..*) return 1 ;; esac
+  [[ "$leaf" =~ ^token-[A-Za-z0-9._-]+$ ]]
+}
+# e17b_token_dir_remove DIR: remove a rung's key directory (mint-key's token.key and token.pub, then the empty dir).
+# Only a checked token-<run> leaf of $E15_SECRETS that is a real directory (not a symlink), inside $E15_ROOT; never
+# rm -rf: an unexpected file keeps the dir (logged). Returns 1 on a refusal or a leftover.
+e17b_token_dir_remove() {
+  local d=$1
+  e17b_token_dir_ok "$d" || {
+    log "refusing to remove $d: not a token-<run> leaf of $E15_SECRETS"
+    return 1
+  }
+  [ -e "$d" ] || [ -L "$d" ] || return 0
+  if [ -L "$d" ] || [ ! -d "$d" ]; then
+    log "refusing to remove $d: not a directory (or a symlink)"
+    return 1
+  fi
+  refuse_outside_root "$d"
+  rm -f -- "$d/token.key" "$d/token.pub"
+  rmdir -- "$d" 2>/dev/null || {
+    log "WARNING: $d holds more than token.key/token.pub; the keys are removed, the directory is left"
+    return 1
+  }
+}
 
 worker_bin() {
   case "$1" in

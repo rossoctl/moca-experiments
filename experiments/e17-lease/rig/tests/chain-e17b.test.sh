@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2016  # single-quoted $ here are stub bodies
+# experiments/e17-lease/rig/tests/chain-e17b.test.sh
+#
+# Rig-free tests for chain-e17b.sh: the stage list and its order, the seal refusal, the bring-up stages allowed
+# before the seal, resuming at a named stage, the squeeze stages, the per-stage analysis gate, the commit preflight.
+# The chain runs from a staged copy under a scratch root (/srv/e15/src layout); rung.sh, ladder.sh, baseline.sh,
+# smoke.sh and the analysis scripts are stubs that log their calls; systemctl and sudo are stubs.
+#
+# Run: bash experiments/e17-lease/rig/tests/chain-e17b.test.sh      (SHELLCHECK=/path/to/shellcheck if not on PATH)
+set -uo pipefail
+
+RIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+E15RIG="$RIG/../../e15-session-density/rig"
+fails=0
+check() {
+  if [ "$2" = "$3" ]; then
+    echo "  ok: $1"
+  else
+    echo "  FAIL: $1 (want '$3', got '$2')"
+    fails=$((fails + 1))
+  fi
+}
+
+TMP="$(cd "$(mktemp -d)" && pwd -P)"
+trap 'rm -rf "$TMP"' EXIT
+
+# --- syntax and lint -------------------------------------------------------------------------
+SC="${SHELLCHECK:-$(command -v shellcheck || true)}"
+for s in chain-e17b.sh tests/chain-e17b.test.sh; do
+  bash -n "$RIG/$s" 2>"$TMP/n.out"
+  check "bash -n $s" "$([ -s "$TMP/n.out" ] && echo FAIL || echo clean)" "clean"
+  if [ -n "$SC" ]; then
+    "$SC" -x "$RIG/$s" >"$TMP/sc.out" 2>&1
+    check "shellcheck $s" "$([ -s "$TMP/sc.out" ] && echo FAIL || echo clean)" "clean"
+    [ -s "$TMP/sc.out" ] && sed 's/^/    /' "$TMP/sc.out" | head -20
+  else
+    check "shellcheck available" "missing" "present"
+  fi
+done
+
+# --- fixture: a staged copy under a scratch root, stub stage commands --------------------------------------------
+T="$TMP/e15-rig-test.chain"
+PIN=1111111111111111111111111111111111111111
+mkdir -p "$T/src/e15" "$T/src/e17" "$T/state" "$T/runs" "$TMP/stub" "$TMP/an"
+cp -R "$E15RIG" "$T/src/e15/rig"
+cp -R "$RIG" "$T/src/e17/rig"
+CHAIN="$T/src/e17/rig/chain-e17b.sh"
+PRED="$T/src/e17/predictions-e17b.json"
+printf 'E17B_MOCA_PIN=%s\n' "$PIN" >"$TMP/pins.sh"
+printf '%s\n' "$PIN" >"$T/state/go-stock-e17b"
+echo fresh-metal >"$T/state/host_profile"
+CLOG="$TMP/calls.log"
+# systemctl: no unit is active, except the worker when $TMP/worker-up exists; sudo runs the command
+printf '#!/usr/bin/env bash\ncase "$*" in *e15-worker.service*) [ -e "%s/worker-up" ] ;; *) exit 1 ;; esac\n' "$TMP" >"$TMP/stub/systemctl"
+printf '#!/usr/bin/env bash\n[ "$1" = -n ] && shift\nexec "$@"\n' >"$TMP/stub/sudo"
+chmod +x "$TMP/stub/systemctl" "$TMP/stub/sudo"
+# a stage stub KIND: logs "KIND ARGS tag=<E15_TAG> memmax=<E15_SQUEEZE_MEMMAX_MB> e17b=<E17B>"; fails when the
+# logged call starts with $FAIL_ON. rung writes the rung's params.json (arm, moca_commit), ladder at the squeeze
+# point a ladder.json with squeeze.stop_n 64 and the memmax it ran under.
+mkstub() {
+  cat >"$TMP/stub-$1.sh" <<SH
+#!/usr/bin/env bash
+line="$1 \$* tag=\${E15_TAG:-unset} memmax=\${E15_SQUEEZE_MEMMAX_MB:-unset} e17b=\${E17B:-unset}"
+echo "\$line" >>"$CLOG"
+case "\$line" in "\${FAIL_ON:-NONE}"*) echo "stub failure: \$line" >&2; exit 1 ;; esac
+case "$1" in
+rung)
+  d=\$E15_ROOT/runs/\$3/\$1/N\$2\${E15_TAG:+-\$E15_TAG}
+  mkdir -p "\$d"
+  printf '{"arm": "%s", "n": %s, "moca_commit": "%s"}\n' "\$1" "\$2" "\${STUB_COMMIT:-$PIN}" >"\$d/params.json" ;;
+ladder)
+  if [ "\$1" = squeeze ]; then
+    mkdir -p "\$E15_ROOT/runs/squeeze/\$2"
+    printf '{"squeeze": {"stop_n": %s, "memmax_mb": %s}}\n' "\${STUB_STOP_N:-64}" "\$E15_SQUEEZE_MEMMAX_MB" >"\$E15_ROOT/runs/squeeze/\$2/ladder.json"
+  fi ;;
+esac
+exit 0
+SH
+  chmod +x "$TMP/stub-$1.sh"
+}
+for k in rung ladder baseline smoke; do mkstub "$k"; done
+# analysis stubs: warmcold_lease.py writes warmcold-report.json (unknown = STUB_UNKNOWN), lease_ends.py lease_ends.json
+cat >"$TMP/an/warmcold_lease.py" <<'PY'
+import json, os, sys
+json.dump({"unknown": int(os.environ.get("STUB_UNKNOWN", "0")), "disagreements": 0}, open(sys.argv[1] + "/warmcold-report.json", "w"))
+print("warm 1 cold 1 unknown %s" % os.environ.get("STUB_UNKNOWN", "0"))
+open(os.environ["ALOG"], "a").write("warmcold_lease %s\n" % sys.argv[1])
+PY
+cat >"$TMP/an/lease_ends.py" <<'PY'
+import json, os, sys
+json.dump({"notices": {"unmatched_ends": [{"key": "k"}] * int(os.environ.get("STUB_UNMATCHED", "0"))}}, open(sys.argv[1] + "/lease_ends.json", "w"))
+print("valid True")
+open(os.environ["ALOG"], "a").write("lease_ends %s\n" % sys.argv[1])
+PY
+printf 'import os, sys\nopen(os.environ["ALOG"], "a").write("vm_age_lease %%s\\n" %% sys.argv[1])\nprint("ok")\n' >"$TMP/an/vm_age_lease.py"
+
+seal() { printf '{"status": "sealed", "sealed": %s, "predictions": []}\n' "$1" >"$PRED"; }
+chain() { # [VAR=val ...] -- ARGS: run the staged chain; rc echoed, output in $TMP/c.out
+  local envs=()
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do
+    envs+=("$1")
+    shift
+  done
+  [ "${1:-}" != -- ] || shift
+  : >"$CLOG"
+  : >"$TMP/alog"
+  env -u E17B E15_ROOT="$T" E15_TEST_ROOT="$T" E15_TEST_PINS="$TMP/pins.sh" E15_MANIFEST="$TMP/m.md" PATH="$TMP/stub:$PATH" \
+    E17B_RUNG="$TMP/stub-rung.sh" E17B_LADDER="$TMP/stub-ladder.sh" E17B_BASELINE="$TMP/stub-baseline.sh" E17B_SMOKE="$TMP/stub-smoke.sh" \
+    E17B_ANALYSIS="$TMP/an" ALOG="$TMP/alog" ${envs[@]+"${envs[@]}"} bash "$CHAIN" "$@" >"$TMP/c.out" 2>&1
+  echo $?
+}
+calls() { sed 's/ *tag=.*//' "$CLOG" | tr '\n' ';'; }
+reset() { rm -rf "$T/e17b" "$T/runs" && mkdir -p "$T/runs"; }
+BRINGUP="smoke;baseline default sbx;baseline default ship-300;baseline pycache sbx;baseline pycache ship-300;"
+
+test_chain_lists_stages() {
+  reset
+  rm -f "$PRED"
+  check "list: exit 0, the predictions state in the header" "$(chain -- --list)/$(head -1 "$TMP/c.out" | grep -c 'predictions: missing')" "0/1"
+  check "list: the ordered stages (Task 12 bring-up, Task 14 Steps 1-4, optional ladders, the 256 MiB runs last)" \
+    "$(sed -n '2,$p' "$TMP/c.out" | awk '{print $1}' | tr '\n' ' ')" \
+    "smoke cal-default-sbx cal-default-ship-300 cal-pycache-sbx cal-pycache-ship-300 base-pycache-low-sbx base-pycache-low-ship-300 base-pycache-ship-30 base-pycache-ship-120 lat-pycache-sbx-n1 lat-pycache-ship-300-n1 lat-pycache-low-sbx-n1 lat-pycache-low-ship-300-n1 lat-pycache-sbx-n128 lat-pycache-ship-300-n128 lat-pycache-low-sbx-n128 lat-pycache-low-ship-300-n128 lat-pycache-ship-30-n128 lat-pycache-ship-120-n128 ladder-default-sbx ladder-default-ship-300 base-squeeze-sbx base-squeeze-ship-300 squeeze-ship-300 squeeze-sbx probe-overhead ownwalk base-default-ship-30 base-default-ship-120 ladder-default-ship-30 ladder-default-ship-120 ram256-pycache-sbx-n1 ram256-pycache-ship-300-n1 ram256-squeeze "
+  check "list: only the smoke and the four calibration baselines run before the seal; every other stage needs it" \
+    "$(sed -n '2,$p' "$TMP/c.out" | awk '$2 == "-" {print $1}' | tr '\n' ' ')/$(sed -n '2,$p' "$TMP/c.out" | awk '$2 != "-" && $2 != "seal" && $2 != "opt"' | wc -l | tr -d ' ')" \
+    "smoke cal-default-sbx cal-default-ship-300 cal-pycache-sbx cal-pycache-ship-300 /0"
+  check "list: the optional stages are the ship-30/ship-120 default ladders and their baselines" \
+    "$(awk '$2 == "opt" {print $1}' "$TMP/c.out" | tr '\n' ' ')" "base-default-ship-30 base-default-ship-120 ladder-default-ship-30 ladder-default-ship-120 "
+}
+test_chain_refuses_unsealed() {
+  local v
+  for v in missing false '"true"' broken; do
+    reset
+    case "$v" in missing) rm -f "$PRED" ;; broken) printf '{"sealed": true,' >"$PRED" ;; *) seal "$v" ;; esac
+    printf '%s:%s:%s:%s ' "$v" "$(chain)" "$(grep -c 'E17B REFUSED: predictions' "$TMP/c.out")" "$(grep -c . "$CLOG")"
+  done >"$TMP/ref.out"
+  check "seal: refused up front (exit 1, nothing run) unless predictions-e17b.json says \"sealed\": true (the boolean)" \
+    "$(cat "$TMP/ref.out")" 'missing:1:1:0 false:1:1:0 "true":1:1:0 broken:1:1:0 '
+  check "seal: the refusal names the stages that need it and how to stop before them" \
+    "$(grep -c 'stages that need the seal: base-pycache-low-sbx .* (stop before them with --to cal-pycache-ship-300)' "$TMP/c.out")" "1"
+  reset
+  rm -f "$PRED"
+  check "seal: --from a sealed stage is refused too" "$(chain -- --from ladder-default-sbx --to ladder-default-sbx)/$(grep -c . "$CLOG")" "1/0"
+}
+test_chain_runs_bringup_unsealed() {
+  reset
+  rm -f "$PRED"
+  check "bring-up: --to cal-pycache-ship-300 runs without the seal: smoke, then the four calibration baselines, in order" \
+    "$(chain -- --to cal-pycache-ship-300)/$(calls)" "0/$BRINGUP"
+  check "bring-up: every stage ran with E17B=1, each wrote its own log and a .done" \
+    "$(grep -c 'e17b=1$' "$CLOG")/$(find "$T/e17b" -name '*.log' | wc -l | tr -d ' ')/$(find "$T/e17b" -name '*.done' | wc -l | tr -d ' ')" "5/5/5"
+  check "bring-up: the stage log holds the stage's own output" "$(grep -c 'stub' "$T/e17b/smoke.log")/$(grep -c 'E17B smoke DONE' "$TMP/c.out")" "0/1"
+  check "bring-up: run again, everything selected is done: nothing runs" "$(chain -- --to cal-pycache-ship-300)/$(grep -c . "$CLOG")/$(grep -c 'is done' "$TMP/c.out")" "0/0/1"
+}
+test_chain_resumes_at_stage() {
+  reset
+  seal true
+  check "resume: a failing stage stops the chain there, naming the --from to resume with" \
+    "$(chain FAIL_ON='rung ship-300 128 pycache ' -- --to ladder-default-sbx)/$(grep -c 'E17B lat-pycache-ship-300-n128 FAILED rc=1 .*resume with --from lat-pycache-ship-300-n128' "$TMP/c.out")/$(tail -1 "$CLOG" | cut -d' ' -f1-4)" \
+    "1/1/rung ship-300 128 pycache"
+  check "resume: the stages before it are done, it and the later ones are not" \
+    "$([ -f "$T/e17b/lat-pycache-sbx-n128.done" ] && echo before-done)/$([ -f "$T/e17b/lat-pycache-ship-300-n128.done" ] && echo failed-done || echo failed-open)/$([ -f "$T/e17b/lat-pycache-low-sbx-n128.done" ] && echo later-done || echo later-open)" \
+    "before-done/failed-open/later-open"
+  check "resume: without --from the next run starts at the failed stage and does not re-run earlier ones" \
+    "$(chain -- --to lat-pycache-low-sbx-n128)/$(grep -c 'resuming at lat-pycache-ship-300-n128' "$TMP/c.out")/$(calls)" \
+    "0/1/rung ship-300 128 pycache;rung sbx 128 pycache-low;"
+  check "resume: --from STAGE starts there whatever is done, --to STAGE stops after it" \
+    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-ship-300-n1)/$(calls)" "0/rung sbx 1 pycache;rung ship-300 1 pycache;"
+  check "resume: an unknown stage, or --from after --to, is a usage error (exit 2), nothing run" \
+    "$(chain -- --from nowhere)/$(chain -- --to nowhere)/$(chain -- --from ladder-default-sbx --to smoke)/$(grep -c . "$CLOG")" "2/2/2/0"
+  reset
+  check "resume: a full sealed run goes stage by stage in the list's order (to the squeeze climb)" \
+    "$(chain E17B_SQUEEZE_MEMMAX_MB=8192 -- --to squeeze-ship-300)/$(calls)" \
+    "0/${BRINGUP}baseline pycache-low sbx;baseline pycache-low ship-300;baseline pycache ship-30;baseline pycache ship-120;rung sbx 1 pycache;rung ship-300 1 pycache;rung sbx 1 pycache-low;rung ship-300 1 pycache-low;rung sbx 128 pycache;rung ship-300 128 pycache;rung sbx 128 pycache-low;rung ship-300 128 pycache-low;rung ship-30 128 pycache;rung ship-120 128 pycache;ladder default sbx;ladder default ship-300;baseline squeeze sbx;baseline squeeze ship-300;ladder squeeze ship-300;"
+  check "resume: rung stages are tagged lat; the caller's E15_TAG and E15_SQUEEZE_MEMMAX_MB never reach a stage" \
+    "$(chain E15_TAG=evil E15_SQUEEZE_MEMMAX_MB=1 -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(sed 's/.* tag=//' "$CLOG")" "0/lat memmax=unset e17b=1"
+}
+test_chain_squeeze_stages() {
+  reset
+  seal true
+  check "squeeze: the climb without E17B_SQUEEZE_MEMMAX_MB fails, naming it" \
+    "$(chain -- --from squeeze-ship-300 --to squeeze-ship-300)/$(grep -c 'needs E17B_SQUEEZE_MEMMAX_MB' "$T/e17b/squeeze-ship-300.log")/$(grep -c . "$CLOG")" "1/1/0"
+  check "squeeze: the climb is ladder.sh squeeze ship-300 under the value, then sbx runs once at its stop N under the same" \
+    "$(chain E17B_SQUEEZE_MEMMAX_MB=8192 -- --from squeeze-ship-300 --to squeeze-sbx)/$(tr '\n' ';' <"$CLOG")" \
+    "0/ladder squeeze ship-300 tag=unset memmax=8192 e17b=1;rung sbx 64 squeeze tag=sq memmax=8192 e17b=1;"
+  check "squeeze: sbx refuses a value other than the climb's" \
+    "$(chain E17B_SQUEEZE_MEMMAX_MB=4096 -- --from squeeze-sbx --to squeeze-sbx)/$(grep -c 'the ship-300 climb ran under 8192' "$T/e17b/squeeze-sbx.log")" "1/1"
+  check "squeeze: sbx alone takes the climb's value from its ladder.json" \
+    "$(chain -- --from squeeze-sbx --to squeeze-sbx)/$(cat "$CLOG")" "0/rung sbx 64 squeeze tag=sq memmax=8192 e17b=1"
+  printf '{"squeeze": {"stop_n": null, "memmax_mb": 8192}}\n' >"$T/runs/squeeze/ship-300/ladder.json"
+  check "squeeze: a climb that stopped at no N leaves sbx nothing to run (fails)" \
+    "$(chain -- --from squeeze-sbx --to squeeze-sbx)/$(grep -c 'stopped at no N' "$T/e17b/squeeze-sbx.log")/$(grep -c . "$CLOG")" "1/1/0"
+}
+test_chain_analysis_gate() {
+  reset
+  seal true
+  check "gate: each ship-* rung the stage wrote is analysed (warmcold_lease, lease_ends, vm_age_lease); sbx rungs are not" \
+    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-ship-300-n1)/$(sed "s#$T/runs/##" "$TMP/alog" | tr '\n' ';')" \
+    "0/warmcold_lease pycache/ship-300/N1-lat;lease_ends pycache/ship-300/N1-lat;vm_age_lease pycache/ship-300/N1-lat;"
+  check "gate: an unknown call stops the chain at that stage, which stays not done" \
+    "$(chain STUB_UNKNOWN=2 -- --from lat-pycache-ship-300-n1 --to lat-pycache-low-sbx-n1)/$(grep -c 'STOP pycache/ship-300/N1-lat: 2 unknown call(s)' "$TMP/c.out")/$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open)/$(grep -c . "$CLOG")" \
+    "1/1/open/1"
+  check "gate: an unmatched lease end stops it too" \
+    "$(chain STUB_UNMATCHED=1 -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c '1 unmatched lease end(s)' "$TMP/c.out")" "1/1"
+  check "gate: a rung written before the stage started is not re-analysed" \
+    "$(chain -- --from lat-pycache-sbx-n128 --to lat-pycache-sbx-n128)/$(grep -c . "$TMP/alog")" "0/0"
+}
+test_chain_preflight_and_guards() {
+  reset
+  seal true
+  mkdir -p "$T/runs/pycache/sbx/N1-old"
+  printf '{"arm": "sbx", "moca_commit": "c13d55649777e69ec7649d6fa8c08f4acb1f4e2e"}\n' >"$T/runs/pycache/sbx/N1-old/params.json"
+  check "preflight: a run directory holding another commit's rung refuses the stage (nothing run)" \
+    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(grep -c 'is not from E17B_MOCA_PIN' "$T/e17b/lat-pycache-sbx-n1.log")/$(grep -c . "$CLOG")" "1/1/0"
+  reset
+  check "blocked: the ownership-walk and 256 MiB stages fail naming what is missing" \
+    "$(chain -- --from ownwalk --to ownwalk)/$(grep -c 'not wired: the ownership-walk runner' "$T/e17b/ownwalk.log")/$(chain -- --from ram256-squeeze)/$(grep -c 'not wired: a 256 MiB guest-RAM' "$T/e17b/ram256-squeeze.log")" "1/1/1/1"
+  check "probe-overhead: fails while Task 11's probe-overhead.sh is missing" \
+    "$(chain -- --from probe-overhead --to probe-overhead)/$(grep -c 'probe-overhead.sh (Task 11 provides it)' "$T/e17b/probe-overhead.log")" "1/1"
+  check "optional: the ship-30/ship-120 ladder stages SKIP without E17B_OPTIONAL=1, run with it" \
+    "$(chain -- --from base-default-ship-30 --to ladder-default-ship-120)/$(grep -c 'SKIP (optional' "$TMP/c.out")/$(chain E17B_OPTIONAL=1 -- --from base-default-ship-30 --to ladder-default-ship-120)/$(calls)" \
+    "0/4/0/baseline default ship-30;baseline default ship-120;ladder default ship-30;ladder default ship-120;"
+  touch "$TMP/worker-up"
+  check "guard: a rung's worker running -> refused before any stage" "$(chain -- --from smoke --to smoke)/$(grep -c 'refusing to preempt it' "$TMP/c.out")/$(grep -c . "$CLOG")" "1/1/0"
+  rm -f "$TMP/worker-up"
+  printf 'E17B_MOCA_PIN=%s\n' 0000000000000000000000000000000000000000 >"$TMP/pins0.sh"
+  check "guard: the placeholder pin is refused before any stage" \
+    "$(chain E15_TEST_PINS="$TMP/pins0.sh" -- --from smoke --to smoke)/$(grep -c 'placeholder' "$TMP/c.out")/$(grep -c . "$CLOG")" "1/1/0"
+  check "guard: only the staged copy runs" \
+    "$(env E15_ROOT="$T" E15_TEST_ROOT="$T" E15_TEST_PINS="$TMP/pins.sh" PATH="$TMP/stub:$PATH" bash "$RIG/chain-e17b.sh" --list >"$TMP/c.out" 2>&1; echo $?)/$(grep -c 'run the staged copy' "$TMP/c.out")" "1/1"
+}
+test_chain_lists_stages
+test_chain_refuses_unsealed
+test_chain_runs_bringup_unsealed
+test_chain_resumes_at_stage
+test_chain_squeeze_stages
+test_chain_analysis_gate
+test_chain_preflight_and_guards
+
+echo
+if [ "$fails" -eq 0 ]; then echo "chain-e17b.test.sh: all checks passed"; else echo "chain-e17b.test.sh: $fails FAILED"; fi
+exit "$([ "$fails" -eq 0 ] && echo 0 || echo 1)"

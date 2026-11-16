@@ -10,6 +10,8 @@
 #      check, not a measured rung, and a drawn start index misses py_analyze about 35% of the time):
 #        E15_WARMUP_S=60 E15_WINDOW_S=120 E15_TAG=smoke E15_START_ZERO=1 bash experiments/e15-session-density/rig/rung.sh ARM 1 pycache
 #      for ARM in sbx resident-300 lease-30 lease-120 -> /srv/e15/runs/pycache/ARM/N1-smoke/
+#      (E17B=1: sbx and the shipped-lease arms instead; the resident and E17a lease arms need the resident
+#      build, which the E17b profile skips)
 #      (other E15_* environment passes through to rung.sh; E15_RUNG overrides the rung command)
 #   2. the sbx rung: every py_analyze call in calls.jsonl has status ok and exit 0, except a call
 #      the run's end cut (cause cut_at_end: not a failure, experiments/e15-session-density/driver/exec.go), and at least one
@@ -33,9 +35,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # repo has it at $HERE/../../../experiments/e15-session-density/rig. Use whichever exists.
 E15_RIG=$HERE/../../e15/rig
 [ -f "$E15_RIG/lib.sh" ] || E15_RIG=$HERE/../../../experiments/e15-session-density/rig
-# shellcheck source=SCRIPTDIR/../../experiments/e15-session-density/rig/lib.sh
+# shellcheck source=SCRIPTDIR/../../e15-session-density/rig/lib.sh
 . "$E15_RIG/lib.sh"
-# shellcheck source=SCRIPTDIR/../../experiments/e15-session-density/rig/points.sh
+# shellcheck source=SCRIPTDIR/../../e15-session-density/rig/points.sh
 . "$E15_RIG/points.sh"
 
 [ "$E15_HOST_PROFILE" = fresh-metal ] || die "E15_HOST_PROFILE=$E15_HOST_PROFILE: E17 runs on fresh-metal only"
@@ -43,8 +45,9 @@ E17_SRC=$E15_ROOT/src/e17
 case "$HERE" in "$E17_SRC"/rig) ;; *) die "run the staged copy: $E17_SRC/rig/smoke.sh (not $HERE)" ;; esac
 POINT=pycache
 ARMS=(sbx resident-300 lease-30 lease-120)
-# E17b (E17B=1): the shipped-lease arms are smoked too (E15_ARMS / points.sh list them only under E17B=1).
-[ "${E17B:-}" != 1 ] || ARMS+=(ship-30 ship-120 ship-300)
+# E17b (E17B=1): sbx and the shipped-lease arms only (E15_ARMS / points.sh list those only under E17B=1); the
+# resident and E17a lease arms need microvm-worker-resident, which setup.sh does not build under E17B=1.
+[ "${E17B:-}" != 1 ] || ARMS=(sbx ship-30 ship-120 ship-300)
 RUNG=${E15_RUNG:-$E15_SRC/rig/rung.sh}
 START_ZERO=${E15_START_ZERO:-1}
 # Never preempt a rung someone else started (each rung.sh and the analyze check below stop E15's
@@ -124,6 +127,7 @@ if [ -d "$SBX" ]; then
   refuse_running_rung
   stop_rung_units
   stop_e15_unit "$E15_UNIT_RELAY"
+  # shellcheck disable=SC2119 # start_relay's optional $1 is the E17b lease arms' token-keyset env file; not here
   start_relay
   sleep 3
   ! grep -qs 'redis client error' "$E15_LOGS/relay.log" ||

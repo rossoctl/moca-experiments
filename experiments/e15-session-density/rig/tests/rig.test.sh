@@ -2375,6 +2375,14 @@ SH
     "$(smoke)/$(cut -d' ' -f2- "$TMP/sm.rlog" | tr '\n' ';')" \
     "0/sbx 1 pycache w=60 win=120 tag=smoke zero=1;resident-300 1 pycache w=60 win=120 tag=smoke zero=1;lease-30 1 pycache w=60 win=120 tag=smoke zero=1;lease-120 1 pycache w=60 win=120 tag=smoke zero=1;"
   grep -q 'FAILED\|smoke.sh:' "$TMP/sm.out" && sed 's/^/    /' "$TMP/sm.out" | tail -5
+  # E17b (Task 4 review C4-1): the resident and E17a lease arms need the resident build, which E17B=1 skips
+  printf 'E17B_MOCA_PIN=%s\n' 1111111111111111111111111111111111111111 >"$TMP/sm-e17b-pins.sh"
+  printf '#!/bin/sh\n' >"$SM/bin/microvm-worker-e17b"
+  chmod +x "$SM/bin/microvm-worker-e17b"
+  check "E17 smoke (stubbed): under E17B=1 the arms are sbx and the ship arms only, in that order" \
+    "$(smoke E17B=1 E15_TEST_PINS="$TMP/sm-e17b-pins.sh")/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx ship-30 ship-120 ship-300 "
+  check "E17 smoke (stubbed): E17B=0 keeps the E17 arms" "$(smoke E17B=0)/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx resident-300 lease-30 lease-120 "
+  rm -f "$SM/bin/microvm-worker-e17b"
   check "E17 smoke (stubbed): warmcold counts printed per rung, the pass line names the BUILD sha256" \
     "$(grep -c '^smoke pycache/[a-z0-9-]*/N1-smoke: warm [0-9]* cold [0-9]* unknown [0-9]* (holds=True)$' "$TMP/sm.out")/$(grep -c "analyze sha256 = BUILD dataset_sha256 ($SMSHA)" "$TMP/sm.out")" "4/1"
   check "E17 smoke (stubbed): analyze ran on its own key with the library's command; the copy removed after" \
@@ -2976,6 +2984,18 @@ test_ship_rung_harness() {
   echo reflink >"$RS/state/workspace_copy"
   printf '%s\n' "$E17B_FIXPIN" >"$RS/state/go-stock-e17b"
   cp "$TMP/meminfo-e17b" "$RS/meminfo"
+  # record.py stub: the rung completes (exit 0) once params.json is written
+  mkdir -p "$RS/src/e15/analysis"
+  printf 'import sys\nopen(sys.argv[1] + "/record.json", "w").write("{\\"holds\\": true}")\nprint("true")\n' >"$RS/src/e15/analysis/record.py"
+  # the squeeze point (Task 9): pycache-d768's corpus, the E17 library and the D=768 template
+  mkdir -p "$RS/corpora/pycache" "$RS/src/e17/workload" "$RS/template-pycache-d768"
+  printf '{"session":"s","calls":[]}\n' >"$RS/corpora/pycache/corpus.jsonl"
+  printf '{"table": {"mean_span_min": 30}}\n' >"$RS/corpora/pycache/corpus-report.json"
+  echo '{}' >"$RS/src/e17/workload/library.json"
+  head -c 4096 /dev/zero >"$RS/template-pycache-d768/workspace.img"
+  # e15.slice as setup.sh leaves it for this host's RAM (lib.sh e15_slice_limits): what `systemctl show` reports
+  read -r SLICE_MAX0 SLICE_HIGH0 < <(t17m fresh-metal 1 'e15_slice_limits 402653184')
+  printf 'MemoryMax=%s\nMemoryHigh=%s\n' "$SLICE_MAX0" "$SLICE_HIGH0" >"$RS/slice.state"
   # the -e17b driver stub: mint-key writes a fake key pair; a run records its args and writes a calls.jsonl
   cat >"$RS/bin/e15-driver-e17b" <<SH
 #!/bin/sh
@@ -2984,6 +3004,10 @@ if [ "\$1" = mint-key ]; then
   mkdir -p "\$3"; echo "FAKE-PEM" >"\$3/token.key"; echo "kid0123456789abcd:QUJD" >"\$3/token.pub"; exit 0
 fi
 echo driver >>"$SORD"
+# what the driver saw of its key directory (the rung removes it after the run): token.pub and the dir's mode
+for a; do case "\$a" in */token.key) d=\${a%/token.key}; echo "pub \$(cat "\$d/token.pub") mode \$(stat -c %a "\$d" 2>/dev/null || stat -f %Lp "\$d")" >>"$RS/driver-saw.log" ;; esac; done
+# STUB_DRIVER_TERM=1: the rung is killed (SIGTERM) while the driver runs
+if [ -n "\${STUB_DRIVER_TERM:-}" ]; then kill -TERM "\$PPID"; sleep 2; exit 0; fi
 out=; while [ \$# -gt 0 ]; do [ "\$1" = --out ] && out=\$2; shift; done
 [ -z "\${STUB_CALLS:-}" ] || printf '%s\n' "\$STUB_CALLS" >"\$out/calls.jsonl"
 exit \${STUB_DRIVER_EXIT:-0}
@@ -3009,6 +3033,11 @@ systemctl)
   case "\$*" in
   *"stop e15-relay.service"*) rm -f "$RS/relay-up" ;;
   *"stop e15-worker.service"*) rm -f "$RS/worker-up"; echo worker-stop >>"$SORD" ;;
+  *"show e15.slice --property=MemoryMax,MemoryHigh"*) echo show-slice >>"$SORD"; cat "$RS/slice.state" ;;
+  *"set-property --runtime e15.slice "*)
+    echo "set-property \${*:5}" >>"$SORD"
+    [ -z "\${STUB_SETPROP_FAIL:-}" ] || exit 1
+    printf '%s\n' "\${@:5}" >"$RS/slice.state" ;;
   esac
   exit 0 ;;
 systemd-run)
@@ -3017,8 +3046,14 @@ systemd-run)
   *--unit=e15-relay.service*) touch "$RS/relay-up"; echo relay-start >>"$SORD" ;;
   *--unit=e15-worker.service*)
     touch "$RS/worker-up"; echo worker-start >>"$SORD"
+    # the banner in moca's format (remote-worker/cmd/microvm-worker/main.go: the log.Printf with leaseBanner); STUB_BANNER on|off|none
+    b='2026/11/15 10:00:00 microvm-worker: relay=127.0.0.1:9643 sandbox_id=e15 tls=false vmm=firecracker D=0 guest=1024MiB budget=385024MiB slots=1792 standby_headroom=off mem_floor=1536MiB workspace_idle=24h0m0s lease=on lease_idle=5m0s/1h0m0s lease_max=8h0m0s/8h0m0s lease_grace=30s lease_start=192MiB lease_headroom=1.25 lease_pagecache=256MiB lease_reclaim_free=2048MiB labels=map[]'
+    case "\${STUB_BANNER:-on}" in
+    off) b='2026/11/15 10:00:00 microvm-worker: relay=127.0.0.1:9643 sandbox_id=e15 tls=false vmm=firecracker D=0 guest=1024MiB budget=385024MiB slots=1792 standby_headroom=off mem_floor=1536MiB workspace_idle=24h0m0s lease=off labels=map[]' ;;
+    none) b='' ;;
+    esac
     for a; do case "\$a" in StandardOutput=file:*)
-      printf 'microvm-worker: relay=127.0.0.1:9643 sandbox_id=e15 tls=false vmm=firecracker D=0 guest=1024MiB budget=385024MiB slots=1792 lease_start=192MiB headroom=1.25\nmicrovm-worker: attached, serving execs\n' >"\${a#StandardOutput=file:}" ;; esac; done ;;
+      { [ -z "\$b" ] || printf '%s\n' "\$b"; printf '2026/11/15 10:00:01 microvm-worker: attached, serving execs\n'; } >"\${a#StandardOutput=file:}" ;; esac; done ;;
   esac
   exit 0 ;;
 esac
@@ -3042,13 +3077,15 @@ srung() { # ARM [VAR=val ...]: a 1-session rung of ARM on the default point; E17
   : >"$SORD"
   : >"$SARGS"
   : >"$SSYS"
-  rm -f "$RS/worker-up" "$RS/secrets/relay-lease.env"
+  rm -f "$RS/worker-up" "$RS/secrets/relay-lease.env" "$RS/driver-saw.log"
   touch "$RS/relay-up"
   rm -rf "$RS/runs"
   mkdir -p "$RS/runs"
+  printf 'MemoryMax=%s\nMemoryHigh=%s\n' "$SLICE_MAX0" "$SLICE_HIGH0" >"$RS/slice.state"
   env E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_HOST_PROFILE=fresh-metal E15_ROOT="$RS" E15_TEST_ROOT="$RS" E15_MANIFEST="$TMP/ship.md" \
-    E15_WARMUP_S=1 E15_WINDOW_S=1 E15_MEMINFO="$RS/meminfo" PATH="$RSS:$STUB:$PATH" "$@" bash "$RIG/rung.sh" "$arm" 1 default >"$TMP/ship-rung.out" 2>&1
+    E15_WARMUP_S=1 E15_WINDOW_S=1 E15_MEMINFO="$RS/meminfo" PATH="$RSS:$STUB:$PATH" "$@" bash "$RIG/rung.sh" "$arm" "${SRUNG_N:-1}" "${SRUNG_POINT:-default}" >"$TMP/ship-rung.out" 2>&1
 }
+qrung() { SRUNG_POINT=squeeze srung "$@"; } # ARM [VAR=val ...]: the same rung at the squeeze point
 sparams() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$RS/runs/default/$1/N1/params.json" "$2" 2>&1; }
 test_ship_rung_passes_lease_flags() {
   srung ship-120
@@ -3086,9 +3123,9 @@ test_relay_env_has_token_keyset_and_issuer() {
     "$(cat "$RS/secrets/relay-lease.env")" "SH_SANDBOX_TOKEN_PUBLIC_KEYS=kid0123456789abcd:QUJD
 SH_SANDBOX_TOKEN_ISSUER=e17b-driver"
   check "relay env: the file is mode 0600" "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$RS/secrets/relay-lease.env")" "0o600"
-  check "relay env: the keyset is the one minted for this rung (the driver's --token-key dir)" \
-    "$(cat "$(grep -o -- '--token-key [^ ]*' "$SARGS" | cut -d' ' -f2 | sed 's#/token.key$#/token.pub#')")" "kid0123456789abcd:QUJD"
-  check "relay env: the key directory is mode 0700" "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$(grep -o -- '--token-key [^ ]*' "$SARGS" | cut -d' ' -f2 | xargs dirname)")" "0o700"
+  check "relay env: the keyset is the one minted for this rung (the driver's --token-key dir, as the driver saw it)" \
+    "$(sed -n 's/^pub \([^ ]*\) mode .*/\1/p' "$RS/driver-saw.log")" "kid0123456789abcd:QUJD"
+  check "relay env: the key directory is mode 0700 (as the driver saw it)" "$(sed -n 's/.* mode //p' "$RS/driver-saw.log")" "700"
   srung ship-30
   local d1 d2
   d1=$(grep -o -- '--token-key [^ ]*' "$SARGS")
@@ -3130,6 +3167,237 @@ test_relay_env_has_token_keyset_and_issuer
 test_rung_marks_ship_rung_failed
 check "ship arms: smoke.sh and reprobe.sh and record.py name them" \
   "$(grep -c 'ship-30 ship-120 ship-300' "$RIG/../../e17-lease/rig/smoke.sh")/$(grep -c 'ship-30 ship-120 ship-300' "$RIG/../../e17-lease/rig/reprobe.sh")/$(grep -c '"ship-30", "ship-120", "ship-300"' "$RIG/../analysis/record.py")" "1/1/1"
+# --- E17b Task 9: the squeeze point, the MemoryMax knob, the squeeze stop rule; Task 4 carry-overs C4-1..C4-3 ---
+qparam() { python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get(sys.argv[2]), sort_keys=True))' "$RS/runs/squeeze/$1/N1/params.json" "$2" 2>&1; }
+test_squeeze_point_defined() {
+  local f='e15_point squeeze && echo "$E15_P_ARMS|$E15_P_CORPUS|$E15_P_DATASET_MIB|$E15_P_IMAGE_MB|$E15_P_TEMPLATE_STAMP|${E15_P_LIBRARY#"$E15_ROOT"/}|$E15_P_FALLBACK|$E15_P_PROBE_CAP_MS"'
+  check "squeeze: pycache-d768's workload (corpus pycache, D 768, 1536 MiB image, its template, the E17 library) with arms ship-300 and sbx" \
+    "$(t17m fresh-metal 1 "$f")" "ship-300 sbx|pycache|768|1536|template-pycache-d768|src/e17/workload/library.json|0|120000"
+  check "squeeze: its settings are pycache-d768's but for the point name, so its signature (and baselines) are its own" \
+    "$(t17m fresh-metal 1 'e15_point squeeze; a=${E15_P_SETTINGS/point=squeeze /point=pycache-d768 }; e15_point pycache-d768; [ "$a" = "$E15_P_SETTINGS" ] && echo same; [ "$(e15_point_sig squeeze)" != "$(e15_point_sig pycache-d768)" ] && echo own-sig' | tr '\n' ' ')" "same own-sig "
+  check "squeeze: unknown with E17B unset, and on aws-prelim" \
+    "$(t17m fresh-metal unset 'e15_point squeeze; echo $?')/$(t17m aws-prelim 1 'e15_point squeeze; echo $?')" "1/1"
+  check "squeeze: no other point's arms or settings change (pycache-d768 still runs the E17 arms and the ship arms)" \
+    "$(t17m fresh-metal 1 'e15_point pycache-d768; echo $E15_P_ARMS')" "sbx resident-300 lease-30 lease-120 ship-30 ship-120 ship-300"
+  qrung resident-300
+  check "squeeze: rung.sh refuses an arm the point does not run (exit 2)" "$?/$(grep -c 'POINT squeeze does not run ARM resident-300' "$TMP/ship-rung.out")" "2/1"
+  qrung ship-300
+  check "squeeze: a ship-300 rung at the point runs (exit 0) with the D=768 template" "$?/$(qparam ship-300 point)/$(qparam ship-300 dataset_mib)" '0/"squeeze"/768'
+}
+test_memmax_set_and_restored_on_error() {
+  local want_set="set-property MemoryMax=8589934592 MemoryHigh=7516192768" want_restore="set-property MemoryMax=$SLICE_MAX0 MemoryHigh=$SLICE_HIGH0"
+  local orig="MemoryMax=$SLICE_MAX0 MemoryHigh=$SLICE_HIGH0 "
+  : >"$TMP/ship.md"
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=8192
+  check "memmax: a squeeze rung with the knob completes (exit 0)" "$?" "0"
+  check "memmax: the originals are read first, the limit set (MemoryHigh = MemoryMax - 1 GiB) before the worker starts, the originals restored after it stops" \
+    "$(grep -E '^(show-slice|set-property|worker-start|driver|worker-stop)' "$SORD" | tr '\n' ';')" "show-slice;$want_set;worker-start;driver;worker-stop;$want_restore;"
+  check "memmax: the slice is back at its original values" "$(tr '\n' ' ' <"$RS/slice.state")" "$orig"
+  check "memmax: one manifest line for the change, its UNDO the restore to the originals" \
+    "$(grep -c "e15.slice MemoryMax=8589934592 MemoryHigh=7516192768 .*| UNDO: sudo -n systemctl set-property --runtime e15.slice MemoryMax=$SLICE_MAX0 MemoryHigh=$SLICE_HIGH0\$" "$TMP/ship.md")/$(grep -c 'UNDO' "$TMP/ship.md")" "1/1"
+  check "memmax: params.json records the knob, the squeezed and the original values, and the restore" \
+    "$(qparam ship-300 squeeze_memmax_mb)/$(qparam ship-300 squeeze_slice)" \
+    "8192/{\"MemoryHigh\": 7516192768, \"MemoryMax\": 8589934592, \"original_MemoryHigh\": \"$SLICE_HIGH0\", \"original_MemoryMax\": \"$SLICE_MAX0\", \"restored\": true}"
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=8192 STUB_BANNER=off
+  check "memmax on error: the rung dies before the driver (lease=off) and the trap still restores the slice" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -E '^set-property' "$SORD" | tr '\n' ';')/$(tr '\n' ' ' <"$RS/slice.state")" "1/0/$want_set;$want_restore;/$orig"
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=8192 STUB_DRIVER_TERM=1
+  check "memmax on a signal: the rung killed (SIGTERM) while the driver runs restores the slice" \
+    "$?/$(grep -E '^set-property' "$SORD" | tr '\n' ';')/$(tr '\n' ' ' <"$RS/slice.state")" "143/$want_set;$want_restore;/$orig"
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=8192 STUB_SETPROP_FAIL=1
+  check "memmax: a failing set-property dies before the worker starts, and the restore is still attempted" \
+    "$?/$(grep -c '^worker-start' "$SORD")/$(grep -c '^set-property' "$SORD")/$(grep -c 'could not restore e15.slice' "$TMP/ship-rung.out")" "1/0/2/1"
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=999999999
+  check "memmax: a value above the slice's own MemoryMax is refused (a squeeze only lowers it), nothing set" \
+    "$?/$(grep -c '^set-property' "$SORD")/$(grep -c 'a squeeze only lowers it' "$TMP/ship-rung.out")" "1/0/1"
+  check "memmax: bad values are usage errors before any host change (exit 2, no systemd call)" \
+    "$(for v in abc 1024 0 -5 08192; do qrung ship-300 E15_SQUEEZE_MEMMAX_MB=$v; printf '%s:%s ' "$?" "$(grep -c . "$SSYS")"; done)" "2:0 2:0 2:0 2:0 2:0 "
+  srung ship-300 E15_SQUEEZE_MEMMAX_MB=8192
+  check "memmax: refused at any point but squeeze (exit 2, no systemd call, slice untouched)" "$?/$(grep -c . "$SSYS")/$(grep -cE '^(show-slice|set-property)' "$SORD")" "2/0/0"
+  qrung ship-300
+  check "memmax: unset at squeeze -> the slice is neither read nor set; params has no squeeze fields" \
+    "$(grep -cE '^(show-slice|set-property)' "$SORD")/$(qparam ship-300 squeeze_memmax_mb)" "0/null"
+  srung sbx E17B=
+  check "memmax: a sealed rung (E17B unset) never reads or sets the slice" "$(grep -cE '^(show-slice|set-property)' "$SORD")" "0"
+  check "refuse_units (fresh-metal): set-property on e15.slice with MemoryMax/MemoryHigh passes; another unit or property is refused" \
+    "$(for c in 'set-property --runtime e15.slice MemoryMax=1 MemoryHigh=1' 'set-property --runtime system.slice MemoryMax=1' 'set-property --runtime sh-relay.service MemoryMax=1' 'set-property --runtime e15.slice CPUQuota=10%'; do t17m fresh-metal 1 "(refuse_units $c) >/dev/null 2>&1 && echo pass || echo refused"; done | tr '\n' ' ')" "pass refused refused refused "
+  check "lib.sh e15_squeeze_limits: MemoryMax = MB MiB, MemoryHigh = MemoryMax - 1 GiB (the slice rule)" "$(t17m fresh-metal 1 'e15_squeeze_limits 8192')" "8589934592 7516192768"
+}
+test_rung_removes_token_keys() {
+  local n
+  srung ship-30
+  n=$(find "$RS/secrets" -maxdepth 1 -name 'token-*' | wc -l | tr -d ' ')
+  check "token keys: the driver had its key dir, and the rung removed it at its end" "$(grep -c '^pub ' "$RS/driver-saw.log")/$n" "1/0"
+  srung ship-30 STUB_BANNER=off
+  check "token keys: removed when the rung dies after the mint (before the driver)" "$(find "$RS/secrets" -maxdepth 1 -name 'token-*' | wc -l | tr -d ' ')" "0"
+  srung ship-30 STUB_DRIVER_TERM=1
+  check "token keys: removed when the rung is killed while the driver runs" "$(find "$RS/secrets" -maxdepth 1 -name 'token-*' | wc -l | tr -d ' ')" "0"
+  check "token keys: the rung's other secrets stay" "$(cat "$RS/secrets/exec.token")" "tok"
+  srung ship-30 E15_TAG='x..y'
+  check "token keys: a RUN_ID that is not a plain token-<run> leaf (here a ..) is refused before the mint" "$?/$(grep -c '^mint-key' "$SARGS")/$(grep -c 'not a token-<run> leaf' "$TMP/ship-rung.out")" "1/0/1"
+  check "token keys: no manifest line (the rung creates and removes the dir under \$E15_ROOT; the reason is in rung.sh)" \
+    "$(grep -c 'token-' "$TMP/ship.md")/$(grep -c 'needs no manifest line' "$RIG/rung.sh")" "0/1"
+  local S="$TROOT/secrets"
+  rm -rf "$S" "$TMP/tk-outside"
+  mkdir -p "$S/token-ok" "$S/token-extra" "$TMP/tk-outside"
+  echo k >"$S/token-ok/token.key"; echo p >"$S/token-ok/token.pub"
+  echo k >"$S/token-extra/token.key"; echo x >"$S/token-extra/other"
+  echo keep >"$TMP/tk-outside/token.key"
+  ln -s "$TMP/tk-outside" "$S/token-link"
+  echo s >"$S/exec.token"
+  local rm_t='(e17b_token_dir_remove "$1") >/dev/null 2>&1 && echo removed || echo refused'
+  check "token dir removal: a token-<run> leaf with its key pair is removed" "$(t17m fresh-metal 1 "set -- '$S/token-ok'; $rm_t")/$([ -e "$S/token-ok" ] && echo left || echo gone)" "removed/gone"
+  check "token dir removal: refuses the secrets dir itself, a dot-dot path, a nested path, a non-token leaf" \
+    "$(for d in "$S" "$S/../secrets" "$S/token-a/b" "$S/exec.token" "$S/token-" "$S/token-.."; do t17m fresh-metal 1 "set -- '$d'; $rm_t"; done | tr '\n' ' ')" "refused refused refused refused refused refused "
+  check "token dir removal: refuses a symlinked leaf; its target is untouched" \
+    "$(t17m fresh-metal 1 "set -- '$S/token-link'; $rm_t")/$(cat "$TMP/tk-outside/token.key")" "refused/keep"
+  check "token dir removal: an unexpected file stays (never rm -rf): the key goes, the dir is kept" \
+    "$(t17m fresh-metal 1 "set -- '$S/token-extra'; $rm_t")/$(find "$S/token-extra" -mindepth 1 -exec basename {} \; | tr '\n' ' ')" "refused/other "
+  check "token dir removal: other secrets are untouched" "$(cat "$S/exec.token")" "s"
+  check "token dir removal: no rm -rf in it" "$(sed -n '/^e17b_token_dir_remove()/,/^}/p' "$RIG/lib.sh" | grep -c 'rm -rf')/$(sed -n '/^e17b_token_dir_remove()/,/^}/p' "$RIG/lib.sh" | grep -c 'rm -f --')" "0/1"
+  rm -rf "$S" "$TMP/tk-outside"
+}
+test_ship_rung_checks_lease_banner() {
+  srung ship-300 STUB_BANNER=off
+  check "lease banner: lease=off -> the rung dies before the driver starts, naming lease-v1" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c "banner says lease=off.*lease-v1" "$TMP/ship-rung.out")" "1/0/1"
+  srung ship-300 STUB_BANNER=none
+  check "lease banner: no banner -> the rung dies before the driver starts" "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'no startup banner' "$TMP/ship-rung.out")" "1/0/1"
+  srung ship-300
+  check "lease banner: lease=on -> logged, the driver runs" "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'worker banner: lease=on' "$TMP/ship-rung.out")" "0/1/1"
+  check "lease banner: the check comes before the relay attach probe (no probe Exec on a lease=off worker)" \
+    "$(awk '/worker banner: lease=on/{b=NR} /relay attach check passed/{p=NR} END{print (b && p && b < p) ? "before" : "after"}' "$TMP/ship-rung.out")" "before"
+  srung sbx STUB_BANNER=off
+  check "lease banner: under E17B=1 sbx needs the lease-v1 snapshot too (every E17b arm runs on it)" "$?/$(grep -c '^driver$' "$SORD")" "1/0"
+  srung sbx STUB_BANNER=none E17B=
+  check "lease banner: a sealed rung (E17B unset) is not checked" "$(grep -c 'SEALED-DRIVER-RAN' "$SORD")" "1"
+}
+# the squeeze ladder rule: the stop rule's reading of samples.jsonl (worker /stats leaseEnds), then ladder.sh
+SQRULE="$RIG/../../e17-lease/analysis/squeeze_rule.py"
+mkq() { # DIR WARMUP WINDOW EXPR: params.json + samples.jsonl at 1 Hz; EXPR(t) is the cumulative memory_reclaim
+  # count, None for a sample without worker stats, -1 for worker stats without leaseEnds (sbx)
+  mkdir -p "$1"
+  python3 - "$@" <<'PY'
+import json, sys
+d, w, win, expr = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+f = eval("lambda t: " + expr)
+json.dump({"warmup_s": w, "window_s": win, "arm": "ship-300", "n": 8, "memory_abort": None, "oom_kills": 0},
+          open(d + "/params.json", "w"))
+with open(d + "/samples.jsonl", "w") as o:
+    for t in range(0, w + win + 30):
+        v = f(t)
+        r = {"t": t, "ts": 1e9 + t}
+        if v is not None:
+            r["worker"] = {"leaseVMs": 3} if v < 0 else {"leaseEnds": {"idle": 3, "memory_reclaim": v}}
+        o.write(json.dumps(r) + "\n")
+PY
+}
+sqr() { # DIR -> "met/min_per_minute/why-word" from squeeze-rule.json (and the script's exit code)
+  python3 "$SQRULE" "$1" >"$TMP/sqr.out" 2>&1
+  local rc=$?
+  python3 -c 'import json,sys; r=json.load(open(sys.argv[1] + "/squeeze-rule.json")); print("%s/%s/%s/%s" % (sys.argv[2], json.dumps(r["met"]), r.get("min_per_minute"), (r.get("why") or "-").split(" ")[0]))' "$1" "$rc" 2>&1
+}
+test_squeeze_stop_rule() {
+  local q="$TMP/sq-rule"
+  rm -rf "$q"
+  mkq "$q/a" 60 300 't // 30'
+  check "stop rule: a reclaim every 30 s through the window -> met (2 per minute in each of 5 minutes)" "$(sqr "$q/a")" "0/true/2/-"
+  check "stop rule: squeeze-rule.json lists the 5 whole minutes of the window [60, 360)" \
+    "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["window"], [(b["start"], b["end"], b["memory_reclaim"]) for b in r["bins"]])' "$q/a/squeeze-rule.json")" \
+    "[60, 360] [(60, 120, 2), (120, 180, 2), (180, 240, 2), (240, 300, 2), (300, 360, 2)]"
+  mkq "$q/b" 60 300 't // 30 if t < 180 else (6 if t < 240 else 6 + (t - 240) // 30)'
+  check "stop rule: one minute without a reclaim -> not met, naming the minute" "$(sqr "$q/b")/$(grep -c 'minute \[180, 240) had 0' "$q/b/squeeze-rule.json")" "0/false/0/minute/1"
+  mkq "$q/c" 60 300 '0 if t < 70 else 10'
+  check "stop rule: 10 reclaims bunched in the first minute (2 per minute on average) -> not met (every minute counts)" "$(sqr "$q/c")" "0/false/0/minute"
+  mkq "$q/d" 60 300 'min(t, 59) // 10'
+  check "stop rule: reclaims in the warm-up only -> not met" "$(sqr "$q/d")" "0/false/0/minute"
+  mkq "$q/e" 60 300 '-1'
+  check "stop rule: worker stats without leaseEnds (sbx) -> not met, 0 reclaims" "$(sqr "$q/e")" "0/false/0/minute"
+  mkq "$q/f" 60 300 'None if 230 <= t <= 241 else t // 30'
+  check "stop rule: no worker stats within 5 s before a minute boundary -> undecidable (null), never guessed" "$(sqr "$q/f")/$(grep -c 't=240' "$q/f/squeeze-rule.json")" "0/null/None/no/1"
+  mkq "$q/g" 60 300 't // 30 if t < 200 else 0'
+  check "stop rule: a counter that goes down (the worker restarted) -> undecidable (null)" "$(sqr "$q/g")" "0/null/None/memory_reclaim"
+  mkq "$q/h" 60 30 't'
+  check "stop rule: a window shorter than a minute -> undecidable (null)" "$(sqr "$q/h")" "0/null/None/window"
+  mkq "$q/i" 60 330 't // 30'
+  check "stop rule: a trailing part of the window under a minute is not judged (5 bins of a 330 s window)" \
+    "$(sqr "$q/i")/$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["bins"]))' "$q/i/squeeze-rule.json")" "0/true/2/-/5"
+  check "stop rule: no samples.jsonl -> exit 1, no verdict" "$(rm -f "$q/a/samples.jsonl" "$q/a/squeeze-rule.json"; python3 "$SQRULE" "$q/a" >/dev/null 2>&1; echo $?)/$([ -e "$q/a/squeeze-rule.json" ] && echo written || echo none)" "1/none"
+  rm -rf "$q"
+  # ladder.sh at the squeeze point against a stub rung.sh: the stub writes record.json (holds breaks from N=16),
+  # params.json and samples.jsonl whose reclaim rate is 2/min from N=SQ_MET_N (default 64) and 0 below
+  local SQ="$TMP/e15-rig-test.sq" SR="$TMP/sq-rung.sh"
+  rm -rf "$SQ"
+  mkdir -p "$SQ/src/e17/analysis" "$SQ/runs"
+  cp "$SQRULE" "$SQ/src/e17/analysis/squeeze_rule.py"
+  cat >"$SR" <<'SH'
+#!/usr/bin/env bash
+arm=$1 n=$2 point=$3
+echo "rung $arm $n $point memmax=${E15_SQUEEZE_MEMMAX_MB:-unset}" >>"$SQ_LOG"
+d=$E15_ROOT/runs/$point/$arm/N$n${E15_TAG:+-$E15_TAG}
+mkdir -p "$d"
+h=true
+[ "$n" -lt 16 ] || h=false
+printf '{"holds": %s, "holds_abs": %s, "aborted": false, "unseeded_sessions": 0, "repeat_required": false, "median_class_pace": 1.0}\n' "$h" "$h" >"$d/record.json"
+python3 - "$d" "$n" <<'PY'
+import json, os, sys
+d, n = sys.argv[1], int(sys.argv[2])
+per = 2 if n >= int(os.environ.get("SQ_MET_N", "64")) else 0
+gap = str(n) == os.environ.get("SQ_GAP_N")
+abort = {"reason": "memory_floor"} if str(n) == os.environ.get("SQ_ABORT_N") else None
+json.dump({"warmup_s": 60, "window_s": 300, "arm": "ship-300", "n": n, "memory_abort": abort, "oom_kills": 0}, open(d + "/params.json", "w"))
+with open(d + "/samples.jsonl", "w") as o:
+    for t in range(0, 400):
+        r = {"t": t, "ts": 1e9 + t}
+        if not (gap and 230 <= t <= 241):
+            r["worker"] = {"leaseEnds": {"memory_reclaim": t * per // 60}}
+        o.write(json.dumps(r) + "\n")
+PY
+SH
+  chmod +x "$SR"
+  sql() { # ARM [POINT] [VAR=val ...]: ladder.sh at the squeeze point (or POINT) with the stub; rc, output in $TMP/sq.out
+    local arm=$1 pt=squeeze
+    shift
+    case "${1:-}" in *=*) ;; ?*) pt=$1; shift ;; esac
+    : >"$TMP/sq.log"
+    rm -rf "$SQ/runs"
+    env E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_HOST_PROFILE=fresh-metal E15_ROOT="$SQ" E15_TEST_ROOT="$SQ" E15_MANIFEST="$TMP/sq.md" \
+      E15_RUNG="$SR" SQ_LOG="$TMP/sq.log" PATH="$STUB:$PATH" "$@" bash "$RIG/ladder.sh" "$pt" "$arm" >"$TMP/sq.out" 2>&1
+  }
+  sqj() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(eval(sys.argv[2], {"d": d})))' "$SQ/runs/${2:-squeeze}/${3:-ship-300}/ladder.json" "$1" 2>&1; }
+  sql ship-300 E15_SQUEEZE_MEMMAX_MB=8192
+  check "squeeze ladder: climbs past the latency break (N=16) and stops at the first N whose window meets the rule (64)" \
+    "$?/$(cut -d' ' -f3 "$TMP/sq.log" | tr '\n' ' ')" "0/1 8 16 24 32 40 48 56 64 "
+  check "squeeze ladder: every rung ran with the knob" "$(grep -c 'memmax=8192$' "$TMP/sq.log")" "9"
+  check "squeeze ladder: ladder.json records the stop N, why, the knob, and each rung's rule verdict; n_max is still the latency one" \
+    "$(sqj 'd["squeeze"]["stop_n"]')/$(sqj 'd["squeeze"]["stopped_by"]')/$(sqj 'd["squeeze"]["memmax_mb"]')/$(sqj '[r["met"] for r in d["squeeze"]["rungs"]]')/$(sqj 'd["n_max"]')" \
+    '64/"reclaim_rate"/8192/[false, false, false, false, false, false, false, false, true]/8'
+  check "squeeze ladder: each rung dir has its squeeze-rule.json" "$(find "$SQ/runs/squeeze/ship-300" -name squeeze-rule.json | wc -l | tr -d ' ')" "9"
+  sql ship-300 E15_SQUEEZE_MEMMAX_MB=8192 SQ_ABORT_N=32
+  check "squeeze ladder: a memory-guard event (the watchdog's memory_abort) stops the climb there (criterion 3 already failed)" \
+    "$?/$(sqj 'd["squeeze"]["stop_n"]')/$(sqj 'd["squeeze"]["stopped_by"]')/$(tail -1 "$TMP/sq.log" | cut -d' ' -f3)" '0/32/"guard"/32'
+  sql ship-300 E15_SQUEEZE_MEMMAX_MB=8192 SQ_GAP_N=24
+  check "squeeze ladder: an undecidable rung (stats missing at a boundary) is a rig error: the ladder dies there" \
+    "$?/$(tail -1 "$TMP/sq.log" | cut -d' ' -f3)/$(grep -c 'squeeze stop rule undecidable at N=24' "$TMP/sq.out")" "1/24/1"
+  sql ship-300 E15_SQUEEZE_MEMMAX_MB=8192 E15_LADDER_RUNGS="1 8 16"
+  check "squeeze ladder: never met within the rungs climbed -> stop_n null, stopped_by top_of_ladder" \
+    "$?/$(sqj 'd["squeeze"]["stop_n"]')/$(sqj 'd["squeeze"]["stopped_by"]')" '0/null/"top_of_ladder"'
+  sql ship-300
+  check "squeeze ladder: refused without E15_SQUEEZE_MEMMAX_MB (exit 2, no rung)" "$?/$(grep -c . "$TMP/sq.log")/$(grep -c 'E15_SQUEEZE_MEMMAX_MB' "$TMP/sq.out")" "2/0/1"
+  sql sbx E15_SQUEEZE_MEMMAX_MB=8192
+  check "squeeze ladder: refused for sbx (exit 2, no rung): sbx runs one rung at the N the ship-300 climb stopped at" "$?/$(grep -c . "$TMP/sq.log")" "2/0"
+  sql ship-300 pycache-d768
+  check "squeeze ladder: any other point keeps the E15 stop rule (both verdicts broken at 16), no squeeze record" \
+    "$?/$(cut -d' ' -f3 "$TMP/sq.log" | tr '\n' ' ')/$(sqj '"squeeze" in d' pycache-d768)" "0/1 8 16 /false"
+  sql ship-300 pycache-d768 E15_SQUEEZE_MEMMAX_MB=8192
+  check "squeeze ladder: the knob is refused at another point (exit 2, no rung)" "$?/$(grep -c . "$TMP/sq.log")" "2/0"
+  rm -rf "$SQ" "$SR"
+}
+test_squeeze_point_defined
+test_memmax_set_and_restored_on_error
+test_rung_removes_token_keys
+test_ship_rung_checks_lease_banner
+test_squeeze_stop_rule
 rm -rf "$RS" "$RSS"
 echo
 if [ "$fails" -eq 0 ]; then

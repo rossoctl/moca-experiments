@@ -33,6 +33,16 @@
 # E16 (fresh-metal only): E15_LADDER_TAG=s2 prefixes every rung directory's tag (N<n>-s2,
 # N<n>-s2-repeat, N<n>-s2-k2, ...), so a second-seed run (E15_SEED=2) never moves the seed-1 rung
 # aside. A tag must be [a-z0-9][a-z0-9-]* (e.g. s2, stag-s2); anything else exits 2. aws-prelim ignores it.
+#
+# E17b squeeze (POINT squeeze, E17B=1, fresh-metal; experiments/e17-lease/PLAN-E17B.md Task 9): a ship arm only, and
+# E15_SQUEEZE_MEMMAX_MB is required (every rung runs under it; rung.sh); the knob is refused at any other point.
+# Every rule above still runs and holds/n_max are still recorded, but the climb stops on the squeeze rule instead
+# of on condition 4: after each counted rung, experiments/e17-lease/analysis/squeeze_rule.py (staged at
+# $E15_ROOT/src/e17/analysis) judges its window. The climb stops at the first rung with a memory-guard event
+# (params.json memory_abort, the MemAvailable watchdog, or oom_kills > 0: stopped_by "guard"), else at the first
+# rung where memory_reclaim rose in every whole minute of the window (stopped_by "reclaim_rate"); an undecidable
+# rung (met null) is a rig error. ladder.json adds squeeze: {rule, memmax_mb, stop_n, stopped_by, rungs: [{n, met,
+# min_per_minute, guard, dir}]}; stop_n is null and stopped_by "top_of_ladder" when no rung stopped it.
 set -euo pipefail
 E15_PROG=ladder.sh
 # Probe-only knobs (classprobe.sh) must never reach a measured rung: rung.sh would start every
@@ -115,12 +125,35 @@ if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ -n "${E15_LADDER_TAG:-}" ]; then
   TAGP=$E15_LADDER_TAG
 fi
 
+# E17b squeeze: the climb's own stop rule (see the header).
+SQUEEZE=0
+SQUEEZE_RULE=""
+if [ "$POINT" = squeeze ]; then
+  SQUEEZE=1
+  e17b_lease_arm "$ARM" || {
+    echo "ladder.sh: the squeeze climb is for a ship arm (its stop rule reads the worker's lease reclaims); sbx runs one rung.sh at the N the ship-300 climb stopped at" >&2
+    exit 2
+  }
+  [[ "${E15_SQUEEZE_MEMMAX_MB:-}" =~ ^[1-9][0-9]*$ ]] && [ "$E15_SQUEEZE_MEMMAX_MB" -gt 1024 ] || {
+    echo "ladder.sh: POINT squeeze needs E15_SQUEEZE_MEMMAX_MB (an integer above 1024, the e15.slice limit every rung runs under)" >&2
+    exit 2
+  }
+  SQUEEZE_RULE=$E15_ROOT/src/e17/analysis/squeeze_rule.py
+  [ -f "$SQUEEZE_RULE" ] || die "no $SQUEEZE_RULE (experiments/e17-lease/rig/sync.sh stages it)"
+elif [ -n "${E15_SQUEEZE_MEMMAX_MB:-}" ]; then
+  echo "ladder.sh: E15_SQUEEZE_MEMMAX_MB is for POINT squeeze only" >&2
+  exit 2
+fi
+
 RUNG=${E15_RUNG:-$HERE/rung.sh}
 WARMUP=${E15_WARMUP_S:-$(e15_default_warmup "$ARM")}
 OUTDIR=$E15_RUNS/$POINT/$ARM
 mkdir -p "$OUTDIR"
 rungs_json=$OUTDIR/ladder-rungs.jsonl
 : >"$rungs_json"
+squeeze_json=$OUTDIR/ladder-squeeze.jsonl
+[ "$SQUEEZE" = 0 ] || : >"$squeeze_json"
+sq_stop=null sq_by=top_of_ladder
 
 # rec_field FILE KEY: true/false for booleans and null, the value otherwise; 0 for a missing number.
 rec_field() {
@@ -217,13 +250,48 @@ for n in "${CLIMB[@]}"; do
       alive_abs=0
     fi
   fi
+  if [ "$SQUEEZE" = 1 ]; then
+    python3 "$SQUEEZE_RULE" "$dir" >&2 || die "squeeze_rule.py failed on $dir: rig error, ladder stopped"
+    read -r met mpm guard why < <(python3 - "$dir" <<'PY'
+import json, sys
+d = sys.argv[1]
+r = json.load(open(d + "/squeeze-rule.json"))
+p = json.load(open(d + "/params.json"))
+guard = bool(p.get("memory_abort")) or int(p.get("oom_kills") or 0) > 0
+print(json.dumps(r["met"]), json.dumps(r.get("min_per_minute")), json.dumps(guard), r.get("why") or "-")
+PY
+    )
+    printf '{"n":%s,"met":%s,"min_per_minute":%s,"guard":%s,"dir":"%s"}\n' "$n" "$met" "$mpm" "$guard" "$dir" >>"$squeeze_json"
+    if [ "$guard" = true ]; then
+      sq_stop=$n sq_by=guard
+      log "N=$n: squeeze: a memory-guard event (memory_abort or an OOM kill); the climb stops here"
+      break
+    fi
+    [ "$met" != null ] || die "N=$n: squeeze stop rule undecidable at N=$n ($why): rig error, ladder stopped"
+    if [ "$met" = true ]; then
+      sq_stop=$n sq_by=reclaim_rate
+      log "N=$n: squeeze: memory_reclaim in every minute of the window (min $mpm per minute); the climb stops here"
+      break
+    fi
+    continue
+  fi
   [ "$alive" = 1 ] || [ "$alive_abs" = 1 ] || break
 done
 
-python3 - "$OUTDIR/ladder.json" "$rungs_json" "$POINT" "$ARM" "$START" "$n_max" "$stopped" "$n_max_abs" "$stopped_abs" "${E15_LADDER[*]}" "$REQUESTED" <<'PY'
+SQ_ARGS=()
+[ "$SQUEEZE" = 0 ] || SQ_ARGS=("$squeeze_json" "$E15_SQUEEZE_MEMMAX_MB" "$sq_stop" "$sq_by")
+python3 - "$OUTDIR/ladder.json" "$rungs_json" "$POINT" "$ARM" "$START" "$n_max" "$stopped" "$n_max_abs" "$stopped_abs" "${E15_LADDER[*]}" "$REQUESTED" ${SQ_ARGS[@]+"${SQ_ARGS[@]}"} <<'PY'
 import json, sys
-out, rungs, point, arm, start, n_max, stopped, n_max_abs, stopped_abs, ladder, requested = sys.argv[1:]
+out, rungs, point, arm, start, n_max, stopped, n_max_abs, stopped_abs, ladder, requested = sys.argv[1:12]
 rows = [json.loads(l) for l in open(rungs) if l.strip()]
+squeeze = None
+if len(sys.argv) > 12:  # E17b squeeze (see the header)
+    sq_rows, memmax, sq_stop, sq_by = sys.argv[12:16]
+    squeeze = {"rule": "stop at the first rung with a memory-guard event (memory_abort, oom_kills > 0), else at the first "
+                       "whose /stats leaseEnds.memory_reclaim rose by >= 1 in every whole minute of the window "
+                       "(experiments/e17-lease/analysis/squeeze_rule.py); n_max above is condition 4's, not the stop",
+               "memmax_mb": int(memmax), "stop_n": None if sq_stop == "null" else int(sq_stop), "stopped_by": sq_by,
+               "rungs": [json.loads(l) for l in open(sq_rows) if l.strip()]}
 overhead = n1_pace = None
 try:
     bj = json.load(open(out.rsplit("/", 1)[0] + "/N1/baseline.json"))
@@ -238,8 +306,14 @@ json.dump({"point": point, "arm": arm, "start_n": int(start), "ladder": [int(x) 
            "abs_rule": "condition 4 as p95(class excess) <= B + 250 ms (B = the arm's N=1 within-class excess p95; excess = added latency minus the per-class N=1 probe median)",
            "n1_overhead_ms": overhead, "n1_median_pace": n1_pace,
            # E16: present only when E15_LADDER_RUNGS chose the rungs (fresh-metal)
-           **({"rungs_requested": [int(x) for x in requested.split()]} if requested else {})},
+           **({"rungs_requested": [int(x) for x in requested.split()]} if requested else {}),
+           # E17b: present only at POINT squeeze
+           **({"squeeze": squeeze} if squeeze else {})},
           open(out, "w"), indent=2)
 PY
 rm -f "$rungs_json"
+[ "$SQUEEZE" = 0 ] || {
+  rm -f "$squeeze_json"
+  log "ladder $POINT/$ARM: squeeze stop at N=$sq_stop ($sq_by), E15_SQUEEZE_MEMMAX_MB=$E15_SQUEEZE_MEMMAX_MB"
+}
 log "ladder $POINT/$ARM: N_max=$n_max (stopped at $stopped), N_max_abs=$n_max_abs (stopped at $stopped_abs); $OUTDIR/ladder.json"
