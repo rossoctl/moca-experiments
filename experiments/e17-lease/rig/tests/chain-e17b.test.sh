@@ -304,6 +304,8 @@ test_chain_gate_reads_rung_failure_flags() {
     "$(chain STUB_ABORTED=true STUB_DRIVER_EXIT=1 -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c '^warmcold_lease' "$TMP/alog")" "1/0"
   check "gate: a memory-watchdog abort (driver killed, not aborted: a host verdict) does not stop the stage" \
     "$(chain STUB_DRIVER_EXIT=143 STUB_MEMORY_ABORT='{"reason":"floor"}' -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(chain STUB_NO_RECORD=1 STUB_DRIVER_EXIT=143 STUB_MEMORY_ABORT='{"reason":"floor"}' -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)" "0/0"
+  check "gate: a ship rung's memory-watchdog abort (rung_failed set with memory_abort) does not stop the stage" \
+    "$(chain STUB_DRIVER_EXIT=143 STUB_RUNG_FAILED='"driver_exit=143"' STUB_MEMORY_ABORT='{"reason":"floor"}' -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c 'STOP' "$TMP/c.out")" "0/0"
   check "gate: a clean sbx rung passes the flag check (driver_exit 0, rung_failed null, aborted false)" \
     "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$([ -f "$T/e17b/lat-pycache-sbx-n1.done" ] && echo "done")" "0/done"
   check "gate: an unreadable params.json stops the stage (never passes)" \

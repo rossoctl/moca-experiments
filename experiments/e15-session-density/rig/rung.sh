@@ -520,7 +520,8 @@ except OSError:
 print(n)
 PY
   )
-  if [ "$driver_exit" != 0 ]; then
+  # A memory-watchdog abort killed the driver: that is the host's verdict (record.py: not aborted), not a failure.
+  if [ "$driver_exit" != 0 ] && [ "$memory_abort" = null ]; then
     rung_failed=\"driver_exit=$driver_exit\"
     log "$ARM rung failed: driver exit $driver_exit"
   elif [ "$set_mode_failed" != 0 ]; then

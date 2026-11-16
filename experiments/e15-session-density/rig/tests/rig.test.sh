@@ -3240,6 +3240,8 @@ test_rung_marks_ship_rung_failed() {
   srung ship-30 STUB_DRIVER_EXIT=0 STUB_CALLS='{"session":"a","cause":"ok"}'
   check "ship rung failure: a clean driver and no set_mode_failed row is not a failure" \
     "$(grep -c 'rung failed' "$TMP/ship-rung.out")/$(sparams ship-30 rung_failed)/$(sparams ship-30 driver_exit)" "0/None/0"
+  check "ship rung failure: a memory-watchdog abort (the host's verdict) is not a failed rung" \
+    "$(grep -c 'if \[ "\$driver_exit" != 0 \] && \[ "\$memory_abort" = null \]; then' "$RIG/rung.sh")" "1"
   srung sbx STUB_DRIVER_EXIT=0 STUB_CALLS='{"session":"a","cause":"set_mode_failed"}'
   check "ship rung failure: the rule is for ship-* only (sbx is not judged by it)" "$(grep -c 'rung failed' "$TMP/ship-rung.out")/$(sparams sbx driver_exit)" "0/0"
 }

@@ -289,7 +289,7 @@ p = json.load(open(os.path.join(d, "params.json")))
 rp = os.path.join(d, "record.json")
 r = json.load(open(rp)) if os.path.exists(rp) else None
 why = []
-if p.get("rung_failed") is not None:
+if p.get("rung_failed") is not None and not p.get("memory_abort"):
     why.append("rung_failed %s" % p["rung_failed"])
 de = p.get("driver_exit") or 0
 if r is not None and r.get("aborted") is True:
