@@ -216,7 +216,9 @@ if [ ! -d "$E15_MOCA/.git" ]; then
 fi
 [ "$(git -C "$E15_MOCA" rev-parse HEAD)" = "$E15_MOCA_PIN" ] || die "$E15_MOCA is not at $E15_MOCA_PIN"
 mapfile -t GOENV_USER < <(e15_goenv user)
-if ! stamp_ok node "$E15_MOCA_PIN"; then
+NODE_STAMP=node
+[ "${E17B:-}" = 1 ] && NODE_STAMP=node-e17b # its own stamp: the sealed checkout's "node" stamp is never overwritten
+if ! stamp_ok "$NODE_STAMP" "$E15_MOCA_PIN"; then
   log "moca: pi-fork submodule + npm ci + build, pnpm install --frozen-lockfile (logs in $E15_LOGS)"
   git -C "$E15_MOCA" submodule update --init --quiet pi-fork
   (cd "$E15_MOCA/pi-fork" && npm ci --no-audit --no-fund >"$E15_LOGS/pi-npm.log" 2>&1 &&
@@ -224,7 +226,7 @@ if ! stamp_ok node "$E15_MOCA_PIN"; then
     die "pi-fork build failed; see $E15_LOGS/pi-*.log"
   (cd "$E15_MOCA" && pnpm install --frozen-lockfile --store-dir "$E15_ROOT/pnpm-store" >"$E15_LOGS/pnpm.log" 2>&1) ||
     die "pnpm install failed; see $E15_LOGS/pnpm.log"
-  stamp_set node "$E15_MOCA_PIN"
+  stamp_set "$NODE_STAMP" "$E15_MOCA_PIN"
   m_note "moca node deps installed (pnpm store $E15_ROOT/pnpm-store)"
 fi
 

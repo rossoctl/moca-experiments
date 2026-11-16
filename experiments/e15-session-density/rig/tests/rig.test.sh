@@ -2764,8 +2764,10 @@ test_e17b_profile_on() {
   check "e17b on: every other pins.sh pin is unchanged" \
     "$([ "$(t17 unset 'for n in "${E15_PINS[@]}"; do echo "$n=${!n}"; done' | sha256sum)" = "$(t17 1 'for n in "${E15_PINS[@]}"; do echo "$n=${!n}"; done' E15_TEST_PINS="$TMP/e17b-test-pins.sh" | sha256sum)" ] && echo same || echo differ)" "same"
   check "e17b on: the snapshot key in setup.sh is built from E15_MOCA_PIN on both profiles (so it follows the pin)" "$(grep -c 'snap_key="\$E15_MOCA_PIN-\$wheels_key-' "$RIG/setup.sh")" "2"
-  check "e17b on: setup.sh's clone, node and stock-go stamps use E15_MOCA and E15_MOCA_PIN" \
-    "$(grep -c 'stamp_ok node "\$E15_MOCA_PIN"' "$RIG/setup.sh")/$(grep -c 'stamp_ok "\$(stock_stamp)" "\$E15_MOCA_PIN"' "$RIG/setup.sh")" "1/1"
+  check "e17b on: setup.sh's clone, node and stock-go stamps use E15_MOCA and E15_MOCA_PIN (node stamp is node-e17b under E17B=1)" \
+    "$(grep -c 'stamp_ok "\$NODE_STAMP" "\$E15_MOCA_PIN"' "$RIG/setup.sh")/$(grep -c 'stamp_ok "\$(stock_stamp)" "\$E15_MOCA_PIN"' "$RIG/setup.sh")" "1/1"
+  check "e17b on: setup.sh keeps the sealed node stamp apart (NODE_STAMP=node-e17b under E17B=1, node otherwise)" \
+    "$(grep -c '^NODE_STAMP=node$' "$RIG/setup.sh")/$(grep -c 'NODE_STAMP=node-e17b' "$RIG/setup.sh")" "1/1"
   check "e17b on: setup.sh skips the resident build (apply.sh) when E17B=1, runs it otherwise" \
     "$(grep -B1 'k=\$(src_key resident)' "$RIG/setup.sh" | grep -c 'E17B')/$(awk '/^if \[ "\$\{E17B:-\}" != 1 \]; then$/{g=1} g&&/^k=\$\(src_key resident\)$/{k=1} k&&/resident\/apply\.sh/{a=1} a&&/^fi$/{print "guarded"; exit}' "$RIG/setup.sh")" "1/guarded"
 }
