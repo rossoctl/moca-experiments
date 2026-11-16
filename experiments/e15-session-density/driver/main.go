@@ -23,6 +23,9 @@ func main() {
 const dialTimeout = 30 * time.Second
 
 func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "mint-key" {
+		return mintKeyMain(args[1:], stderr)
+	}
 	fs := flag.NewFlagSet("e15-driver", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (

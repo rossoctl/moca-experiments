@@ -110,6 +110,10 @@ e15_point() {
     ;;
   *) return 1 ;;
   esac
+  # E17b (E17B=1, fresh-metal): the shipped-lease arms run the points sbx runs for criteria 1 and 2 (default, smoke, pycache*).
+  if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ "${E17B:-}" = 1 ]; then
+    case "$1" in default | smoke | pycache | pycache-low | pycache-d64 | pycache-d768) E15_P_ARMS+=" ship-30 ship-120 ship-300" ;; esac
+  fi
   E15_P_SETTINGS="point=$1 corpus=$E15_P_CORPUS library=${E15_P_LIBRARY#"$E15_ROOT"/} template=${E15_P_TEMPLATE#"$E15_ROOT"/}"
   E15_P_SETTINGS+=" image_mb=$E15_P_IMAGE_MB dataset_mib=$E15_P_DATASET_MIB dataset_seed=$E15_P_DATASET_SEED"
   E15_P_SETTINGS+=" scan_classes=$E15_P_SCAN_CLASSES scan_cmd=$E15_P_SCAN_CMD"

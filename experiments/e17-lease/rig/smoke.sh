@@ -43,6 +43,8 @@ E17_SRC=$E15_ROOT/src/e17
 case "$HERE" in "$E17_SRC"/rig) ;; *) die "run the staged copy: $E17_SRC/rig/smoke.sh (not $HERE)" ;; esac
 POINT=pycache
 ARMS=(sbx resident-300 lease-30 lease-120)
+# E17b (E17B=1): the shipped-lease arms are smoked too (E15_ARMS / points.sh list them only under E17B=1).
+[ "${E17B:-}" != 1 ] || ARMS+=(ship-30 ship-120 ship-300)
 RUNG=${E15_RUNG:-$E15_SRC/rig/rung.sh}
 START_ZERO=${E15_START_ZERO:-1}
 # Never preempt a rung someone else started (each rung.sh and the analyze check below stop E15's

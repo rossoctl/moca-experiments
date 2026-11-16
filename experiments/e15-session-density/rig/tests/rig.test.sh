@@ -2848,6 +2848,289 @@ test_e17b_setup_never_deletes_the_sealed_snapshot
 test_e17b_builds_to_separate_binaries
 test_worker_bin_follows_profile
 test_sealed_binaries_untouched_when_e17b_set
+
+# --- E17b Task 4: ship-* arms, relay token keyset, lease worker env, the -e17b driver binaries ----
+t17m() { # PROFILE E17B-value|unset EXPR [VAR=val ...]: lib.sh + points.sh sourced; E15_MEMINFO is $TMP/meminfo-e17b
+  local prof=$1 ev=$2 expr=$3
+  shift 3
+  if [ "$ev" = unset ]; then
+    env -u E17B E15_HOST_PROFILE="$prof" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_MEMINFO="$TMP/meminfo-e17b" "$@" \
+      bash -c 'source "$1"; source "$2"; eval "$3"' _ "$RIG/lib.sh" "$RIG/points.sh" "$expr" 2>&1
+  else
+    env E17B="$ev" E15_HOST_PROFILE="$prof" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_MEMINFO="$TMP/meminfo-e17b" "$@" \
+      bash -c 'source "$1"; source "$2"; eval "$3"' _ "$RIG/lib.sh" "$RIG/points.sh" "$expr" 2>&1
+  fi
+}
+printf 'MemTotal:       402653184 kB\nMemAvailable:   400000000 kB\n' >"$TMP/meminfo-e17b" # 393216 MiB
+test_ship_arms_known_on_fresh_metal_only() {
+  local isarm='for a in ship-30 ship-120 ship-300; do e15_is_arm $a && printf "yes " || printf "no "; done'
+  check "ship arms: known on fresh-metal under E17B=1" "$(t17m fresh-metal 1 "$isarm")" "yes yes yes "
+  check "ship arms: refused on aws-prelim even under E17B=1" "$(t17m aws-prelim 1 "$isarm")" "no no no "
+  check "ship arms: refused on fresh-metal with E17B unset (the sealed procedures are unchanged)" "$(t17m fresh-metal unset "$isarm")" "no no no "
+  check "ship arms: E15_ARMS on fresh-metal under E17B=1 appends them after the lease arms" \
+    "$(t17m fresh-metal 1 'echo ${E15_ARMS[*]}')" "sbx resident-inf resident-300 control lease-30 lease-120 ship-30 ship-120 ship-300"
+  check "ship arms: E15_ARMS with E17B unset is the E17 list" "$(t17m fresh-metal unset 'echo ${E15_ARMS[*]}')" "sbx resident-inf resident-300 control lease-30 lease-120"
+  check "ship arms: the default, smoke and pycache* points run them under E17B=1" \
+    "$(t17m fresh-metal 1 'for p in default smoke pycache pycache-low pycache-d64 pycache-d768; do e15_point $p; case " $E15_P_ARMS " in *" ship-30 ship-120 ship-300 "*) printf "%s " $p ;; esac; done')" \
+    "default smoke pycache pycache-low pycache-d64 pycache-d768 "
+  check "ship arms: no point lists them with E17B unset" \
+    "$(t17m fresh-metal unset 'for p in default smoke pycache pycache-low pycache-d64 pycache-d768 lowduty mem512 short long; do e15_point $p; case " $E15_P_ARMS " in *" ship-"*) printf "%s " $p ;; esac; done')" ""
+  check "ship arms: the lowduty and mem512 points do not run them" \
+    "$(t17m fresh-metal 1 'for p in lowduty mem512 short long no-infra no-chains; do e15_point $p; case " $E15_P_ARMS " in *" ship-"*) printf "%s " $p ;; esac; done')" ""
+  check "ship arms: the default warm-up is 1200 s (as the lease arms)" "$(t17m fresh-metal 1 'e15_default_warmup ship-30; e15_default_warmup ship-300' | tr '\n' ' ')" "1200 1200 "
+}
+test_ship_worker_env_has_admission() {
+  local wenv='worker_env ship-120 "$1"; cat "$1"' f="$TMP/ship-wenv"
+  # 393216 MiB host RAM - 8192 = 385024
+  check "ship worker_env: SH_MAX_COMMITTED_MB = host RAM MiB - 8192" "$(t17m fresh-metal 1 'worker_env ship-120 "'"$f"'"; grep "^SH_MAX_COMMITTED_MB=" "'"$f"'"')" "SH_MAX_COMMITTED_MB=385024"
+  check "ship worker_env: WORKER_MAX_CONCURRENT is above the ladder's top N (also with E15_LADDER_EXTRA)" \
+    "$(t17m fresh-metal 1 'worker_env ship-30 "'"$f"'"; top=0; for n in "${E15_LADDER[@]}"; do [ "$n" -gt "$top" ] && top=$n; done; v=$(sed -n "s/^WORKER_MAX_CONCURRENT=//p" "'"$f"'"); [ "$v" -gt "$top" ] && echo above' E15_LADDER_EXTRA="1280 1536")" "above"
+  check "ship worker_env: standby depth 0, no resident knobs, no lease knobs (the defaults stand)" \
+    "$(t17m fresh-metal 1 'worker_env ship-300 "'"$f"'"; sed -n "s/^SH_STANDBY_DEPTH=//p" "'"$f"'"; grep -cE "^(E15_RESIDENT|SH_LEASE_)" "'"$f"'"' | tr '\n' ' ')" "0 0 "
+  check "ship worker_env: the three ship arms differ in nothing (the idle timeout is the token's)" \
+    "$(t17m fresh-metal 1 'for a in ship-30 ship-120 ship-300; do worker_env $a "'"$f"'"; sha256sum <"'"$f"'"; done' | sort -u | wc -l | tr -d ' ')" "1"
+  check "ship worker_env: it keeps the physical guard and the other sbx lines" \
+    "$(t17m fresh-metal 1 'worker_env ship-120 "'"$f"'"; grep -E "^(SH_HOST_MEM_FLOOR_MB|SH_GUEST_RAM_MB|SH_VMM|SH_MAX_RUNS)=" "'"$f"'"' | tr '\n' ' ')" "SH_VMM=firecracker SH_GUEST_RAM_MB=1024 SH_MAX_RUNS=2048 SH_HOST_MEM_FLOOR_MB=1536 "
+  check "ship worker_env: no readable MemTotal -> refused, not a guessed budget" \
+    "$(t17m fresh-metal 1 '(worker_env ship-30 "'"$f"'") >/dev/null 2>&1; echo $?' E15_MEMINFO="$TMP/no-such-meminfo")" "1"
+  check "ship worker_env: refused outside E17B=1" "$(t17m fresh-metal unset '(worker_env ship-30 "'"$f"'") >/dev/null 2>&1; echo $?')" "1"
+}
+test_sbx_arm_unchanged() {
+  local a="$TMP/sbx-wenv-a" b="$TMP/sbx-wenv-b"
+  t17m fresh-metal unset 'worker_env sbx "'"$a"'"' >/dev/null
+  t17m fresh-metal 1 'worker_env sbx "'"$b"'"' >/dev/null
+  check "sbx worker_env under E17B=1 is byte-identical to E17B unset" "$(cmp -s "$a" "$b" && echo same || echo differ)" "same"
+  check "sbx worker_env keeps depth 2, 256 slots and the 1 TiB budget" "$(grep -E '^(SH_STANDBY_DEPTH|WORKER_MAX_CONCURRENT|SH_MAX_COMMITTED_MB)=' "$b" | tr '\n' ' ')" "SH_STANDBY_DEPTH=2 WORKER_MAX_CONCURRENT=256 SH_MAX_COMMITTED_MB=1048576 "
+  check "resident-300 and lease-30 worker_env are unchanged by the profile" \
+    "$(for ev in unset 1; do t17m fresh-metal $ev 'for x in resident-300 lease-30; do worker_env $x "'"$a"'"; sha256sum <"'"$a"'"; done'; done | sort | uniq -c | awk '{print $1}' | tr '\n' ' ')" "2 2 "
+}
+test_e17b_driver_builds_to_separate_binaries() {
+  local blk="$TMP/e17b-driver-build.sh" rec="$TMP/e17b-driver-calls.log"
+  awk '/^k=\$\(src_key driver\)$/{p=1} /^# E17b \(E17B=1\): the shipped worker runs/{exit} p{print}' "$RIG/setup.sh" >"$blk"
+  check "e17b driver build: the extracted setup.sh block holds the driver builds (sealed 2 + e17b 2)" "$(grep -c 'go build' "$blk")" "4"
+  mkdir -p "$TROOT/bin" "$TROOT/logs" "$TMP/driver"
+  run_blk() { # E17B-value METAL: run the block with go builds simulated (each writes its -o file)
+    : >"$rec"
+    env ${1:+E17B=$1} E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" REC="$rec" METAL="$2" TMP_SRC="$TMP" bash -c '
+      source "$1"
+      GOENV_USER=()
+      E15_SRC=$TMP_SRC
+      src_key() { echo srckey; }
+      env() { while [ $# -gt 0 ]; do [ "$1" = -o ] && { echo built >"$2"; echo "build $2" >>"$REC"; }; shift; done; }
+      stamp_ok() { [ -e "$E15_BIN/.stamp-$1" ] && [ "$(cat "$E15_BIN/.stamp-$1")" = "$2" ]; }
+      stamp_set() { echo "stamp $1 $2" >>"$REC"; printf "%s" "$2" >"$E15_BIN/.stamp-$1"; }
+      sha256_of() { echo x; }
+      m_note() { :; }
+      source "$2"' _ "$RIG/lib.sh" "$blk" >"$TMP/e17b-dbuild.out" 2>&1
+  }
+  rm -f "$TROOT"/bin/.stamp-* "$TROOT"/bin/e15-driver*
+  printf 'sealed-driver' >"$TROOT/bin/e15-driver"
+  chmod +x "$TROOT/bin/e15-driver"
+  printf 'sealed-defer' >"$TROOT/bin/e15-driver-defer"
+  run_blk 1 1
+  check "e17b driver build: under E17B=1 the builds write only the -e17b driver and defer variant" \
+    "$(sort "$rec" | grep '^build' | sed "s#$TROOT/##" | tr '\n' ' ')" "build bin/e15-driver-defer-e17b build bin/e15-driver-e17b "
+  check "e17b driver build: the stamp written is go-driver-e17b, never go-driver or go-driver-defer" \
+    "$(grep -c '^stamp go-driver-e17b srckey$' "$rec")/$(grep -cE '^stamp go-driver(-defer)? ' "$rec")" "1/0"
+  check "e17b driver build: the sealed e15-driver and e15-driver-defer are byte-for-byte untouched" \
+    "$(cat "$TROOT/bin/e15-driver")/$(cat "$TROOT/bin/e15-driver-defer")" "sealed-driver/sealed-defer"
+  run_blk 1 1
+  check "e17b driver build: a second run with the stamp set builds nothing" "$(grep -c . "$rec")" "0"
+  rm -f "$TROOT"/bin/.stamp-* "$TROOT"/bin/e15-driver*
+  printf 'sealed-driver' >"$TROOT/bin/e15-driver"
+  chmod +x "$TROOT/bin/e15-driver"
+  run_blk "" 1
+  check "e17b driver build: with E17B unset a changed driver on metal still builds e15-driver-defer only (as before)" \
+    "$(grep '^build' "$rec" | sed "s#$TROOT/##" | tr '\n' ' ')/$(cat "$TROOT/bin/e15-driver")" "build bin/e15-driver-defer /sealed-driver"
+  rm -f "$TROOT"/bin/.stamp-* "$TROOT"/bin/e15-driver*
+  run_blk "" 0
+  check "e17b driver build: with E17B unset and no driver the old path builds e15-driver and stamps go-driver" \
+    "$(grep '^build' "$rec" | sed "s#$TROOT/##" | tr '\n' ' ')/$(grep -c '^stamp go-driver srckey$' "$rec")" "build bin/e15-driver /1"
+  rm -rf "$TROOT/bin" "$TROOT/logs"
+  check "e17b driver build: lib.sh names the binaries" \
+    "$(t17m fresh-metal 1 'echo $E15_BIN' | sed "s#$TROOT/##")" "bin"
+}
+test_sealed_driver_untouched_when_e17b_set() {
+  check "e17b driver: the sealed build lines in setup.sh are still present, once each" \
+    "$(grep -c 'go build -o "\$E15_BIN/e15-driver-defer" \.' "$RIG/setup.sh")/$(grep -c 'go build -o "\$E15_BIN/e15-driver" \.' "$RIG/setup.sh")" "1/1"
+  check "e17b driver: no E17B build writes a sealed driver name (every e17b go build names -e17b)" \
+    "$(grep -E 'go build -o "\$E15_BIN/e15-driver[a-z-]*e17b" \.' "$RIG/setup.sh" | wc -l | tr -d ' ')" "2"
+  check "e17b driver: rung.sh under E17B=1 selects the -e17b driver and its defer variant" \
+    "$(grep -c 'DRIVER=\${DRIVER}-e17b' "$RIG/rung.sh")/$(grep -c 'BASE_DRIVER=\${BASE_DRIVER}-e17b' "$RIG/rung.sh")" "1/1"
+}
+# the shipped-arm rung, end to end against stubs (no host: systemd-run, sudo, grpcurl, the driver and the worker are scripts)
+test_ship_rung_harness() {
+  RS="$TMP/e15-rig-test.ship"
+  RSS="$TMP/shipstub"
+  rm -rf "$RS" "$RSS"
+  mkdir -p "$RSS" "$RS"/{corpora/default,src/e15/commands,bin,template,secrets,logs,state,workspaces,jail,runs}
+  SORD="$RS/order.log"
+  SARGS="$RS/driver-args.log"
+  SSYS="$RS/sysd.log"
+  printf '{"session":"s","calls":[]}\n' >"$RS/corpora/default/corpus.jsonl"
+  printf '{"table": {"mean_span_min": 30}}\n' >"$RS/corpora/default/corpus-report.json"
+  echo '{}' >"$RS/src/e15/commands/library.json"
+  head -c 4096 /dev/zero >"$RS/template/workspace.img"
+  echo tok >"$RS/secrets/exec.token"
+  echo fresh-metal >"$RS/state/host_profile"
+  echo reflink >"$RS/state/workspace_copy"
+  printf '%s\n' "$E17B_FIXPIN" >"$RS/state/go-stock-e17b"
+  cp "$TMP/meminfo-e17b" "$RS/meminfo"
+  # the -e17b driver stub: mint-key writes a fake key pair; a run records its args and writes a calls.jsonl
+  cat >"$RS/bin/e15-driver-e17b" <<SH
+#!/bin/sh
+echo "\$*" >>"$SARGS"
+if [ "\$1" = mint-key ]; then
+  mkdir -p "\$3"; echo "FAKE-PEM" >"\$3/token.key"; echo "kid0123456789abcd:QUJD" >"\$3/token.pub"; exit 0
+fi
+echo driver >>"$SORD"
+out=; while [ \$# -gt 0 ]; do [ "\$1" = --out ] && out=\$2; shift; done
+[ -z "\${STUB_CALLS:-}" ] || printf '%s\n' "\$STUB_CALLS" >"\$out/calls.jsonl"
+exit \${STUB_DRIVER_EXIT:-0}
+SH
+  printf '#!/bin/sh\necho SEALED-DRIVER-RAN >>"%s"\n' "$SORD" >"$RS/bin/e15-driver"
+  printf '#!/bin/sh\n' >"$RS/bin/microvm-worker-e17b"
+  printf '#!/bin/sh\n' >"$RS/bin/microvm-worker"
+  chmod +x "$RS/bin"/*
+  cat >"$RSS/systemctl" <<SH
+#!/usr/bin/env bash
+case "\$1 \$*" in
+is-active*e15-relay.service*) [ -e "$RS/relay-up" ] ;;
+is-active*e15-worker.service*) [ -e "$RS/worker-up" ] ;;
+is-active* | is-failed*) exit 1 ;;
+*) exit 0 ;;
+esac
+SH
+  cat >"$RSS/sudo" <<SH
+#!/usr/bin/env bash
+[ "\$1" = -n ] && shift
+case "\$1" in
+systemctl)
+  case "\$*" in
+  *"stop e15-relay.service"*) rm -f "$RS/relay-up" ;;
+  *"stop e15-worker.service"*) rm -f "$RS/worker-up"; echo worker-stop >>"$SORD" ;;
+  esac
+  exit 0 ;;
+systemd-run)
+  echo "\$*" >>"$SSYS"
+  case "\$*" in
+  *--unit=e15-relay.service*) touch "$RS/relay-up"; echo relay-start >>"$SORD" ;;
+  *--unit=e15-worker.service*)
+    touch "$RS/worker-up"; echo worker-start >>"$SORD"
+    for a; do case "\$a" in StandardOutput=file:*)
+      printf 'microvm-worker: relay=127.0.0.1:9643 sandbox_id=e15 tls=false vmm=firecracker D=0 guest=1024MiB budget=385024MiB slots=1792 lease_start=192MiB headroom=1.25\nmicrovm-worker: attached, serving execs\n' >"\${a#StandardOutput=file:}" ;; esac; done ;;
+  esac
+  exit 0 ;;
+esac
+exec "\$@"
+SH
+  printf '#!/usr/bin/env bash\n[ -e "%s/relay-up" ] && printf "LISTEN 0 1 127.0.0.1:9643 0.0.0.0:*\\nLISTEN 0 1 127.0.0.1:9644 0.0.0.0:*\\n"\nexit 0\n' "$RS" >"$RSS/ss"
+  cat >"$RSS/grpcurl" <<SH
+#!/usr/bin/env bash
+k=\$(echo "\$*" | grep -o '"workspace_key": *"[^"]*"' | sed 's/.*"\([^"]*\)"\$/\1/')
+echo "{\"error\": {\"message\": \"invalid-workspace-key: workspace_key \\\\\"\$k\\\\\" must match [A-Za-z0-9][A-Za-z0-9._-]{0,127}\"}}"
+echo "ERROR: Code: Internal" >&2; exit 1
+SH
+  printf '#!/usr/bin/env bash\nargs=(); for a; do case "$a" in --reflink=*|--sparse=*) ;; *) args+=("$a") ;; esac; done\nexec /bin/cp "${args[@]}"\n' >"$RSS/cp"
+  # sed: rung.sh's `sed -E -i EXPR FILE` is GNU's; BSD sed needs a suffix argument
+  printf '#!/usr/bin/env bash\nargs=(); inplace=0; for a; do if [ "$a" = -i ]; then inplace=1; else args+=("$a"); fi; done\nif [ $inplace = 1 ]; then f=${args[${#args[@]}-1]}; unset "args[${#args[@]}-1]"; /usr/bin/sed "${args[@]}" "$f" >"$f.sedtmp" && mv "$f.sedtmp" "$f"; else exec /usr/bin/sed "${args[@]}"; fi\n' >"$RSS/sed"
+  chmod +x "$RSS"/*
+}
+srung() { # ARM [VAR=val ...]: a 1-session rung of ARM on the default point; E17B=1 unless E17B= is passed
+  local arm=$1
+  shift
+  : >"$SORD"
+  : >"$SARGS"
+  : >"$SSYS"
+  rm -f "$RS/worker-up" "$RS/secrets/relay-lease.env"
+  touch "$RS/relay-up"
+  rm -rf "$RS/runs"
+  mkdir -p "$RS/runs"
+  env E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_HOST_PROFILE=fresh-metal E15_ROOT="$RS" E15_TEST_ROOT="$RS" E15_MANIFEST="$TMP/ship.md" \
+    E15_WARMUP_S=1 E15_WINDOW_S=1 E15_MEMINFO="$RS/meminfo" PATH="$RSS:$STUB:$PATH" "$@" bash "$RIG/rung.sh" "$arm" 1 default >"$TMP/ship-rung.out" 2>&1
+}
+sparams() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$RS/runs/default/$1/N1/params.json" "$2" 2>&1; }
+test_ship_rung_passes_lease_flags() {
+  srung ship-120
+  local args
+  args=$(grep -v '^mint-key' "$SARGS")
+  check "ship rung: the driver gets --lease-mode, --token-key, --idle-timeout-s 120, --token-wrk e15, --token-iss e17b-driver" \
+    "$(printf '%s' "$args" | grep -c -- '--lease-mode --token-key '"$RS"'/secrets/token-[^ /]*/token.key --idle-timeout-s 120 --token-wrk e15 --token-iss e17b-driver')" "1"
+  check "ship rung: the idle timeout follows the arm (30 / 300)" \
+    "$(for a in ship-30 ship-300; do srung $a; grep -o -- '--idle-timeout-s [0-9]*' "$SARGS"; done | tr '\n' ' ')" "--idle-timeout-s 30 --idle-timeout-s 300 "
+  srung ship-30
+  check "ship rung: the -e17b driver ran, the sealed e15-driver never" "$(grep -c '^driver$' "$SORD")/$(grep -c SEALED-DRIVER-RAN "$SORD")" "1/0"
+  check "ship rung: no end-session Exec (the lease ends by idle timeout or the worker stop)" "$(grep -c -- '--end-session' "$SARGS")" "0"
+  check "ship rung: the end-of-run order is driver, then worker stop" \
+    "$(grep -E '^(driver|worker-stop)$' "$SORD" | tr '\n' ' ')" "driver worker-stop "
+  check "ship rung: the key was minted by the -e17b driver before the relay started" \
+    "$(head -1 "$SARGS" | cut -d' ' -f1)/$(awk '/^relay-start/{r=NR} END{print (r > 0) ? "relay" : "none"}' "$SORD")" "mint-key/relay"
+  check "ship rung: the wbin map in params knows the ship arms (worker_bin_sha256 set from the -e17b worker)" \
+    "$(grep -c '"ship-30": "\$(worker_bin ship-30)", "ship-120": "\$(worker_bin ship-120)", "ship-300": "\$(worker_bin ship-300)"' "$RIG/rung.sh")" "1"
+  check "ship rung: params.json records arm, idle_timeout_s, moca_commit, the worker banner" \
+    "$(sparams ship-30 arm)/$(sparams ship-30 idle_timeout_s)/$(sparams ship-30 moca_commit)/$(sparams ship-30 lease_banner | grep -c 'microvm-worker: relay=.*lease_start=192MiB')" "ship-30/30/$E17B_FIXPIN/1"
+  check "ship rung: params.json worker_env carries the admission settings" \
+    "$(sparams ship-30 worker_env | grep -c "'SH_MAX_COMMITTED_MB': '385024'")" "1"
+  check "ship rung: params.json keeps driver_bin_sha256 of the -e17b driver (not the sealed one)" \
+    "$(sparams ship-30 driver_bin_sha256)" "$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$RS/bin/e15-driver-e17b")"
+  srung sbx
+  check "sbx rung under E17B=1: the -e17b driver runs and gets no lease flag" "$(grep -c '^driver$' "$SORD")/$(grep -c -- '--lease-mode\|--token' "$SARGS")" "1/0"
+  check "sbx rung under E17B=1: no mint-key, no lease params" "$(grep -c '^mint-key' "$SARGS")/$(sparams sbx idle_timeout_s | grep -c KeyError)" "0/1"
+}
+test_relay_env_has_token_keyset_and_issuer() {
+  srung ship-300
+  local relay_line
+  relay_line=$(grep -- '--unit=e15-relay.service' "$SSYS")
+  check "relay env: a lease arm adds one more EnvironmentFile to the relay unit" "$(printf '%s' "$relay_line" | grep -o 'EnvironmentFile=[^ ]*' | tr '\n' ' ' | sed "s#$RS/##g")" "EnvironmentFile=secrets/relay.env EnvironmentFile=secrets/relay-lease.env "
+  check "relay env: the file holds the token.pub content and the fixed issuer, nothing else" \
+    "$(cat "$RS/secrets/relay-lease.env")" "SH_SANDBOX_TOKEN_PUBLIC_KEYS=kid0123456789abcd:QUJD
+SH_SANDBOX_TOKEN_ISSUER=e17b-driver"
+  check "relay env: the file is mode 0600" "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$RS/secrets/relay-lease.env")" "0o600"
+  check "relay env: the keyset is the one minted for this rung (the driver's --token-key dir)" \
+    "$(cat "$(grep -o -- '--token-key [^ ]*' "$SARGS" | cut -d' ' -f2 | sed 's#/token.key$#/token.pub#')")" "kid0123456789abcd:QUJD"
+  check "relay env: the key directory is mode 0700" "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$(grep -o -- '--token-key [^ ]*' "$SARGS" | cut -d' ' -f2 | xargs dirname)")" "0o700"
+  srung ship-30
+  local d1 d2
+  d1=$(grep -o -- '--token-key [^ ]*' "$SARGS")
+  sleep 1
+  srung ship-30
+  d2=$(grep -o -- '--token-key [^ ]*' "$SARGS")
+  check "relay env: a new key directory per rung (a key per run)" "$([ "$d1" != "$d2" ] && echo differ || echo same)" "differ"
+  srung sbx
+  check "relay env: sbx under E17B=1 is unchanged (one EnvironmentFile, no keyset file)" \
+    "$(grep -- '--unit=e15-relay.service' "$SSYS" | grep -o 'EnvironmentFile=[^ ]*' | wc -l | tr -d ' ')/$([ -e "$RS/secrets/relay-lease.env" ] && echo exists || echo none)" "1/none"
+  check "relay env: start_relay without an argument is the sealed command line (E17B-free callers unchanged)" \
+    "$(grep -c 'start_relay()' "$RIG/lib.sh")/$(grep -c 'EnvironmentFile="\$E15_SECRETS/relay.env"' "$RIG/lib.sh")" "1/1"
+  : >"$SSYS"
+  srung sbx E17B=
+  check "relay env: a sealed rung (E17B unset) is unchanged too" "$(grep -- '--unit=e15-relay.service' "$SSYS" | grep -c 'relay-lease.env')" "0"
+}
+test_rung_marks_ship_rung_failed() {
+  srung ship-30 STUB_DRIVER_EXIT=0 STUB_CALLS='{"session":"a","cause":"set_mode_failed"}'
+  check "ship rung failure: a set_mode_failed row fails the rung even when the driver exits 0 (logged)" \
+    "$(grep -c 'ship-30 rung failed: 1 call(s) with cause set_mode_failed' "$TMP/ship-rung.out")" "1"
+  check "ship rung failure: params.json carries rung_failed and a non-zero driver_exit" "$(sparams ship-30 rung_failed)/$(sparams ship-30 driver_exit)" "set_mode_failed=1/1"
+  srung ship-30 STUB_DRIVER_EXIT=1
+  check "ship rung failure: a non-zero driver exit fails the rung (logged, recorded)" \
+    "$(grep -c 'ship-30 rung failed: driver exit 1' "$TMP/ship-rung.out")/$(sparams ship-30 rung_failed)/$(sparams ship-30 driver_exit)" "1/driver_exit=1/1"
+  srung ship-30 STUB_DRIVER_EXIT=0 STUB_CALLS='{"session":"a","cause":"ok"}'
+  check "ship rung failure: a clean driver and no set_mode_failed row is not a failure" \
+    "$(grep -c 'rung failed' "$TMP/ship-rung.out")/$(sparams ship-30 rung_failed)/$(sparams ship-30 driver_exit)" "0/None/0"
+  srung sbx STUB_DRIVER_EXIT=0 STUB_CALLS='{"session":"a","cause":"set_mode_failed"}'
+  check "ship rung failure: the rule is for ship-* only (sbx is not judged by it)" "$(grep -c 'rung failed' "$TMP/ship-rung.out")/$(sparams sbx driver_exit)" "0/0"
+}
+test_ship_rung_harness
+test_ship_arms_known_on_fresh_metal_only
+test_ship_worker_env_has_admission
+test_sbx_arm_unchanged
+test_e17b_driver_builds_to_separate_binaries
+test_sealed_driver_untouched_when_e17b_set
+test_ship_rung_passes_lease_flags
+test_relay_env_has_token_keyset_and_issuer
+test_rung_marks_ship_rung_failed
+check "ship arms: smoke.sh and reprobe.sh and record.py name them" \
+  "$(grep -c 'ship-30 ship-120 ship-300' "$RIG/../../e17-lease/rig/smoke.sh")/$(grep -c 'ship-30 ship-120 ship-300' "$RIG/../../e17-lease/rig/reprobe.sh")/$(grep -c '"ship-30", "ship-120", "ship-300"' "$RIG/../analysis/record.py")" "1/1/1"
+rm -rf "$RS" "$RSS"
 echo
 if [ "$fails" -eq 0 ]; then
   echo "rig.test.sh: all checks passed"

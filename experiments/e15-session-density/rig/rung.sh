@@ -3,6 +3,7 @@
 # sampler, record.
 #
 #   ARM    sbx | resident-inf | resident-300 | control | lease-30 | lease-120   (lease-*: E17, fresh-metal)
+#          | ship-30 | ship-120 | ship-300   (E17b: E17B=1, fresh-metal; the shipped lease at that idle timeout)
 #   N      session population (>= 1)
 #   POINT  default | short | long | no-infra | no-chains | smoke | mem512 | lowduty   (points.sh: corpus
 #          /srv/e15/corpora/<its corpus>, library, workspace template, image size)
@@ -111,6 +112,12 @@ DRIVER=$E15_BIN/e15-driver
 BASE_DRIVER=$DRIVER
 if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ "${E15_END_SESSION_DEFER:-0}" = 1 ]; then
   DRIVER=$E15_BIN/e15-driver-defer
+fi
+# E17b (E17B=1, ruling E17B-R4): every arm runs the -e17b driver binaries (setup.sh builds them); the sealed
+# e15-driver and e15-driver-defer are never run, so their sha256 in the sealed records stay valid.
+if [ "${E17B:-}" = 1 ]; then
+  DRIVER=${DRIVER}-e17b
+  BASE_DRIVER=${BASE_DRIVER}-e17b
 fi
 [ -f "$CORPUS" ] || die "no corpus $CORPUS"
 [ -f "$LIBRARY" ] || die "no library $LIBRARY"
@@ -285,7 +292,19 @@ if [ "$ARM" != control ]; then
     die "no grpcurl on PATH ($PATH): rung.sh's relay attach check needs it (fresh-metal: run bootstrap.sh; aws-prelim: start the ladder with grpcurl on PATH); the relay was not touched"
   [ -f "$E15_LOGS/relay.log" ] && sudo -n cp "$E15_LOGS/relay.log" "$DIR/relay.before-restart.log"
   stop_e15_unit "$E15_UNIT_RELAY"
-  start_relay
+  # E17b lease arms: a fresh Ed25519 key per rung, minted by the -e17b driver; its public keyset and the fixed issuer
+  # go to the relay in a per-rung env file, the private key stays in $E15_SECRETS for the driver's --token-key.
+  relay_extra=""
+  if e17b_lease_arm "$ARM"; then
+    TOKEN_DIR=$E15_SECRETS/token-$RUN_ID
+    (umask 077 && "$DRIVER" mint-key --out "$TOKEN_DIR") >"$DIR/mint-key.log" 2>&1 ||
+      die "e15-driver mint-key --out $TOKEN_DIR failed; see $DIR/mint-key.log"
+    [ -s "$TOKEN_DIR/token.key" ] && [ -s "$TOKEN_DIR/token.pub" ] || die "mint-key left no token.key/token.pub in $TOKEN_DIR"
+    relay_extra=$E15_SECRETS/relay-lease.env
+    (umask 077 && printf 'SH_SANDBOX_TOKEN_PUBLIC_KEYS=%s\nSH_SANDBOX_TOKEN_ISSUER=%s\n' "$(cat "$TOKEN_DIR/token.pub")" "$(e17b_token_iss)" >"$relay_extra")
+    log "lease token key minted for this rung ($TOKEN_DIR); relay trusts it (issuer $(e17b_token_iss))"
+  fi
+  start_relay "$relay_extra"
   sleep 3
   if grep -qs 'redis client error' "$E15_LOGS/relay.log"; then
     die "the restarted relay cannot reach Redis on 127.0.0.1:$E15_PORT_REDIS; see $E15_LOGS/relay.log"
@@ -322,6 +341,13 @@ if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ "${E15_END_SESSION_DEFER:-0}" = 1 
   END_DEFER=1
   end_flag+=(--end-session-defer --end-session-rate "${E15_END_SESSION_RATE:-50}")
 fi
+# E17b lease arms: the driver authenticates with per-session sandbox tokens signed by this rung's key and runs the
+# shipped lease at the arm's idle timeout (non-keepalive; leases end by idle timeout, reclaim or the worker's stop).
+lease_flag=()
+if e17b_lease_arm "$ARM"; then
+  IDLE_S=$(e17b_idle_timeout_s "$ARM")
+  lease_flag=(--lease-mode --token-key "$TOKEN_DIR/token.key" --idle-timeout-s "$IDLE_S" --token-wrk e15 --token-iss "$(e17b_token_iss)")
+fi
 launch_ts=$(date +%s.%N)
 # The sampler starts with the driver, its origin the epoch just before the driver is exec'd
 # (rung_start_ts as first taken). See "time origin" below for the re-base onto the driver's t0.
@@ -332,7 +358,7 @@ sampler_pid=$!
 MOCA_RELAY_EXEC_TOKEN=$(cat "$E15_SECRETS/exec.token") "$DRIVER" \
   --corpus "$CORPUS" --library "$LIBRARY" --seed "$SEED" --n "$N" \
   --warmup-s "$WARMUP" --window-s "$WINDOW" --spread-s "$SPREAD" --grace-s "$GRACE" \
-  --target "$TARGET" --sandbox-id e15 --run-id "$RUN_ID" --out "$DIR" "${end_flag[@]}" "${start_flag[@]}" "${scan_flag[@]}" \
+  --target "$TARGET" --sandbox-id e15 --run-id "$RUN_ID" --out "$DIR" "${end_flag[@]}" "${start_flag[@]}" "${scan_flag[@]}" "${lease_flag[@]}" \
   >"$DIR/driver.log" 2>&1 &
 driver_pid=$!
 # Memory watchdog (Task 8 mem512 OOM incident): host MemAvailable below E15_MEMAVAIL_FLOOR_MIB
@@ -395,6 +421,36 @@ print(repr(t0))
 PY
 )
 log "driver exit $driver_exit"
+# E17b lease arms: the rung fails if the driver exited non-zero (a session ran outside a lease, or any other driver
+# failure) or any call failed on set_mode (the driver exits 0 for those). A failed rung is recorded as a driver exit
+# that is not 0, which record.py reads as aborted (a rig error: the ladder stops).
+rung_failed=null
+set_mode_failed=0
+if e17b_lease_arm "$ARM"; then
+  set_mode_failed=$(python3 - "$DIR/calls.jsonl" <<'PY'
+import json, sys
+n = 0
+try:
+    for line in open(sys.argv[1]):
+        try:
+            if json.loads(line).get("cause") == "set_mode_failed":
+                n += 1
+        except ValueError:
+            pass
+except OSError:
+    pass
+print(n)
+PY
+  )
+  if [ "$driver_exit" != 0 ]; then
+    rung_failed=\"driver_exit=$driver_exit\"
+    log "$ARM rung failed: driver exit $driver_exit"
+  elif [ "$set_mode_failed" != 0 ]; then
+    rung_failed=\"set_mode_failed=$set_mode_failed\"
+    driver_exit=1
+    log "$ARM rung failed: $set_mode_failed call(s) with cause set_mode_failed (the driver exited 0 for them)"
+  fi
+fi
 
 # --- 5. stop the backend, normalise the log --------------------------------------------------
 oom_after=$(oom_count)
@@ -411,7 +467,7 @@ fi
 # --- 6. params + record ----------------------------------------------------------------------
 
 commit_file=$E15_ROOT/src/COMMIT
-python3 - "$DIR" <<PY
+E15_LEASE_BANNER=$(grep -m1 'microvm-worker: relay=' "$DIR/worker.log" 2>/dev/null || true) python3 - "$DIR" <<PY
 import hashlib, json, os, sys
 d = sys.argv[1]
 def sha(p):
@@ -457,7 +513,8 @@ except (OSError, ValueError):
 arm = "$ARM"
 wbin = {"sbx": "$(worker_bin sbx)", "resident-inf": "$E15_BIN/microvm-worker-resident",
         "resident-300": "$E15_BIN/microvm-worker-resident",
-        "lease-30": "$E15_BIN/microvm-worker-resident", "lease-120": "$E15_BIN/microvm-worker-resident"}.get(arm)
+        "lease-30": "$E15_BIN/microvm-worker-resident", "lease-120": "$E15_BIN/microvm-worker-resident",
+        "ship-30": "$(worker_bin ship-30)", "ship-120": "$(worker_bin ship-120)", "ship-300": "$(worker_bin ship-300)"}.get(arm)
 baseline_path = json.loads('$baseline_path')
 p = {
     "arm": arm, "n": $N, "point": "$POINT", "seed": $SEED, "run_id": run,
@@ -496,7 +553,11 @@ p = {
     **({"end_session_defer": True, "end_session_rate": int("${E15_END_SESSION_RATE:-50}"),
         "end_session_defer_note": "E16 supplementary (not the sealed procedure): run-end end-session Execs sent after end+grace, paced"}
        if "$END_DEFER" == "1" else {}),
-    "host_mem_total_kb": int([l.split()[1] for l in open("/proc/meminfo") if l.startswith("MemTotal:")][0]),
+    **({"idle_timeout_s": int("${IDLE_S:-0}"), "lease_banner": os.environ.get("E15_LEASE_BANNER") or None,
+        "set_mode_failed_calls": int("$set_mode_failed"), "rung_failed": json.loads('$rung_failed'),
+        "token_issuer": "$(e17b_lease_arm "$ARM" && e17b_token_iss)"}
+       if arm.startswith("ship-") else {}),
+    "host_mem_total_kb": int([l.split()[1] for l in open("$E15_MEMINFO") if l.startswith("MemTotal:")][0]),
     "slice_memory_max": readf("$E15_CG/memory.max"),
 }
 json.dump(p, open(os.path.join(d, "params.json"), "w"), indent=2, sort_keys=True)

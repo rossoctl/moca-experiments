@@ -154,6 +154,9 @@ E15_ARMS=(sbx resident-inf resident-300 control)
 # E17 (experiments/e17-lease/SPEC.md, fresh-metal only): the lease arms, the resident worker with a 30 s or 120 s idle
 # lease (worker_env); otherwise as resident-300. aws-prelim: the sealed arm list above.
 [ "$E15_HOST_PROFILE" != fresh-metal ] || E15_ARMS+=(lease-30 lease-120)
+# E17b (E17B=1, fresh-metal only): ship-30/120/300 are the shipped lease at idle timeout 30/120/300 s (the stock worker at
+# E17B_MOCA_PIN, depth 0; worker_env). With E17B unset the arm list above stands.
+if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ "${E17B:-}" = 1 ]; then E15_ARMS+=(ship-30 ship-120 ship-300); fi
 E15_LADDER=(1 8 16 24 32 40 48 56 64 80 96 128)
 # fresh-metal (SPEC §13, user decision 2026-11-04): the ladder extends past 128 until one arm fails,
 # resident arms warm up 1200 s (their VMs are still growing at 600 s), and footprint drift is judged
@@ -172,6 +175,7 @@ e15_default_warmup() {
   case "$E15_HOST_PROFILE:$1" in
   fresh-metal:sbx | fresh-metal:resident-inf | fresh-metal:resident-300) echo 1200 ;;
   fresh-metal:lease-30 | fresh-metal:lease-120) echo 1200 ;; # E17: as resident-300
+  fresh-metal:ship-30 | fresh-metal:ship-120 | fresh-metal:ship-300) echo 1200 ;; # E17b: as the lease arms
   *) echo 600 ;;
   esac
 }
@@ -795,11 +799,24 @@ stop_rung_units() {
 # worker_env ARM OUT [IMAGE_MB]: write the worker's non-secret environment for ARM (SPEC §7.1-§7.2).
 # IMAGE_MB is the point's workspace image size (points.sh E15_P_IMAGE_MB; default 256).
 worker_env() {
-  local arm=$1 out=$2 image_mb=${3:-256} depth
+  local arm=$1 out=$2 image_mb=${3:-256} depth committed=$E15_MAX_COMMITTED_MB slots=256
   case "$arm" in
   sbx) depth=2 ;;
   resident-inf | resident-300) depth=0 ;;
   lease-30 | lease-120) depth=0 ;; # E17 (fresh-metal only; E15_ARMS)
+  ship-30 | ship-120 | ship-300)
+    # E17b (E17B=1): the shipped lease. Admission is bounded by host RAM less 8 GiB (spec §6) and the slots sit above the
+    # ladder's top N; the lease knobs (SH_LEASE_*) are left unset, so the worker's defaults stand and its banner prints them.
+    [ "${E17B:-}" = 1 ] || die "worker_env: arm $arm exists only under E17B=1"
+    depth=0
+    local mem_kb top=0 n
+    mem_kb=$(awk '/^MemTotal:/{print $2}' "$E15_MEMINFO" 2>/dev/null)
+    [[ "$mem_kb" =~ ^[1-9][0-9]*$ ]] || die "worker_env: no MemTotal in $E15_MEMINFO: the lease admission budget (host RAM - 8192 MiB) cannot be derived"
+    committed=$((mem_kb / 1024 - 8192))
+    [ "$committed" -gt 0 ] || die "worker_env: host RAM $((mem_kb / 1024)) MiB leaves no admission budget above 8192 MiB"
+    for n in "${E15_LADDER[@]}"; do [ "$n" -le "$top" ] || top=$n; done
+    slots=$((top + 256))
+    ;;
   *) die "worker_env: no worker for arm $arm" ;;
   esac
   {
@@ -816,9 +833,9 @@ worker_env() {
     echo "SH_PARENT_CGROUP=$E15_PARENT_CGROUP"
     echo "SH_GUEST_RAM_MB=1024"
     echo "SH_STANDBY_DEPTH=$depth"
-    echo "WORKER_MAX_CONCURRENT=256"
+    echo "WORKER_MAX_CONCURRENT=$slots"
     echo "SH_MAX_RUNS=$E15_MAX_RUNS"
-    echo "SH_MAX_COMMITTED_MB=$E15_MAX_COMMITTED_MB"
+    echo "SH_MAX_COMMITTED_MB=$committed"
     echo "SH_HOST_MEM_FLOOR_MB=$E15_FLOOR_MB"
     echo "SH_WORKSPACE_IMAGE_MB=$image_mb"
     echo "SH_WORKSPACE_IDLE=24h"
@@ -844,6 +861,12 @@ e17b_require_build() {
   stamp_ok go-stock-e17b "$E15_MOCA_PIN" ||
     die "E17B=1 but the go-stock-e17b build stamp in $E15_STATE is not for $E15_MOCA_PIN; run setup.sh with E17B=1"
 }
+# e17b_lease_arm ARM: true for an E17b shipped-lease arm (ship-*) under E17B=1.
+e17b_lease_arm() { [ "${E17B:-}" = 1 ] && case "$1" in ship-30 | ship-120 | ship-300) true ;; *) false ;; esac; }
+# e17b_idle_timeout_s ARM: the lease idle timeout of a ship arm (the token's idle_timeout_s claim).
+e17b_idle_timeout_s() { e17b_lease_arm "$1" || die "e17b_idle_timeout_s: $1 is not a ship arm (E17B=1)"; echo "${1#ship-}"; }
+# e17b_token_iss: the token issuer the relay's SH_SANDBOX_TOKEN_ISSUER and the driver's --token-iss share.
+e17b_token_iss() { echo e17b-driver; }
 
 worker_bin() {
   case "$1" in
@@ -905,7 +928,11 @@ start_null() {
 # so it patches the same @grpc/grpc-js instance main.ts imports.
 E15_RELAY_PRELOAD="data:text/javascript,import{createRequire}from'node:module';const g=createRequire(process.cwd()+'/package.json')('@grpc/grpc-js');const b=g.Server.prototype.bindAsync;g.Server.prototype.bindAsync=function(a,...r){return b.call(this,String(a).replace('0.0.0.0:','127.0.0.1:'),...r)};"
 
+# start_relay [EXTRA_ENV_FILE]: E15's relay. E17b lease arms pass the per-rung file holding the token keyset and issuer;
+# with no argument the command line is the sealed one.
 start_relay() {
+  local extra=()
+  [ -z "${1:-}" ] || extra=(-p EnvironmentFile="$1")
   refuse_ports "$E15_PORT_ATTACH" "$E15_PORT_EXEC"
   mkdir -p "$E15_LOGS"
   # systemd creates the file as root; rotate it so this start's lines are the only ones checked.
@@ -915,7 +942,7 @@ start_relay() {
   [ "$E15_HOST_PROFILE" != fresh-metal ] || envp=(-p Environment="PATH=$(e15_path)")
   sudo -n systemd-run --quiet --unit="$E15_UNIT_RELAY" --slice="$E15_SLICE" \
     -p User="$(id -un)" -p WorkingDirectory="$E15_MOCA/packages/sandbox-relay" \
-    -p EnvironmentFile="$E15_SECRETS/relay.env" \
+    -p EnvironmentFile="$E15_SECRETS/relay.env" "${extra[@]}" \
     -p IPAddressDeny=any -p IPAddressAllow=localhost \
     -p MemoryAccounting=yes -p CPUAccounting=yes \
     -p StandardOutput="append:$E15_LOGS/relay.log" "${envp[@]}" \
