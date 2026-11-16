@@ -517,7 +517,7 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 		Session: key, Trace: s.ID, Provider: s.Provider, Call: c.I, Class: c.Class,
 		PlannedDurMs: c.DurMs, PlannedGapMs: c.GapMs,
 		Status: "ok", Cause: causeOK,
-		InWindow: !send.Before(r.warmEnd) && send.Before(r.end),
+		InWindow: !send.Before(r.warmEnd) && send.Before(r.end), Tmpfs: s.Tmpfs,
 	}
 	script, err := JoinPlanScan(plan, plan[len(plan)-1].SleepAfterMs, r.cfg.Scan.For(c.Class))
 	if err != nil { // validatePlans makes this unreachable for a corpus it checked

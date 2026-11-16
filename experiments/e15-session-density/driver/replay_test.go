@@ -1097,6 +1097,10 @@ func TestTmpfsSessionCachesInGuestTmpfs(t *testing.T) {
 			if res.calls[i].Status != "ok" || res.calls[i].Class != cls {
 				t.Fatalf("call %d: %+v", i, res.calls[i])
 			}
+			// every row of a flagged session says so (freed_from_shmem.py reads it, E17B-R23)
+			if res.calls[i].Tmpfs != flagged {
+				t.Fatalf("call %d: tmpfs %v, want %v", i, res.calls[i].Tmpfs, flagged)
+			}
 		}
 	}
 }
@@ -1183,5 +1187,22 @@ func TestParseRecordStdout(t *testing.T) {
 		func(string) string { return "tok" }, &stderr)
 	if code != 2 || !strings.Contains(stderr.String(), "--record-stdout") {
 		t.Fatalf("code %d: %s", code, stderr.String())
+	}
+}
+
+// --record-stdout names a class that never appears in the plan: one warning line per such class at
+// start (rung.sh passes py_shmem on every E17b rung, so it is not an error).
+func TestRecordStdoutWarnsOnUnplannedClass(t *testing.T) {
+	ss := []Session{sess("s", "u", 5, "a", "b", "a"), sess("short", "u", 5, "z")} // "short" is never drawn (< 3 calls)
+	got := recordStdoutWarnings(ss, map[string]bool{"a": true, "py_shmem": true, "z": true})
+	want := []string{
+		`e15-driver: warning: --record-stdout class "py_shmem" never appears in the corpus's replayable calls; no call will record its stdout`,
+		`e15-driver: warning: --record-stdout class "z" never appears in the corpus's replayable calls; no call will record its stdout`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+	if w := recordStdoutWarnings(ss, nil); len(w) != 0 {
+		t.Fatalf("flag off: %q", w)
 	}
 }

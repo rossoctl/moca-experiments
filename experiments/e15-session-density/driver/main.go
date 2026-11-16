@@ -105,6 +105,9 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 	if err != nil {
 		return fail(1, "loading library: %v", err)
 	}
+	for _, w := range recordStdoutWarnings(ss, recordStdout) {
+		fmt.Fprintln(stderr, w)
+	}
 	if err := scan.Check(lib); err != nil {
 		return fail(2, "%v", err)
 	}

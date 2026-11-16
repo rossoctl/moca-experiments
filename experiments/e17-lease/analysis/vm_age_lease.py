@@ -47,10 +47,12 @@ the Exec (samples from its send to its end) and its start (the last sample at or
 
     freed = max(0, peak - start - dShmem)
 
-where dShmem is the guest's tmpfs growth over the call, from the `py_shmem` readings that bracket it:
-RUNDIR/shmem.json = {"session:call": dShmem bytes or null}, written by freed_from_shmem.py (its docstring
-has the bracketing rule and the null cases; HEAVY_CLASSES stays py_analyze and py_test, py_shmem is only
-the source of dShmem). Tmpfs is guest RAM held until the VM goes, so that growth is not freed. VERDICT
+where dShmem is the guest's tmpfs growth behind the call, from the `py_shmem` readings (ruling E17B-R23):
+RUNDIR/shmem.json `calls` = {"session:call": dShmem bytes or null}, written by freed_from_shmem.py. Its
+docstring has the rule: 0 for every heavy call of a turn whose measured Shmem delta is within 1 MiB in a
+session the corpus did not flag tmpfs, null otherwise and always null in a flagged one (whose per-turn growth
+shmem.json reports under `turns`). HEAVY_CLASSES stays py_analyze and py_test, py_shmem is only the source of
+dShmem. Tmpfs is guest RAM held until the VM goes, so that growth is not freed. VERDICT
 "charge follows the working set": value_15s <= peak - freed/2. With no shmem.json, or a null or missing
 dShmem, freed is null and the verdict is null, never false; the raw numbers are still reported. The
 verdict is also null when the 15 s sample or the start sample is missing, the VM ended first, or the
@@ -270,7 +272,7 @@ def fpr_reading(rows, calls, obs, vm_by_id, shmem):
         within = [val for ts, val in s if start <= ts <= end]
         e["peak_bytes"] = max(within) if within else None
         e["start_bytes"] = _at_or_before(s, start, SAMPLE_TOL_S)
-        e["delta_shmem_bytes"] = (shmem or {}).get("%s:%s" % (r["session"], r["call"]))
+        e["delta_shmem_bytes"] = ((shmem or {}).get("calls") or {}).get("%s:%s" % (r["session"], r["call"]))
         if None not in (e["peak_bytes"], e["start_bytes"], e["delta_shmem_bytes"]):
             e["freed_bytes"] = max(0, e["peak_bytes"] - e["start_bytes"] - e["delta_shmem_bytes"])
         nxt = next_start.get((r["session"], r["call"]))
@@ -279,7 +281,8 @@ def fpr_reading(rows, calls, obs, vm_by_id, shmem):
         elif nxt is not None and nxt < end + AFTER_S:
             e["why_null"] = "the session's next call began within 15 s"
         elif e["delta_shmem_bytes"] is None:
-            e["why_null"] = "no dShmem (shmem.json absent, or null for this call: freed_from_shmem.py)"
+            e["why_null"] = "no dShmem (shmem.json absent, or null for this call: a tmpfs session, or a turn " \
+                            "without a usable delta or over 1 MiB; freed_from_shmem.py)"
         elif e["start_bytes"] is None:
             e["why_null"] = "no sample at or before the Exec's start"
         else:

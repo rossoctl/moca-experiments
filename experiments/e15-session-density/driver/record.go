@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,6 +48,9 @@ type callRecord struct {
 	// stdout_truncated when more was written.
 	Stdout          *string `json:"stdout,omitempty"`
 	StdoutTruncated bool    `json:"stdout_truncated,omitempty"`
+	// Tmpfs: on every row of a session the corpus flags tmpfs (E17b; omitted otherwise, so every
+	// E15/E16/E17a row is unchanged). freed_from_shmem.py judges only unflagged sessions (E17B-R23).
+	Tmpfs bool `json:"tmpfs,omitempty"`
 }
 
 // sessionRecord is one sessions.jsonl line, over the session's in-window calls only.
@@ -213,4 +217,27 @@ func ParseRecordStdout(classes string) (map[string]bool, error) {
 		out[c] = true
 	}
 	return out, nil
+}
+
+// recordStdoutWarnings is one warning line per --record-stdout class that no replayable call of
+// the corpus has (the driver logs them at start; rung.sh passes py_shmem on every E17b rung, so a
+// point without it is not an error, but a misspelt class is then visible).
+func recordStdoutWarnings(sessions []Session, classes map[string]bool) []string {
+	planned := map[string]bool{}
+	for _, s := range sessions {
+		if len(s.Calls) < minCalls {
+			continue // the sampler never draws it
+		}
+		for _, c := range s.Calls {
+			planned[c.Class] = true
+		}
+	}
+	var out []string
+	for c := range classes {
+		if !planned[c] {
+			out = append(out, fmt.Sprintf("e15-driver: warning: --record-stdout class %q never appears in the corpus's replayable calls; no call will record its stdout", c))
+		}
+	}
+	sort.Strings(out)
+	return out
 }

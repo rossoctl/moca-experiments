@@ -114,7 +114,8 @@ def heavy_fixture(tmp_path, after_mib, delta_mib=0, next_send=None, name="rung")
     d = rung(tmp_path, log, mem, calls, name=name)
     if delta_mib is not None:
         with open(os.path.join(d, "shmem.json"), "w") as f:
-            json.dump({"A:1": None if delta_mib == "null" else delta_mib * MIB}, f)
+            json.dump({"calls": {"A:1": None if delta_mib == "null" else delta_mib * MIB}, "turns": {},
+                       "unexpected_turns": {}, "tolerance_bytes": 1 << 20}, f)
     return d
 
 

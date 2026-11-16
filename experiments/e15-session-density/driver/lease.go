@@ -246,7 +246,7 @@ func (r *Replayer) setModeFailedRow(key string, s Session, c Call, send time.Tim
 		Session: key, Trace: s.ID, Provider: s.Provider, Call: c.I, Class: c.Class,
 		PlannedDurMs: c.DurMs, PlannedGapMs: c.GapMs,
 		Status: "err", Cause: causeSetMode, Msg: "set_mode: " + err.Error(),
-		InWindow: !send.Before(r.warmEnd) && send.Before(r.end), FirstLease: true,
+		InWindow: !send.Before(r.warmEnd) && send.Before(r.end), FirstLease: true, Tmpfs: s.Tmpfs,
 	}
 }
 

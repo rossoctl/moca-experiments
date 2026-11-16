@@ -59,7 +59,7 @@ func TestDefaultPathUnchanged(t *testing.T) {
 			}
 			delete(m, f)
 		}
-		for _, f := range []string{"lease_events", "first_lease", "not_lease", "stdout", "stdout_truncated"} {
+		for _, f := range []string{"lease_events", "first_lease", "not_lease", "stdout", "stdout_truncated", "tmpfs"} {
 			if _, ok := m[f]; ok {
 				t.Fatalf("opt-in field %s present with the modes off: %s", f, line)
 			}
