@@ -22,7 +22,10 @@ The driver's own events (calls.jsonl `lease_events`) are a SECOND source (E17B-R
 event is cold, one with none is warm. A disagreement with the log is counted and listed, never
 resolved: the log's verdict stands, and `countable` is false unless there are none.
 Calls tagged `first_lease` (they include the first-lease ownership walk, Review Focus 6) are
-reported separately and kept out of the warm/cold counts. A `set_mode_failed` row is reported as
+reported separately and kept out of the warm/cold counts. So are reported-only calls (py_shmem, the
+guest's Shmem reading, PLAN-E17B Task 10): they are joined like any call (their Execs are in the
+log, so the alignment needs them, and they enter the disagreement check), but counted only under
+`reported_only`, never in warm/cold/unknown. A `set_mode_failed` row is reported as
 such, never classified, and makes `valid` false.
 """
 import calendar
@@ -33,6 +36,8 @@ import sys
 import time
 
 import warmcold as W
+
+REPORTED_ONLY = ("py_shmem",)  # latency_report.REPORTED_ONLY: never in a latency gate or median
 
 EXEC_RE = re.compile(r'vmpool: exec req=(?P<req>\d+) workspace_key="(?P<key>(?:[^"\\]|\\.)*)" '
                      r'kind=(?P<kind>\S*) vm=(?P<vm>\S*) cold="(?P<cold>(?:[^"\\]|\\.)*)" '
@@ -155,7 +160,8 @@ def join(rung_dir):
         rows.extend(sorted(kr, key=lambda r: r["call"]))
         if why:
             unknown_keys[key] = why
-    gated = [r for r in rows if not r["first_lease"] and r["warm"] != SET_MODE_FAILED]
+    gated = [r for r in rows if not r["first_lease"] and r["warm"] != SET_MODE_FAILED
+             and r["class"] not in REPORTED_ONLY]
     dis = [{"session": r["session"], "call": r["call"],
             "log": "warm" if r["warm"] is True else "cold", "driver": r["driver"]}
            for r in rows if r["warm"] in (True, False) and r["driver"] != ("warm" if r["warm"] else "cold")]
@@ -167,6 +173,8 @@ def join(rung_dir):
         "unknown": sum(r["warm"] == "unknown" for r in gated),
         "first_lease": sum(r["first_lease"] for r in rows if r["warm"] != SET_MODE_FAILED),
         "set_mode_failed": n_smf,
+        "reported_only": W.count_by(r["class"] for r in rows if r["class"] in REPORTED_ONLY
+                                    and r["warm"] != SET_MODE_FAILED),
         "unknown_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] == "unknown"),
         "cold_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] is False),
         "unknown_keys": unknown_keys,

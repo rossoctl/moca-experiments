@@ -23,6 +23,10 @@ each D, e.g. the gain-against-D runs, in its own invocation).
   - first_after_idle: the calls whose previous Exec on the key was followed by an idle-destroy
     (warmcold cold_reason "idle-destroy"): the cold start a user pays after the lease timed out.
   - warm_share = warm / (warm + cold) over the used calls.
+  - Reported-only classes (REPORTED_ONLY: py_shmem, E17b's guest Shmem reading, PLAN-E17B Task 10) are
+    in none of the above: not a class, not in the counts, the warm share, the first call after idle or
+    the gain, so never in a latency gate or a per-class median. Their in-window ok calls are
+    reported apart, under reported_only[class].all.
 """
 import argparse
 import json
@@ -47,6 +51,10 @@ def stats(ms):
     return {"n": len(ms), "median_ms": H.median(ms), "p95_ms": H.percentile(ms, 95)}
 
 
+# Classes that are measured only for what they print (py_shmem: the guest's Shmem after a turn's
+# last py_analyze), never for their latency.
+REPORTED_ONLY = ("py_shmem",)
+
 # Rungs of one (point, N, arm) pool only if these agree: the gain-against-D runs (SPEC §10) share a
 # point, N and arm with the default D = 256 MiB runs and differ only in the dataset size.
 MUST_MATCH = ("dataset_mib", "snapshot_guest_ram_mb")
@@ -69,10 +77,15 @@ def join_rung(d, arm):
 def summarize(rows):
     # Calls tagged first_lease (the first-lease ownership walk, Review Focus 6) are reported on their
     # own and kept out of the counts and the warm/cold classes. Rows of other arms never carry the tag.
-    firsts, rest = [], []
+    firsts, rest, reported = [], [], {}
     for r in rows:
         if r["warm"] == "set_mode_failed":
             continue  # never sent: reported by the join's set_mode_failed count, in no class
+        if r["class"] in REPORTED_ONLY:
+            reported.setdefault(r["class"], [])
+            if r["in_window"] and r["status"] == "ok":
+                reported[r["class"]].append(r["observed_ms"])
+            continue
         (firsts if r.get("first_lease") else rest).append(r)
     rows = rest
     counts = {"calls": len(rows), "used": 0, "unknown": 0, "not_in_window": 0, "not_ok": 0}
@@ -115,6 +128,8 @@ def summarize(rows):
     if firsts:  # only ship arms: an E17a group keeps its exact shape
         out["first_lease"] = {"calls": len(firsts), "all": stats(fl),
                               "by_class": {k: stats(v) for k, v in sorted(fl_by.items())}}
+    if reported:  # only E17b corpora have py_shmem: an E17a group keeps its exact shape
+        out["reported_only"] = {k: {"all": stats(v)} for k, v in sorted(reported.items())}
     return out
 
 

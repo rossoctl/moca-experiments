@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -675,12 +676,52 @@ func TestGuestFrameBytes(t *testing.T) {
 	}
 }
 
-// E17's pycache generator (experiments/e17-lease/extract/pycache_corpus.py) writes E15's corpus schema; the fixture
-// is its output for --sessions 3 --seed 1 on experiments/e17-lease/extract/testdata/gaps-20.jsonl.
+// E17's pycache generator (experiments/e17-lease/extract/pycache_corpus.py) writes E15's corpus schema; the fixtures
+// are its output for --sessions 3 --seed 1 on experiments/e17-lease/extract/testdata/gaps-20.jsonl: E17a's at
+// --tmpfs-share 0 (pycache-corpus.jsonl) and E17b's at the default 0.5 (pycache-corpus-tmpfs.jsonl).
+const (
+	pycacheFixture      = "testdata/pycache-corpus.jsonl"
+	pycacheTmpfsFixture = "testdata/pycache-corpus-tmpfs.jsonl"
+	pycacheLibrary      = "../../e17-lease/workload/library.json"
+)
+
 func TestLoadCorpusAcceptsPycache(t *testing.T) {
-	ss, err := LoadCorpus("testdata/pycache-corpus.jsonl")
+	loadPycache(t, pycacheFixture)
+}
+
+// The E17b fixture flags some sessions tmpfs (and not all), and every session has py_shmem calls.
+func TestLoadCorpusAcceptsPycacheTmpfs(t *testing.T) {
+	ss := loadPycache(t, pycacheTmpfsFixture)
+	flagged := 0
+	for _, s := range ss {
+		if s.Tmpfs {
+			flagged++
+		}
+		n := 0
+		for _, c := range s.Calls {
+			if c.Class == "py_shmem" {
+				n++
+			}
+		}
+		if n == 0 {
+			t.Fatalf("session %s has no py_shmem call", s.ID)
+		}
+	}
+	if flagged == 0 || flagged == len(ss) {
+		t.Fatalf("%d of %d sessions flagged tmpfs, want some but not all", flagged, len(ss))
+	}
+	for _, s := range loadPycache(t, pycacheFixture) {
+		if s.Tmpfs {
+			t.Fatalf("E17a session %s flagged tmpfs", s.ID)
+		}
+	}
+}
+
+func loadPycache(t *testing.T, path string) []Session {
+	t.Helper()
+	ss, err := LoadCorpus(path)
 	if err != nil || len(ss) != 3 {
-		t.Fatalf("%v %d", err, len(ss))
+		t.Fatalf("%s: %v %d", path, err, len(ss))
 	}
 	for _, s := range ss {
 		if s.ID == "" || s.User == "" || s.Provider != "synthetic" || len(s.Calls) < minCalls {
@@ -695,44 +736,62 @@ func TestLoadCorpusAcceptsPycache(t *testing.T) {
 	if _, err := NewSampler(ss, 1, 0.15); err != nil {
 		t.Fatal(err)
 	}
+	return ss
 }
 
-// E17's pycache library (experiments/e17-lease/workload/library.json) must plan every py_analyze, py_test, py_import
-// and py_grep call of the pycache corpus as ONE invocation with no sleep: a chained second analyze
+// E17's pycache library (experiments/e17-lease/workload/library.json) must plan every py_analyze, py_test, py_import,
+// py_grep and py_shmem call of the pycache corpora as ONE invocation with no sleep: a chained second analyze
 // or test run would double the call's work, and a padded import or grep (spec v0.4 §4.3) would
 // not be the cache-bound command alone. fill picks a second copy of an invocation of Ms() m only
 // while the remainder work_ms - m is >= 50 and >= m, so one invocation per call holds while
-// Ms() > work_ms/2; the boundary cases pin that for Task 5's measured run_ms.
+// Ms() > work_ms/2; the boundary cases pin that for Task 5's measured run_ms. A tmpfs session's
+// py_analyze and py_test are that one invocation with PYC_CACHE_DIR exported in front of it.
 func TestPlanPycacheOneInvocationPerHeavyCall(t *testing.T) {
-	l, err := LoadLibrary("../../experiments/e17-lease/workload/library.json")
+	l, err := LoadLibrary(pycacheLibrary)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ss, err := LoadCorpus("testdata/pycache-corpus.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	single := map[string]bool{"py_analyze": true, "py_test": true, "py_import": true, "py_grep": true}
+	single := map[string]bool{"py_analyze": true, "py_test": true, "py_import": true, "py_grep": true, "py_shmem": true}
+	tmpfsClass := map[string]bool{"py_analyze": true, "py_test": true}
 	seen := map[string]int{}
-	for _, s := range ss {
-		for _, c := range s.Calls {
-			if !single[c.Class] {
-				continue
+	tmpfsSeen := 0
+	for _, path := range []string{pycacheFixture, pycacheTmpfsFixture} {
+		ss, err := LoadCorpus(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range ss {
+			key := "e15-r-0-" + s.ID
+			for _, c := range s.Calls {
+				if !single[c.Class] {
+					continue
+				}
+				seen[c.Class]++
+				p, err := l.SessionPlan(plan(t, l, c, 1, s.ID), s, c, key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := l.Classes[c.Class][0].Cmd
+				if s.Tmpfs && tmpfsClass[c.Class] {
+					want = "export PYC_CACHE_DIR='/tmp/pycache-" + key + "'; " + want
+					tmpfsSeen++
+				}
+				if len(p) != 1 || p[0].Cmd != want || p[0].Exit != 0 || p[0].SleepAfterMs != 0 {
+					t.Fatalf("%s call %d (%s, work %d ms, tmpfs %v): plan %+v, want the one library invocation %q", s.ID, c.I, c.Class, c.WorkMs, s.Tmpfs, p, want)
+				}
 			}
-			seen[c.Class]++
-			p := plan(t, l, c, 1, s.ID)
-			if len(p) != 1 || p[0].Cmd != l.Classes[c.Class][0].Cmd || p[0].Exit != 0 || p[0].SleepAfterMs != 0 {
-				t.Fatalf("%s call %d (%s, work %d ms): plan %+v, want the one library invocation", s.ID, c.I, c.Class, c.WorkMs, p)
-			}
+		}
+		if err := validatePlans(ss, l, 1, Scan{}); err != nil {
+			t.Fatal(err)
 		}
 	}
 	for cls := range single {
 		if seen[cls] == 0 {
-			t.Fatalf("fixture has no %s calls", cls)
+			t.Fatalf("fixtures have no %s calls", cls)
 		}
 	}
-	if err := validatePlans(ss, l, 1, Scan{}); err != nil {
-		t.Fatal(err)
+	if tmpfsSeen == 0 {
+		t.Fatal("fixtures have no tmpfs py_analyze or py_test call")
 	}
 	// One invocation iff its Ms() > work_ms/2 (or it is longer than work_ms: the fallback runs once).
 	c := Call{Class: "py_test", WorkMs: 60000, DurMs: 60000}
@@ -741,6 +800,69 @@ func TestPlanPycacheOneInvocationPerHeavyCall(t *testing.T) {
 		ml.Classes["py_test"][0].RunMs = &tc.runMs
 		if p := plan(t, ml, c, 1, "s"); int64(len(p)) != tc.want {
 			t.Fatalf("run_ms %d, work_ms 60000: %d invocations, want %d", tc.runMs, len(p), tc.want)
+		}
+	}
+}
+
+// The library's tmpfs section (E17b): a session flagged tmpfs runs each listed class's commands with
+// Env exported as Dir + its workspace key (shell-quoted); other classes and unflagged sessions are
+// planned exactly as before.
+func TestSessionPlanTmpfs(t *testing.T) {
+	l := &Library{Classes: map[string][]Invocation{
+		"a": {{ID: "a", Cmd: "cd project && run a", NominalMs: 10}},
+		"b": {{ID: "b", Cmd: "run b", NominalMs: 10}},
+	}, Tmpfs: &TmpfsSpec{Classes: []string{"a"}, Env: "PYC_CACHE_DIR", Dir: "/tmp/pycache-"}}
+	l.Standin.InterpreterClass = "b"
+	ca, cb := Call{I: 0, Class: "a", WorkMs: 10, DurMs: 10}, Call{I: 1, Class: "b", WorkMs: 10, DurMs: 10}
+	on, off := Session{ID: "s", Tmpfs: true}, Session{ID: "s"}
+	for _, tc := range []struct {
+		s    Session
+		c    Call
+		key  string
+		want string
+	}{
+		{on, ca, "e15-r-1-2", "export PYC_CACHE_DIR='/tmp/pycache-e15-r-1-2'; cd project && run a"},
+		{on, ca, "e15-it's-0-0", `export PYC_CACHE_DIR='/tmp/pycache-e15-it'\''s-0-0'; cd project && run a`},
+		{on, cb, "e15-r-1-2", "run b"},
+		{off, ca, "e15-r-1-2", "cd project && run a"},
+	} {
+		p, err := l.SessionPlan(plan(t, l, tc.c, 1, tc.s.ID), tc.s, tc.c, tc.key)
+		if err != nil || len(p) != 1 || p[0].Cmd != tc.want {
+			t.Fatalf("tmpfs %v class %s key %q: %v %+v, want %q", tc.s.Tmpfs, tc.c.Class, tc.key, err, p, tc.want)
+		}
+	}
+	// A session flagged tmpfs needs a library that says how: refused, at plan time and before a run.
+	l.Tmpfs = nil
+	if _, err := l.SessionPlan(plan(t, l, ca, 1, "s"), on, ca, "k"); err == nil {
+		t.Fatal("a tmpfs session planned with a library that has no tmpfs section")
+	}
+	if p, err := l.SessionPlan(plan(t, l, ca, 1, "s"), off, ca, "k"); err != nil || p[0].Cmd != "cd project && run a" {
+		t.Fatalf("an unflagged session without a tmpfs section: %v %+v", err, p)
+	}
+	on.Calls = []Call{ca, cb, ca}
+	if err := validatePlans([]Session{on}, l, 1, Scan{}); err == nil || !strings.Contains(err.Error(), "tmpfs") {
+		t.Fatalf("validatePlans: %v, want a tmpfs refusal", err)
+	}
+}
+
+func TestLoadLibraryChecksTmpfs(t *testing.T) {
+	base := `{"version": 1, "classes": {"a": [{"id": "a", "cmd": "a", "exit": 0, "nominal_ms": 1}]},
+	  "standin": {"interpreter_class": "a"}`
+	for _, tc := range []struct{ tmpfs, want string }{
+		{``, ""},
+		{`, "tmpfs": {"classes": ["a"], "env": "PYC_CACHE_DIR", "dir": "/tmp/pycache-"}`, ""},
+		{`, "tmpfs": {"classes": ["zz"], "env": "PYC_CACHE_DIR", "dir": "/tmp/pycache-"}`, "zz"},
+		{`, "tmpfs": {"classes": [], "env": "PYC_CACHE_DIR", "dir": "/tmp/pycache-"}`, "no classes"},
+		{`, "tmpfs": {"classes": ["a"], "env": "PYC CACHE", "dir": "/tmp/pycache-"}`, "env"},
+		{`, "tmpfs": {"classes": ["a"], "env": "PYC_CACHE_DIR", "dir": "pycache-"}`, "dir"},
+	} {
+		p := filepath.Join(t.TempDir(), "library.json")
+		if err := os.WriteFile(p, []byte(base+tc.tmpfs+"}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadLibrary(p)
+		if (tc.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.want)) {
+			t.Fatalf("tmpfs %s: %v, want error containing %q", tc.tmpfs, err, tc.want)
 		}
 	}
 }

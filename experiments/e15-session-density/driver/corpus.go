@@ -36,7 +36,11 @@ type Session struct {
 	ID       string `json:"session"`
 	User     string `json:"user"`
 	Provider string `json:"provider"`
-	Calls    []Call `json:"calls"`
+	// Tmpfs (E17b pycache corpora, pycache_corpus.py --tmpfs-share): the session's calls of the
+	// library's tmpfs classes keep their caches in guest tmpfs (Library.SessionPlan). Absent in
+	// every other corpus, so false.
+	Tmpfs bool   `json:"tmpfs,omitempty"`
+	Calls []Call `json:"calls"`
 }
 
 // Invocation is one real command in the library.
@@ -65,6 +69,73 @@ type Library struct {
 		InterpreterClass string  `json:"interpreter_class"`
 		InfraSleepFrac   float64 `json:"infra_sleep_frac"`
 	} `json:"standin"`
+	// Tmpfs is library.json's optional "tmpfs" section (E17b); nil in every other library.
+	Tmpfs *TmpfsSpec `json:"tmpfs,omitempty"`
+}
+
+// TmpfsSpec says how a session flagged tmpfs runs (E17b, spec §7.3): every planned command of a
+// listed class runs with Env exported as Dir + the session's workspace key, so the command keeps
+// its caches there (the pycache workload's PYC_CACHE_DIR=/tmp/pycache-<key>, guest tmpfs).
+type TmpfsSpec struct {
+	Classes []string `json:"classes"`
+	Env     string   `json:"env"`
+	Dir     string   `json:"dir"`
+}
+
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func (t *TmpfsSpec) check(l *Library) error {
+	if len(t.Classes) == 0 {
+		return errors.New("tmpfs: no classes")
+	}
+	for _, c := range t.Classes {
+		if len(l.Classes[c]) == 0 {
+			return fmt.Errorf("tmpfs: class %q has no invocations", c)
+		}
+	}
+	if !envNameRE.MatchString(t.Env) {
+		return fmt.Errorf("tmpfs: env %q is not a shell variable name", t.Env)
+	}
+	if !strings.HasPrefix(t.Dir, "/") {
+		return fmt.Errorf("tmpfs: dir %q is not an absolute path", t.Dir)
+	}
+	return nil
+}
+
+func (t *TmpfsSpec) has(class string) bool {
+	for _, c := range t.Classes {
+		if c == class {
+			return true
+		}
+	}
+	return false
+}
+
+// shellQuote single-quotes v for sh.
+func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
+
+// SessionPlan is plan (Plan's output for call c of session s) as sent on workspace key: for a
+// session flagged tmpfs, each command of a tmpfs class is prefixed with
+// `export <Env>='<Dir><key>'; `; every other plan is returned as it is. Each planned command runs
+// in its own subshell (JoinPlan), so the export reaches that command only. A session flagged tmpfs
+// with a library that has no tmpfs section is an error (validatePlans reports it before a run).
+func (l *Library) SessionPlan(plan []Planned, s Session, c Call, key string) ([]Planned, error) {
+	if !s.Tmpfs {
+		return plan, nil
+	}
+	if l.Tmpfs == nil {
+		return nil, fmt.Errorf("session %s is flagged tmpfs but the library has no tmpfs section", s.ID)
+	}
+	if !l.Tmpfs.has(c.Class) {
+		return plan, nil
+	}
+	prefix := "export " + l.Tmpfs.Env + "=" + shellQuote(l.Tmpfs.Dir+key) + "; "
+	out := make([]Planned, len(plan))
+	for i, p := range plan {
+		p.Cmd = prefix + p.Cmd
+		out[i] = p
+	}
+	return out, nil
 }
 
 // Planned is one command to send.
@@ -109,6 +180,11 @@ func LoadLibrary(path string) (*Library, error) {
 	}
 	if l.Standin.InterpreterClass == "" || len(l.Classes[l.Standin.InterpreterClass]) == 0 {
 		return nil, fmt.Errorf("%s: stand-in interpreter class %q has no invocations", path, l.Standin.InterpreterClass)
+	}
+	if l.Tmpfs != nil {
+		if err := l.Tmpfs.check(l); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
 	}
 	return l, nil
 }

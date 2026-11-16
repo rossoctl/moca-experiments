@@ -2271,6 +2271,7 @@ if [ -f "$E17D/rig/gen_corpora.sh" ]; then
   GC="$TMP/gc"
   rm -rf "$GC"
   gc() { E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" "$@" >"$TMP/gc.out" 2>&1; echo $?; }
+  gc0() { E17_TMPFS_SHARE=0 E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" >"$TMP/gc.out" 2>&1; echo $?; }
   gcr() { python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"r": r}))' "$GC/$1/corpus-report.json" "$2"; }
   gcd() { # POINT -> "class=dur_ms/work_ms" for every distinct pair in the corpus
     python3 -c 'import json,sys
@@ -2280,7 +2281,10 @@ for l in open(sys.argv[1]):
 print(" ".join(sorted(s)))' "$GC/$1/corpus.jsonl"
   }
   check "E17 gen_corpora: placeholders without --durations-from, and it says so" \
-    "$(gc)/$(gcd pycache)/$(grep -c 'placeholder durations' "$TMP/gc.out")" "0/py_analyze=15000/15000 py_grep=2200/2200 py_import=2000/2000 py_short=300/300 py_test=60000/60000/1"
+    "$(gc)/$(gcd pycache)/$(grep -c 'placeholder durations' "$TMP/gc.out")" "0/py_analyze=15000/15000 py_grep=2200/2200 py_import=2000/2000 py_shmem=100/100 py_short=300/300 py_test=60000/60000/1"
+  check "E17b gen_corpora: E17_TMPFS_SHARE defaults to 0.5 (200 of 400 sessions flagged tmpfs, both corpora)" \
+    "$(gcr pycache '(r["tmpfs_share"], r["tmpfs_sessions"])')/$(gcr pycache-low '(r["tmpfs_share"], r["tmpfs_sessions"])')/$(grep -c '(200 tmpfs, share 0.5)' "$TMP/gc.out")" \
+    "(0.5, 200)/(0.5, 200)/2"
   check "E17 gen_corpora: pycache at duty 0.095, pycache-low at 0.015; 400 sessions, seed 1, min-turns 4" \
     "$(gcr pycache '(r["duty_target"], r["sessions"], r["seed"], r["min_turns"])')/$(gcr pycache-low '(r["duty_target"], r["sessions"], r["seed"], r["min_turns"])')" \
     "(0.095, 400, 1, 4)/(0.015, 400, 1, 4)"
@@ -2290,7 +2294,7 @@ print(" ".join(sorted(s)))' "$GC/$1/corpus.jsonl"
   printf '{"py_analyze": 18250.6, "py_test": 57100, "py_import": 1980.6, "py_grep": 2150, "py_short": 412}\n' >"$TMP/cal.json"
   check "E17 gen_corpora --durations-from: every call carries the measured durations, both corpora" \
     "$(gc --durations-from "$TMP/cal.json")/$(gcd pycache)/$(gcd pycache-low)" \
-    "0/py_analyze=18251/18251 py_grep=2150/2150 py_import=1981/1981 py_short=412/412 py_test=57100/57100/py_analyze=18251/18251 py_grep=2150/2150 py_import=1981/1981 py_short=412/412 py_test=57100/57100"
+    "0/py_analyze=18251/18251 py_grep=2150/2150 py_import=1981/1981 py_shmem=100/100 py_short=412/412 py_test=57100/57100/py_analyze=18251/18251 py_grep=2150/2150 py_import=1981/1981 py_shmem=100/100 py_short=412/412 py_test=57100/57100"
   check "E17 gen_corpora --durations-from: the reports record them and the file, and no placeholder note" \
     "$(gcr pycache 'r["durations_ms"]')/$(gcr pycache-low 'r["durations_from"]["file"]')/$(grep -c 'placeholder durations' "$TMP/gc.out")" \
     "{'py_analyze': 18251, 'py_test': 57100, 'py_import': 1981, 'py_grep': 2150, 'py_short': 412}/cal.json/0"
@@ -2302,11 +2306,14 @@ print(" ".join(sorted(s)))' "$GC/$1/corpus.jsonl"
   printf '{"py_analyze": 18250, "py_test": 57100, "py_import": 1980, "py_short": 412}\n' >"$TMP/cal-bad.json"
   check "E17 gen_corpora --durations-from: a file missing a class fails, the corpora stay as they were" \
     "$(gc --durations-from "$TMP/cal-bad.json")/$(grep -c 'pycache_corpus.py: --durations-from' "$TMP/gc.out")/$(cmp -s "$TMP/gc-cal.jsonl" "$GC/pycache/corpus.jsonl" && echo kept)/$(find "$GC" -maxdepth 1 -name '.pycache*' | grep -c .)" "1/1/kept/0"
+  check "E17b gen_corpora: E17_TMPFS_SHARE=0 writes the E17a corpora (no py_shmem, no tmpfs; pycache_corpus.py --tmpfs-share 0 byte for byte)" \
+    "$(gc0)/$(gcd pycache-low)/$(gcr pycache '(r["tmpfs_share"], r["tmpfs_sessions"])')/$(grep -c '"tmpfs"' "$GC/pycache/corpus.jsonl")/$(python3 "$E17D/extract/pycache_corpus.py" --gaps-from "$E17D/extract/testdata/gaps-20.jsonl" --duty 0.015 --sessions 400 --seed 1 --min-turns 4 --tmpfs-share 0 --out "$TMP/gc-direct0" >/dev/null 2>&1; cmp -s "$TMP/gc-direct0/corpus.jsonl" "$GC/pycache-low/corpus.jsonl" && echo same)" \
+    "0/py_analyze=15000/15000 py_grep=2200/2200 py_import=2000/2000 py_short=300/300 py_test=60000/60000/(0.0, 0)/0/same"
   check "E17 gen_corpora: a missing CAL.json, or another argument, is a usage error" \
     "$(gc --durations-from "$TMP/nope.json")/$(gc --bogus)" "2/2"
   check "E17 gen_corpora: the brief's gap source and corpora root are the defaults" \
     "$(grep -c 'E17_GAPS:-/tmp/kagenti/e16-corpus-default/corpus.jsonl' "$E17D/rig/gen_corpora.sh")/$(grep -c 'E17_CORPORA:-/tmp/kagenti/e17-corpora' "$E17D/rig/gen_corpora.sh")" "1/1"
-  rm -rf "$GC" "$TMP/gc-direct"
+  rm -rf "$GC" "$TMP/gc-direct" "$TMP/gc-direct0"
 fi
 
 # smoke.sh: the rung line per arm, and its refusals (it is never run here: it starts workers)

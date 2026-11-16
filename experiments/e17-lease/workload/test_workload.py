@@ -27,12 +27,13 @@ ROOT = HERE.parent.parent
 SCRIPT = HERE / "build_pycache_workspace.sh"
 LIBRARY = HERE / "library.json"
 LOCK = HERE / "wheels.lock"
-DRIVER = ROOT / "e15" / "driver"
+DRIVER = ROOT / "e15-session-density" / "driver"
 WHEELS = pathlib.Path(os.environ.get("E17_WHEELS", "/tmp/kagenti/e17-wheels-probe"))
 SHARD_MIB = 32
-CLASSES = {"py_analyze", "py_test", "py_import", "py_grep", "py_short"}
+CLASSES = {"py_analyze", "py_test", "py_import", "py_grep", "py_short", "py_shmem"}
+SHMEM_CMD = "awk '/^Shmem:/{print $2}' /proc/meminfo"
 
-sys.path.insert(0, str(ROOT / "e17" / "extract"))
+sys.path.insert(0, str(ROOT / "e17-lease" / "extract"))
 import pycache_corpus  # noqa: E402
 
 
@@ -175,10 +176,14 @@ def test_library_matches_classes():
     assert len(ids) == len(set(ids))
     for cls, invs in lib["classes"].items():
         for inv in invs:
-            assert inv["cmd"].startswith("cd project && "), inv
+            # py_shmem reads the guest's /proc/meminfo: it needs no project directory
+            assert cls == "py_shmem" or inv["cmd"].startswith("cd project && "), inv
             assert inv["exit"] == 0, inv
-            assert inv["nominal_ms"] == pycache_corpus.DUR_MS[cls], inv
+            assert inv["nominal_ms"] == dict(pycache_corpus.DUR_MS, py_shmem=pycache_corpus.SHMEM_MS)[cls], inv
             assert inv["run_ms"] is None and inv["cpu_ms"] is None, inv
+    assert [(i["id"], i["cmd"]) for i in lib["classes"]["py_shmem"]] == [("shmem", SHMEM_CMD)]
+    # Sessions flagged tmpfs run these classes with PYC_CACHE_DIR=/tmp/pycache-<workspace key>.
+    assert lib["tmpfs"] == {"classes": ["py_analyze", "py_test"], "env": "PYC_CACHE_DIR", "dir": "/tmp/pycache-"}
     assert [i["cmd"] for i in lib["classes"]["py_analyze"]] == ["cd project && ../venv/bin/python analyze.py"]
     assert [i["cmd"] for i in lib["classes"]["py_test"]] == ["cd project && ../venv/bin/python -m pytest -p no:cacheprovider -x -q tests"]
     assert [(i["id"], i["cmd"]) for i in lib["classes"]["py_import"]] == [
@@ -342,3 +347,76 @@ def test_preflight_runs_python_like_in_guest():
     assert len(pre) == 1, pre
     assert re.search(r'chroot "\$ROOTFS" /usr/bin/env -i PATH=/usr/bin:/bin HOME=/tmp TMPDIR=/tmp '
                      r"/usr/bin/python3\.9 -B -c 'import venv, ensurepip'", pre[0]), pre[0]
+
+
+def test_py_shmem_prints_the_guest_shmem_kb(tmp_path):
+    # The command is the brief's, verbatim; here it reads a stand-in for the guest's /proc/meminfo.
+    (inv,) = library()["classes"]["py_shmem"]
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal:        1004548 kB\nShmem:             51234 kB\nShmemHugePages:        0 kB\n"
+                       "ShmemPmdMapped:        0 kB\n")
+    r = run_cmd(tmp_path, inv["cmd"].replace("/proc/meminfo", str(meminfo)))
+    assert r.returncode == inv["exit"] == 0, r.stderr
+    assert r.stdout == "51234\n"
+    # one cheap invocation per call: nominal_ms is the corpus's planned duration
+    assert inv["nominal_ms"] == pycache_corpus.SHMEM_MS
+
+
+def files_under(d):
+    return sorted(str(p.relative_to(d)) for p in d.rglob("*") if p.is_file()) if d.exists() else []
+
+
+def test_analyze_cache_dir_puts_caches_there(tmp_path):
+    # PYC_CACHE_DIR (a tmpfs session's /tmp/pycache-<key>): analyze.py writes the dependency cache
+    # (the bytecode of everything it imports, sys.pycache_prefix) and the dataset cache (the KMeans
+    # sample, keyed by the dataset sha256) there, and prints the same line. Unset: no cache at all.
+    need_stack()
+    ws = tmp_path / "ws"
+    stage(ws, "--dataset-mib", "4", "--dataset-seed", "1")
+    shim_venv(ws)
+    set_analyze_scale(ws, 1)
+    cmd = library()["classes"]["py_analyze"][0]["cmd"]
+    plain = analyze_line(run_cmd(ws, cmd))
+    cache = tmp_path / "pycache-key"
+    got = analyze_line(run_cmd(ws, cmd, env={"PYC_CACHE_DIR": str(cache)}))
+    assert got == plain
+    files = files_under(cache)
+    sha = build_field(ws, "dataset_sha256")
+    assert "dataset/sample-%s.npy" % sha in files, files
+    pyc = [f for f in files if f.startswith("pyc/") and f.endswith(".pyc")]
+    assert any("/numpy/" in f for f in pyc) and any("/pandas/" in f for f in pyc), pyc[:5]
+    # a second run reuses (and checks) both caches
+    before = {f: (cache / f).stat().st_mtime_ns for f in files}
+    assert analyze_line(run_cmd(ws, cmd, env={"PYC_CACHE_DIR": str(cache)})) == plain
+    assert {f: (cache / f).stat().st_mtime_ns for f in files_under(cache)} == before
+    # a cache that does not match the dataset is refused, never trusted
+    (cache / "dataset" / ("sample-%s.npy" % sha)).write_bytes(b"not a sample")
+    r = run_cmd(ws, cmd, env={"PYC_CACHE_DIR": str(cache)})
+    assert r.returncode != 0 and "dataset cache" in r.stderr, r.stderr
+
+
+def test_analyze_without_cache_dir_writes_no_cache(tmp_path):
+    need_stack()
+    ws = tmp_path / "ws"
+    stage(ws, "--dataset-mib", "1", "--dataset-seed", "1")
+    shim_venv(ws)
+    set_analyze_scale(ws, 1)
+    env = {k: v for k, v in os.environ.items() if k != "PYC_CACHE_DIR"}
+    cmd = library()["classes"]["py_analyze"][0]["cmd"]
+    r = subprocess.run(["bash", "-c", cmd], cwd=ws, capture_output=True, text=True, env=env)
+    analyze_line(r)
+    assert not [p for p in ws.rglob("*") if p.name.startswith("sample-")]
+
+
+def test_project_tests_cache_dir_puts_bytecode_there(tmp_path):
+    need_stack()
+    ws = tmp_path / "ws"
+    stage(ws, "--dataset-mib", "1")
+    shim_venv(ws)
+    cache = tmp_path / "pycache-key"
+    cmd = library()["classes"]["py_test"][0]["cmd"]
+    r = run_cmd(ws, cmd, env={"PYC_WORK_SCALE": "0.02", "PYC_CACHE_DIR": str(cache)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert re.search(r"\b40 passed\b", r.stdout), r.stdout
+    pyc = [f for f in files_under(cache) if f.startswith("pyc/") and f.endswith(".pyc")]
+    assert any("/numpy/" in f for f in pyc), pyc[:5]

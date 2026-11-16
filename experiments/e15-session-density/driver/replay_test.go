@@ -1051,3 +1051,39 @@ func TestMaxSessionsEndsRunEarly(t *testing.T) {
 		t.Fatalf("run took %v, want it to end before the 20 s window", d)
 	}
 }
+
+// E17b: a session flagged tmpfs sends its py_analyze and py_test Execs with PYC_CACHE_DIR exported
+// as /tmp/pycache-<its workspace key>; its other calls, and every call of an unflagged session, are
+// the library's commands unchanged.
+func TestTmpfsSessionCachesInGuestTmpfs(t *testing.T) {
+	for _, flagged := range []bool{true, false} {
+		client, f := newFake(t)
+		cfg := baseCfg()
+		cfg.StartAtZero, cfg.MaxSessions, cfg.Window = true, 1, 20*time.Second
+		lib := testLib(nil, "py_short", "py_analyze", "py_test", "py_shmem")
+		lib.Tmpfs = &TmpfsSpec{Classes: []string{"py_analyze", "py_test"}, Env: "PYC_CACHE_DIR", Dir: "/tmp/pycache-"}
+		s := sess("s", "u", 5, "py_analyze", "py_test", "py_short", "py_analyze", "py_shmem")
+		s.Tmpfs = flagged
+		res := run(t, cfg, []Session{s}, lib, client)
+		if res.err != nil || len(res.calls) != 5 {
+			t.Fatalf("%v: %d calls", res.err, len(res.calls))
+		}
+		ex := f.byKey()["e15-t-0-0"]
+		if len(ex) != 5 {
+			t.Fatalf("%d Execs, want 5", len(ex))
+		}
+		const prefix = "export PYC_CACHE_DIR='/tmp/pycache-e15-t-0-0'; "
+		for i, cls := range []string{"py_analyze", "py_test", "py_short", "py_analyze", "py_shmem"} {
+			want := cls
+			if flagged && (cls == "py_analyze" || cls == "py_test") {
+				want = prefix + cls
+			}
+			if !strings.HasPrefix(ex[i].cmd, "(\n"+want+"\n)") {
+				t.Fatalf("tmpfs %v, Exec %d (%s):\n%s\nwant the step %q", flagged, i, cls, ex[i].cmd, want)
+			}
+			if res.calls[i].Status != "ok" || res.calls[i].Class != cls {
+				t.Fatalf("call %d: %+v", i, res.calls[i])
+			}
+		}
+	}
+}

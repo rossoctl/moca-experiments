@@ -304,3 +304,20 @@ def test_set_mode_failed_rows_not_in_counts(tmp_path):
              "warm": "set_mode_failed", "cold_reason": "set_mode_failed", "first_lease": False}]
     s = L.summarize(rows)
     assert s["counts"]["calls"] == 0 and s["counts"]["used"] == 0 and s["classes"] == {}
+
+
+def test_py_shmem_excluded_from_gates(tmp_path):
+    # The join still aligns py_shmem's Exec (a call like any other), but its rows never enter the
+    # warm/cold counts the latency gates are read with, nor the ship rung's latency classes.
+    log = first() + [exec_line("A", "vm-1", req=2), exec_line("A", "vm-1", req=3)]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]), call("A", 2, cls="py_shmem", ms=40),
+             call("A", 3)]
+    d = rung(tmp_path, calls, log)
+    rows, s = WL.join(d)
+    assert tags(rows)[("A", 2)] == (True, None) and tags(rows)[("A", 3)] == (True, None)
+    assert (s["warm"], s["cold"], s["unknown"], s["reported_only"]) == (1, 0, 0, {"py_shmem": 1})
+    with open(os.path.join(d, "params.json"), "w") as f:
+        json.dump({"arm": "ship-300", "n": 1, "point": "pycache", "seed": 1}, f)
+    g = L.build([d])["groups"][0]
+    assert set(g["classes"]) == {"py_analyze"} and g["counts"]["used"] == 1
+    assert g["reported_only"]["py_shmem"]["all"]["n"] == 1

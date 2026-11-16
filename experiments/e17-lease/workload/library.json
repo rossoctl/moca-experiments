@@ -106,10 +106,28 @@
         "run_ms": null,
         "cpu_ms": null
       }
+    ],
+    "py_shmem": [
+      {
+        "id": "shmem",
+        "cmd": "awk '/^Shmem:/{print $2}' /proc/meminfo",
+        "exit": 0,
+        "nominal_ms": 100,
+        "run_ms": null,
+        "cpu_ms": null
+      }
     ]
   },
   "standin": {
     "interpreter_class": "py_short",
     "infra_sleep_frac": 0.5
+  },
+  "tmpfs": {
+    "classes": [
+      "py_analyze",
+      "py_test"
+    ],
+    "env": "PYC_CACHE_DIR",
+    "dir": "/tmp/pycache-"
   }
 }

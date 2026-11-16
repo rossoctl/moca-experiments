@@ -130,3 +130,44 @@ def test_cli_writes_json_and_md(tmp_path):
     assert "| pycache | 1 | lease-120 | py_analyze |" in md
     assert "0.40" in md
     assert "warm share" in md.lower() and "first call after idle" in md.lower()
+
+
+def with_shmem(d, key, log_line, at):
+    """Insert a py_shmem call after each of key's calls numbered in `at`, its exec line right after
+    that call's own (key's calls run one Exec each, in order: the k-th exec line of key is its k-th call)."""
+    calls = [json.loads(l) for l in open(os.path.join(d, "calls.jsonl"))]
+    mine = sorted(c["call"] for c in calls if c["session"] == key)
+    out_c = []
+    for c in calls:
+        out_c.append(c)
+        if c["session"] == key and c["call"] in at:
+            out_c.append(call(key, c["call"] + 0.5, cls="py_shmem", ms=50))
+    out_l, k = [], 0
+    for line in open(os.path.join(d, "worker.log")):
+        out_l.append(line)
+        if 'vmpool: exec ' in line and 'workspace_key="%s"' % key in line:
+            if mine[k] in at:
+                out_l.append(log_line)
+            k += 1
+    with open(os.path.join(d, "calls.jsonl"), "w") as f:
+        f.writelines(json.dumps(c) + "\n" for c in out_c)
+    with open(os.path.join(d, "worker.log"), "w") as f:
+        f.writelines(out_l)
+    return d
+
+
+def test_py_shmem_excluded_from_gates(tmp_path):
+    # py_shmem is reported only: never a per-class median, never in the gain (the latency gates read
+    # it), the counts, the warm share or the first call after idle; its calls are reported apart.
+    plain = L.build([lease_rung(tmp_path, name="l0"), sbx_rung(tmp_path, name="s0")], baseline_arm="sbx")
+    lease = with_shmem(lease_rung(tmp_path, name="l1"), "A", exec_line("A", "vm-1"), at={1, 2})
+    sbx = with_shmem(sbx_rung(tmp_path, name="s1"), "S", exec_line("S", "vm-9"), at={1})
+    rep = L.build([lease, sbx], baseline_arm="sbx")
+    for arm in ("lease-120", "sbx"):
+        g, p = group(rep, arm), group(plain, arm)
+        assert "py_shmem" not in g["classes"]
+        for k in ("classes", "counts", "warm_share", "first_after_idle"):
+            assert g[k] == p[k], (arm, k)
+        assert g["reported_only"]["py_shmem"]["all"]["n"] == {"lease-120": 2, "sbx": 1}[arm]
+        assert g["reported_only"]["py_shmem"]["all"]["median_ms"] == 50
+    assert "py_shmem" not in L.markdown(rep).split("## Warm share")[0]

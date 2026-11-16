@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -126,10 +127,16 @@ func NewReplayer(cfg Config, sessions []Session, lib *Library, client pb.Sandbox
 // Exec never completes, running into its timeout.
 const maxJoinedBytes = 30 << 10
 
+// validateKey stands in for a workspace key in validatePlans: a tmpfs session's commands carry its
+// key (SessionPlan), and the frame check uses one longer than any the driver builds
+// ("e15-<run-id>-<slot>-<seq>") unless --run-id is over 200 bytes.
+var validateKey = strings.Repeat("k", 255)
+
 // validatePlans plans and joins every call of every replayable session once, so a library that
 // cannot expand some call, or expands it into a script over maxJoinedBytes, fails the run before
 // it starts rather than mid-window. The scan step, when the call's class carries one, is part of
-// the joined script and so of the encoded frame checked here.
+// the joined script and so of the encoded frame checked here, and so is a tmpfs session's export
+// (SessionPlan, with validateKey).
 func validatePlans(sessions []Session, lib *Library, seed int64, scan Scan) error {
 	over, largest := 0, 0
 	var where string
@@ -139,6 +146,9 @@ func validatePlans(sessions []Session, lib *Library, seed int64, scan Scan) erro
 		}
 		for _, c := range s.Calls {
 			p, err := lib.Plan(c, seed, s.ID)
+			if err == nil {
+				p, err = lib.SessionPlan(p, s, c, validateKey)
+			}
 			if err != nil {
 				return fmt.Errorf("planning %s call %d: %w", s.ID, c.I, err)
 			}
@@ -451,6 +461,9 @@ func (r *Replayer) runSession(ctx context.Context, key string, s Session, start 
 	for idx := start; idx < len(s.Calls); idx++ {
 		c := s.Calls[idx]
 		plan, err := r.lib.Plan(c, r.cfg.Seed, s.ID)
+		if err == nil {
+			plan, err = r.lib.SessionPlan(plan, s, c, key)
+		}
 		if err != nil { // validatePlans makes this unreachable for a corpus it checked
 			return fmt.Errorf("planning %s call %d: %w", s.ID, c.I, err)
 		}

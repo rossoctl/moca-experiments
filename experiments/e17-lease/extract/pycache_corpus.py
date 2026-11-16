@@ -36,8 +36,22 @@ so that is sum(dur_ms) / (sum(dur_ms) + sum(gap_ms)). offset_ms is the time from
 call's emit (the previous call's dur_ms + gap_ms), 0 on the first call; the driver and timeline()
 add the offsets up.
 
+E17b (PLAN-E17B Task 10, spec §7.3): --tmpfs-share X (default 0.5) flags round(X * sessions)
+sessions, drawn with their own seeded generator (so the sessions themselves do not move), with
+"tmpfs": true (every other session "tmpfs": false). The driver runs a flagged session's py_analyze
+and py_test with PYC_CACHE_DIR=/tmp/pycache-<workspace key> (library.json "tmpfs"), so their
+dependency and dataset caches live in guest tmpfs. With X > 0 every turn also ends with one py_shmem
+call (awk the guest's Shmem from /proc/meminfo; reported only, never gated): it is sent back to back
+after the turn's last py_analyze, whose gap it takes over, so it reads the guest's tmpfs right after
+the heavy call. dur_ms = work_ms = SHMEM_MS for it (not calibrated: --durations-from keeps its five
+classes). Nothing else moves: removing the py_shmem calls (and adding each one's gap back to the
+py_analyze before it) gives the --tmpfs-share 0 corpus. Its duty is re-measured with the readings'
+busy time in it; the gap fit does not see them (SHMEM_MS per turn, about 0.1% of the busy time).
+--tmpfs-share 0 writes the E17a corpus byte for byte: no tmpfs field, no py_shmem call.
+
 Usage: python3 pycache_corpus.py --gaps-from CORPUS.jsonl --duty 0.095 --sessions 400 --seed 1
                                  --out DIR [--min-turns 4] [--durations-from CAL.json]
+                                 [--tmpfs-share 0.5]
 """
 
 import argparse
@@ -73,6 +87,9 @@ SKELETON = {"py_analyze": "python analyze.py", "py_test": "python -m pytest -x -
             "py_grep": "grep -rc def venv"}
 TURN_HEAD = ("py_analyze", "py_test", "py_import", "py_grep")
 SHORT_SKELETONS = ("grep", "read", "edit")
+TMPFS_SHARE = 0.5
+SHMEM_MS = 100          # py_shmem's planned duration: the library's nominal_ms, one invocation
+SHMEM_SKELETON = "awk Shmem /proc/meminfo"
 
 
 def load_gaps(path):
@@ -150,6 +167,20 @@ def build_calls(steps, gaps, dur=DUR_MS):
     return calls
 
 
+def with_shmem(calls, dur):
+    """calls with one py_shmem after each turn's closing py_analyze (the py_analyze right after a
+    py_short), back to back: the py_analyze's gap moves to the py_shmem call."""
+    steps, gaps = [], []
+    for n, c in enumerate(calls):
+        steps.append((c["class"], c["skeleton"]))
+        gaps.append(c["gap_ms"])
+        if c["class"] == "py_analyze" and n and calls[n - 1]["class"] == "py_short":
+            steps.append(("py_shmem", SHMEM_SKELETON))
+            gaps[-1] = 0
+            gaps.append(c["gap_ms"])
+    return build_calls(steps, gaps[:-1], dict(dur, py_shmem=SHMEM_MS))
+
+
 def duty_of(calls):
     span, busy, _, _ = timeline(calls)
     return busy / span
@@ -184,7 +215,12 @@ def main(argv=None):
     p.add_argument("--durations-from", metavar="CAL.json",
                    help="JSON object: each class's measured N=1 median run_ms, replacing the "
                         "placeholder dur_ms/work_ms")
+    p.add_argument("--tmpfs-share", type=float, default=TMPFS_SHARE,
+                   help="fraction of sessions flagged tmpfs, in [0, 1] (default %g); above 0 every "
+                        "turn also ends with a py_shmem reading; 0 writes the E17a corpus" % TMPFS_SHARE)
     args = p.parse_args(argv)
+    if not 0 <= args.tmpfs_share <= 1:  # also refuses nan
+        p.error("--tmpfs-share must be in [0, 1]")
     if not 0 < args.duty < 1:
         p.error("--duty must be in (0, 1)")
     if args.sessions < 1:
@@ -201,6 +237,9 @@ def main(argv=None):
         sys.exit(1)
 
     rng = random.Random(args.seed)
+    # The tmpfs draw has its own generator, so the sessions are the same at every share.
+    n_tmpfs = int(math.floor(args.tmpfs_share * args.sessions + 0.5))
+    tmpfs = set(random.Random("tmpfs-share:%d" % args.seed).sample(range(args.sessions), n_tmpfs))
     lines, duties, per_class = [], [], collections.Counter()
     extended, turns, spans, busy = 0, [], [], 0
     for n in range(args.sessions):
@@ -213,7 +252,12 @@ def main(argv=None):
             sys.exit(1)
         calls, d, extra = got
         s = dict(session="pycache:%d:%04d" % (args.seed, n), user="pyc-u%02d" % (n % USERS),
-                 provider=PROVIDER, calls=calls)
+                 provider=PROVIDER)
+        if args.tmpfs_share > 0:
+            calls = with_shmem(calls, dur)
+            d = duty_of(calls)
+            s["tmpfs"] = n in tmpfs
+        s["calls"] = calls
         lines.append((json.dumps(s, separators=(",", ":")) + "\n").encode())
         duties.append(d)
         per_class.update(c["class"] for c in calls)
@@ -232,6 +276,8 @@ def main(argv=None):
         calls_per_class=dict(sorted(per_class.items())),
         min_turns=args.min_turns,
         durations_ms=dur, durations_from=dur_src,
+        tmpfs_share=args.tmpfs_share, tmpfs_sessions=n_tmpfs,
+        py_shmem_ms=SHMEM_MS if args.tmpfs_share > 0 else None,
         turns=dict(mean=statistics.fmean(turns), max=max(turns), sessions_extended=extended),
         turns_per_session=dict(min=min(turns), median=statistics.median(turns), max=max(turns)),
         span_min=dict(min=min(spans) / 60_000, median=statistics.median(spans) / 60_000,
