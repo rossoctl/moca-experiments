@@ -25,6 +25,8 @@
 #   6. builds: stock microvm-worker, null-responder, e15-driver; resident build (resident/apply.sh)
 #   7. rootfs = /srv/snapshots/default's rootfs tree + pytest wheels; build-snapshot.sh
 #      --guest-ram-mb 1024 --image e15 --out /srv/e15/snapshots/e15; pytest checked in a VM
+#      (E17B=1: skipped with a log line; the E17b leaves are experiments/e17-lease/rig/snapshot-e17b.sh's, and step
+#      10 checks the selected E17b leaf, or is skipped until it exists: ruling E17B-R32)
 #   8. workspace templates (commands/build_workspace.sh, points.sh): /srv/e15/template/workspace.img
 #      (256 MiB) and /srv/e15/template-mem512/workspace.img (1024 MiB, 512 MiB data.bin, seed 1)
 #   8b. disk_read_max_mbs in /srv/e15/state: dd iflag=direct read of a 2 GiB file, once
@@ -303,9 +305,11 @@ else
   KERNEL=$E15_BASE_SNAPSHOT/kernel
   snap_key="$E15_MOCA_PIN-$wheels_key-$(sha256_of "$E15_BASE_SNAPSHOT/rootfs" | cut -c1-16)"
 fi
-if ! stamp_ok snapshot "$snap_key" || [ ! -f "$E15_SNAPDIR/$E15_SNAPIMG/manifest.json" ]; then
-  # E17b profile (ruling R3): never delete or rebuild the sealed snapshot leaf; E17b snapshots get a new leaf.
-  [ "${E17B:-}" != 1 ] || die "E17b snapshots are built by experiments/e17-lease/rig/snapshot-e17b.sh into a new leaf, never over $E15_SNAPIMG"
+if [ "${E17B:-}" = 1 ]; then # step 7 under the E17b profile (rulings E17B-R3, R32)
+  # Never build, delete or replace a snapshot here: the sealed leaf stays, and the E17b leaves are snapshot-e17b.sh's
+  # (new leaves). Skipped, not a die, so the steps after it (templates, Redis, the relay, the end-to-end check) run.
+  log "E17B=1: step 7 (snapshot) skipped: setup.sh builds no snapshot under the E17b profile; the E17b leaves are built by experiments/e17-lease/rig/snapshot-e17b.sh --ram-mb 1024 and --ram-mb 256, never over $E15_SNAPIMG"
+elif ! stamp_ok snapshot "$snap_key" || [ ! -f "$E15_SNAPDIR/$E15_SNAPIMG/manifest.json" ]; then
   tree=$E15_ROOT/rootfs-build/tree
   if [ "$METAL" = 1 ]; then
   log "rootfs: moca v0.9.0 build-rootfs.sh over $E15_SANDBOX_IMAGE + pytest wheels (log $E15_LOGS/build-rootfs.log)"
@@ -520,8 +524,28 @@ if [ "$already_up" = 0 ]; then
 fi
 
 # --- 10. end-to-end check: a stock worker, one Exec per tool the library leans on ------------
-check_key="$(sha256_of "$E15_SNAPDIR/$E15_SNAPIMG/manifest.json" | cut -c1-16)-$(cat "$E15_STATE/template")"
-if ! stamp_ok e2e "$check_key"; then
+# E17b profile (ruling E17B-R32): the check runs on the selected E17b leaf (lib.sh worker_snapimg) with its own stamp,
+# after a relay restart from the E17b checkout (rung.sh restarts it per rung the same way); with no leaf yet it is
+# skipped and the operator is told to build the leaves and re-run. E17B unset: the sealed leaf and stamp, as before.
+e2e_leaf=$E15_SNAPIMG e2e_stamp=e2e e2e_pending=0
+if [ "${E17B:-}" = 1 ]; then
+  e2e_leaf=$(worker_snapimg) || exit 1
+  e2e_stamp=e2e-e17b
+  if [ ! -f "$E15_SNAPDIR/$e2e_leaf/manifest.json" ]; then
+    log "E17B=1: no E17b snapshot $E15_SNAPDIR/$e2e_leaf: the end-to-end check is skipped. Build the leaves with experiments/e17-lease/rig/snapshot-e17b.sh --ram-mb 1024 (and --ram-mb 256), then re-run E17B=1 setup.sh for the check"
+    e2e_pending=1
+  fi
+fi
+if [ "$e2e_pending" = 0 ]; then
+check_key="$(sha256_of "$E15_SNAPDIR/$e2e_leaf/manifest.json" | cut -c1-16)-$(cat "$E15_STATE/template")"
+if ! stamp_ok "$e2e_stamp" "$check_key"; then
+  if [ "${E17B:-}" = 1 ]; then
+    # the relay running may be the sealed checkout's (the first, sealed setup started it): restart it from E15_MOCA
+    stop_e15_unit "$E15_UNIT_RELAY"
+    # shellcheck disable=SC2119 # start_relay's optional $1 is the E17b token-keyset env file; the check needs none
+    start_relay
+    m_note "E17B=1: $E15_UNIT_RELAY restarted from $E15_MOCA for the end-to-end check (the UNDO recorded at its first start stops it)"
+  fi
   d=$E15_ROOT/logs/e2e
   rm -rf "$d"
   mkdir -p "$d"
@@ -542,9 +566,12 @@ if ! stamp_ok e2e "$check_key"; then
   stop_rung_units
   sudo -n rm -rf "$E15_WORKSPACES/e15-e2e"
   [ "$e2e_ok" = 1 ] || die "end-to-end check failed; see $d/e2e.log"
-  stamp_set e2e "$check_key"
-  m_note "end-to-end check passed in a booted VM: $(head -2 "$d/e2e.log" | tail -1)"
+  stamp_set "$e2e_stamp" "$check_key"
+  # the sealed note text unchanged; under E17B=1 it names the leaf checked
+  m_note "end-to-end check passed in a booted VM$([ "$e2e_stamp" = e2e ] || printf ' (%s)' "$e2e_leaf"): $(head -2 "$d/e2e.log" | tail -1)"
+fi
 fi
 
+[ "$e2e_pending" = 0 ] || log "setup: E17B=1: the end-to-end check is pending (snapshot-e17b.sh first, then E17B=1 setup.sh again)"
 log "setup: done. relay $(ss -ltnH | awk '{print $4}' | grep -E ":($E15_PORT_ATTACH|$E15_PORT_EXEC)\$" | tr '\n' ' ')"
 m_note "setup complete"

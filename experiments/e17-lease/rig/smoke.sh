@@ -24,7 +24,8 @@
 #      be 0 and its sha256= must equal template-pycache-d256/BUILD's dataset_sha256 (bringup.sh).
 #      Log: /srv/e15/runs/pycache/sbx/N1-smoke/analyze-check.log (the worker's in analyze-check/);
 #      the workspace copy is removed after, and the relay left running, as after a rung.
-#   4. experiments/e17-lease/analysis/warmcold.py on each rung: its warm/cold/unknown counts, printed (and
+#   4. experiments/e17-lease/analysis/warmcold.py on each rung (warmcold_lease.py on a ship-* rung: E17a's
+#      join cannot read the shipped worker's log; final review M2): its warm/cold/unknown counts, printed (and
 #      warmcold.jsonl, warmcold-report.json in the rung directory). Run before step 3, so a rig
 #      error there (lib.sh die: the worker does not attach) still leaves the counts printed.
 # Exit 0 when every rung wrote its record and steps 2-3 pass; 1 otherwise.
@@ -109,7 +110,9 @@ fi
 
 # --- 4. warm/cold per rung (before step 3, whose rig errors die) ---------------------------------
 for d in "${dirs[@]}"; do
-  wc_out=$(python3 "$E17_SRC/analysis/warmcold.py" "$d" 2>&1) || fails+=("warmcold.py failed on $d: $wc_out")
+  wc=warmcold.py
+  case "${d%/*}" in */ship-*) wc=warmcold_lease.py ;; esac
+  wc_out=$(python3 "$E17_SRC/analysis/$wc" "$d" 2>&1) || fails+=("$wc failed on $d: $wc_out")
   holds=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("holds"))' "$d/record.json" 2>/dev/null || echo "?")
   printf 'smoke %s: %s (holds=%s)\n' "${d#"$E15_RUNS"/}" "$wc_out" "$holds"
 done

@@ -5,8 +5,8 @@
 #   E17B=1 snapshot-e17b.sh --ram-mb {1024|256} --leaf e17b-<sha8>-<ram>
 #
 # Run ON THE RIG by the controller, as the login user (sudo -n per step, as setup.sh), from the staged
-# copy ($E15_ROOT/src/e17/rig). setup.sh under E17B=1 refuses to build a snapshot (ruling E17B-R3); this is
-# the builder it names. It reuses setup.sh step 7's recipe for fresh-metal: the pinned guest kernel,
+# copy ($E15_ROOT/src/e17/rig). setup.sh under E17B=1 never builds a snapshot (rulings E17B-R3, R32: it skips
+# that step with a log line); this is the builder it names. It reuses setup.sh step 7's recipe for fresh-metal: the pinned guest kernel,
 # moca's build-rootfs.sh over the pinned sandbox image + E15's pytest wheels, the guest git identity,
 # then moca's build-snapshot.sh from $E15_MOCA (the E17b checkout, at E17B_MOCA_PIN) with that
 # checkout's own guest agent (--agent $E15_MOCA/remote-worker). Like E15 it bakes no egress CA.

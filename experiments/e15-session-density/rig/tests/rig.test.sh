@@ -2270,8 +2270,10 @@ fi
 if [ -f "$E17D/rig/gen_corpora.sh" ]; then
   GC="$TMP/gc"
   rm -rf "$GC"
-  gc() { E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" "$@" >"$TMP/gc.out" 2>&1; echo $?; }
-  gc0() { E17_TMPFS_SHARE=0 E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" >"$TMP/gc.out" 2>&1; echo $?; }
+  # gc: the E17b corpora (E17B=1); gcu: E17B unset (the sealed E17a command); gc0: E17_TMPFS_SHARE=0 explicitly
+  gc() { E17B=1 E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" "$@" >"$TMP/gc.out" 2>&1; echo $?; }
+  gcu() { env -u E17B E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" >"$TMP/gc.out" 2>&1; echo $?; }
+  gc0() { env -u E17B E17_TMPFS_SHARE=0 E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" >"$TMP/gc.out" 2>&1; echo $?; }
   gcr() { python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"r": r}))' "$GC/$1/corpus-report.json" "$2"; }
   gcd() { # POINT -> "class=dur_ms/work_ms" for every distinct pair in the corpus
     python3 -c 'import json,sys
@@ -2282,7 +2284,7 @@ print(" ".join(sorted(s)))' "$GC/$1/corpus.jsonl"
   }
   check "E17 gen_corpora: placeholders without --durations-from, and it says so" \
     "$(gc)/$(gcd pycache)/$(grep -c 'placeholder durations' "$TMP/gc.out")" "0/py_analyze=15000/15000 py_grep=2200/2200 py_import=2000/2000 py_shmem=100/100 py_short=300/300 py_test=60000/60000/1"
-  check "E17b gen_corpora: E17_TMPFS_SHARE defaults to 0.5 (200 of 400 sessions flagged tmpfs, both corpora)" \
+  check "E17b gen_corpora: under E17B=1 E17_TMPFS_SHARE defaults to 0.5 (200 of 400 sessions flagged tmpfs, both corpora)" \
     "$(gcr pycache '(r["tmpfs_share"], r["tmpfs_sessions"])')/$(gcr pycache-low '(r["tmpfs_share"], r["tmpfs_sessions"])')/$(grep -c '(200 tmpfs, share 0.5)' "$TMP/gc.out")" \
     "(0.5, 200)/(0.5, 200)/2"
   check "E17 gen_corpora: pycache at duty 0.095, pycache-low at 0.015; 400 sessions, seed 1, min-turns 4" \
@@ -2309,6 +2311,9 @@ print(" ".join(sorted(s)))' "$GC/$1/corpus.jsonl"
   check "E17b gen_corpora: E17_TMPFS_SHARE=0 writes the E17a corpora (no py_shmem, no tmpfs; pycache_corpus.py --tmpfs-share 0 byte for byte)" \
     "$(gc0)/$(gcd pycache-low)/$(gcr pycache '(r["tmpfs_share"], r["tmpfs_sessions"])')/$(grep -c '"tmpfs"' "$GC/pycache/corpus.jsonl")/$(python3 "$E17D/extract/pycache_corpus.py" --gaps-from "$E17D/extract/testdata/gaps-20.jsonl" --duty 0.015 --sessions 400 --seed 1 --min-turns 4 --tmpfs-share 0 --out "$TMP/gc-direct0" >/dev/null 2>&1; cmp -s "$TMP/gc-direct0/corpus.jsonl" "$GC/pycache-low/corpus.jsonl" && echo same)" \
     "0/py_analyze=15000/15000 py_grep=2200/2200 py_import=2000/2000 py_short=300/300 py_test=60000/60000/(0.0, 0)/0/same"
+  check "E17 gen_corpora (M3): with E17B unset the default is the E17a corpora (tmpfs share 0, the same bytes as E17_TMPFS_SHARE=0)" \
+    "$(gc0)/$(cp "$GC/pycache/corpus.jsonl" "$TMP/gc-share0.jsonl"; gcu)/$(gcr pycache '(r["tmpfs_share"], r["tmpfs_sessions"])')/$(grep -c '"tmpfs"' "$GC/pycache/corpus.jsonl")/$(cmp -s "$TMP/gc-share0.jsonl" "$GC/pycache/corpus.jsonl" && echo same)" \
+    "0/0/(0.0, 0)/0/same"
   check "E17 gen_corpora: a missing CAL.json, or another argument, is a usage error" \
     "$(gc --durations-from "$TMP/nope.json")/$(gc --bogus)" "2/2"
   check "E17 gen_corpora: the brief's gap source and corpora root are the defaults" \
@@ -2320,8 +2325,8 @@ fi
 if [ -f "$E17D/rig/smoke.sh" ]; then
   check "E17 smoke: one rung.sh ARM 1 pycache per arm, 60 s warm-up, 120 s window, tag smoke" \
     "$(grep -c '^ARMS=(sbx resident-300 lease-30 lease-120)$' "$E17D/rig/smoke.sh")/$(grep -c 'E15_WARMUP_S=60 E15_WINDOW_S=120 E15_TAG=smoke E15_START_ZERO=\$START_ZERO bash "\$RUNG" "\$arm" 1 "\$POINT"' "$E17D/rig/smoke.sh")/$(grep -c '^POINT=pycache$' "$E17D/rig/smoke.sh")" "1/1/1"
-  check "E17 smoke: the sha256 is checked against the D=256 template's BUILD, warmcold.py on each rung" \
-    "$(grep -c '^BUILD=\${E15_P_TEMPLATE%/\*}/BUILD$' "$E17D/rig/smoke.sh")/$(grep -c 'python3 "\$E17_SRC/analysis/warmcold.py" "\$d"' "$E17D/rig/smoke.sh")" "1/1"
+  check "E17 smoke: the sha256 is checked against the D=256 template's BUILD, warmcold.py (warmcold_lease.py on ship-*) on each rung" \
+    "$(grep -c '^BUILD=\${E15_P_TEMPLATE%/\*}/BUILD$' "$E17D/rig/smoke.sh")/$(grep -c 'python3 "\$E17_SRC/analysis/\$wc" "\$d"' "$E17D/rig/smoke.sh")" "1/1"
   (E15_HOST_PROFILE=aws-prelim E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_MANIFEST="$TMP/m.md" PATH="$SPATH" bash "$E17D/rig/smoke.sh" >"$TMP/sm.out" 2>&1)
   check "E17 smoke: aws-prelim refused" "$?/$(grep -c 'E17 runs on fresh-metal only' "$TMP/sm.out")" "1/1"
   (E15_HOST_PROFILE=fresh-metal E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_MANIFEST="$TMP/m.md" PATH="$SPATH" bash "$E17D/rig/smoke.sh" >"$TMP/sm.out" 2>&1)
@@ -2401,6 +2406,9 @@ SH
   mkdir -p "$SM/snapshots/e17b-11111111-1024" && echo '{}' >"$SM/snapshots/e17b-11111111-1024/manifest.json"
   check "E17 smoke (stubbed): under E17B=1 the arms are sbx and the ship arms only, in that order" \
     "$(smoke E17B=1 E15_TEST_PINS="$TMP/sm-e17b-pins.sh")/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx ship-30 ship-120 ship-300 "
+  check "E17b smoke (stubbed, M2): ship rungs are read by warmcold_lease.py (first_lease in the counts), sbx by warmcold.py" \
+    "$(smoke E17B=1 E15_TEST_PINS="$TMP/sm-e17b-pins.sh")/$(grep -c '^smoke pycache/ship-[0-9]*/N1-smoke: warm [0-9]* cold [0-9]* unknown [0-9]* first_lease [0-9]* disagreements [0-9]* (holds=True)$' "$TMP/sm.out")/$(grep -c '^smoke pycache/sbx/N1-smoke: warm [0-9]* cold [0-9]* unknown [0-9]* (holds=True)$' "$TMP/sm.out")/$([ -f "$SM/runs/pycache/ship-300/N1-smoke/warmcold-report.json" ] && grep -c '"first_lease"' "$SM/runs/pycache/ship-300/N1-smoke/warmcold-report.json")" \
+    "0/3/1/1"
   check "E17 smoke (stubbed): E17B=0 keeps the E17 arms" "$(smoke E17B=0)/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx resident-300 lease-30 lease-120 "
   rm -f "$SM/bin/microvm-worker-e17b"
   check "E17 smoke (stubbed): warmcold counts printed per rung, the pass line names the BUILD sha256" \
@@ -2805,10 +2813,12 @@ test_e17b_profile_on
 
 test_e17b_setup_never_deletes_the_sealed_snapshot() {
   local snip="$TMP/e17b-snapstep.sh"
-  # The snapshot step's opening line and the guard that must follow it, run with sudo/rm stubbed.
-  awk '/^if ! stamp_ok snapshot "\$snap_key"/{p=1} p{print} p&&/E17B/{exit}' "$RIG/setup.sh" >"$snip"
+  # The snapshot step's opening (ruling E17B-R32): under E17B=1 it is SKIPPED with a log line, never a build; the
+  # build branch (elif) is cut at its first line, replaced by a marker, so the snippet runs with sudo/rm stubbed.
+  awk '/^if \[ "\$\{E17B:-\}" = 1 \]; then # step 7 under the E17b profile/{p=1} p&&/^  tree=\$E15_ROOT\/rootfs-build\/tree$/{print "  echo would-build"; exit} p{print}' "$RIG/setup.sh" >"$snip"
   printf 'fi\n' >>"$snip"
-  check "e17b snapshot: the guard is the first thing in the snapshot step" "$(grep -c 'E17B' "$snip")/$(grep -c 'E17b snapshots are built by experiments/e17-lease/rig/snapshot-e17b.sh into a new leaf, never over' "$snip")" "1/1"
+  check "e17b snapshot: the E17B=1 branch comes first in the snapshot step, the build only in its elif" \
+    "$(head -1 "$snip" | grep -c '^if \[ "\${E17B:-}" = 1 \]; then # step 7')/$(grep -c '^elif ! stamp_ok snapshot "\$snap_key"' "$snip")/$(grep -c 'would-build' "$snip")" "1/1/1"
   local rmlog="$TMP/e17b-snap-calls.log"
   : >"$rmlog"
   run_step() {
@@ -2822,13 +2832,54 @@ test_e17b_setup_never_deletes_the_sealed_snapshot() {
   }
   local out rc
   out=$(run_step E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh"); rc=$?
-  check "e17b snapshot: under E17B=1 the step dies naming snapshot-e17b.sh (non-zero, no fall-through)" "$([ "$rc" != 0 ] && echo nonzero)/$(printf '%s' "$out" | grep -c 'snapshot-e17b.sh into a new leaf, never over e15')/$(printf '%s' "$out" | grep -c reached-end)" "nonzero/1/0"
+  check "e17b snapshot: under E17B=1 the step is skipped with a log line naming snapshot-e17b.sh (exit 0, no build, the rest of setup runs)" \
+    "$rc/$(printf '%s' "$out" | grep -c 'step 7 (snapshot) skipped.*snapshot-e17b.sh --ram-mb 1024 and --ram-mb 256.*never over e15')/$(printf '%s' "$out" | grep -c would-build)/$(printf '%s' "$out" | grep -c reached-end)" "0/1/0/1"
   check "e17b snapshot: no rm and no sudo call was made" "$(grep -c . "$rmlog")" "0"
-  check "e17b snapshot: with E17B unset the guard does not fire (step falls through)" "$(run_step E17B= | grep -c reached-end)" "1"
-  check "e17b snapshot: setup.sh's first snapshot rm -rf comes after the guard" \
-    "$(awk '/^if ! stamp_ok snapshot "\$snap_key"/{a=NR} /E17b snapshots are built by/{g=NR} /rm -rf "\$\{E15_SNAPDIR:\?\}/{r=NR} END{print (a&&g&&r&&a<g&&g<r)?"after":"bad"}' "$RIG/setup.sh")" "after"
-  check "e17b snapshot: the rootfs-build rm -rf is behind the guard too" \
-    "$(awk '/^if ! stamp_ok snapshot "\$snap_key"/{a=NR} /E17b snapshots are built by/{g=NR} /sudo -n rm -rf "\$E15_ROOT\/rootfs-build"/{r=NR} END{print (a&&g&&r&&g<r)?"after":"bad"}' "$RIG/setup.sh")" "after"
+  check "e17b snapshot: with E17B unset the step builds as before (falls to the build branch)" "$(run_step E17B= | grep -c would-build)" "1"
+  check "e17b snapshot: no die is left in the E17B=1 branch (R32 replaces R3's die)" \
+    "$(grep -c 'E17b snapshots are built by experiments/e17-lease/rig/snapshot-e17b.sh into a new leaf, never over' "$RIG/setup.sh")/$(awk '/# step 7 under the E17b profile/{p=1} p&&/^elif /{exit} p&&/die /{d++} END{print d+0}' "$RIG/setup.sh")" "0/0"
+  check "e17b snapshot: setup.sh's first snapshot rm -rf comes after the E17B=1 branch, in the build branch" \
+    "$(awk '/# step 7 under the E17b profile/{g=NR} /^elif ! stamp_ok snapshot "\$snap_key"/{a=NR} /rm -rf "\$\{E15_SNAPDIR:\?\}/{r=NR} END{print (a&&g&&r&&g<a&&a<r)?"after":"bad"}' "$RIG/setup.sh")" "after"
+  check "e17b snapshot: the rootfs-build rm -rf is in the build branch too" \
+    "$(awk '/^elif ! stamp_ok snapshot "\$snap_key"/{a=NR} /sudo -n rm -rf "\$E15_ROOT\/rootfs-build"/{r=NR; exit} END{print (a&&r&&a<r)?"after":"bad"}' "$RIG/setup.sh")" "after"
+}
+# R32: setup.sh step 10 (the end-to-end check) under E17B=1 runs on the selected E17b leaf with its own stamp, after a
+# relay restart from the E17b checkout; with no leaf it is skipped, telling the operator what to run. E17B unset: as before.
+test_e17b_setup_e2e_step() {
+  local snip="$TMP/e17b-e2estep.sh" calls="$TMP/e17b-e2e-calls.log"
+  awk '/^# --- 10. end-to-end check/{p=1} p&&/^log "setup: done/{exit} p{print}' "$RIG/setup.sh" >"$snip"
+  run_e2e() {
+    : >"$calls"
+    env "$@" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" CALLS="$calls" bash -c '
+      source "$1"
+      sudo() { :; }
+      stamp_ok() { return 1; }
+      stamp_set() { echo "stamp_set $1" >>"$CALLS"; }
+      sha256_of() { echo 0123456789abcdef0123; }
+      start_worker() { echo "start_worker $1" >>"$CALLS"; }
+      start_relay() { echo "start_relay ${1:-}" >>"$CALLS"; }
+      stop_e15_unit() { echo "stop $1" >>"$CALLS"; }
+      stop_rung_units() { :; }
+      gexec() { echo ok; }
+      m_note() { :; }
+      workspace_cp_flag() { echo --reflink=always; }
+      workspace_copy_mode() { echo reflink; }
+      E15_STATE=$(mktemp -d); echo tkey >"$E15_STATE/template"
+      source "$2"; echo "reached-end e2e_pending=${e2e_pending:-0}"' _ "$RIG/lib.sh" "$snip" 2>&1
+  }
+  local out
+  rm -rf "$TROOT/snapshots/e17b-11111111-1024"
+  out=$(run_e2e E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh")
+  check "e17b e2e: no E17b leaf -> skipped, naming the leaf and snapshot-e17b.sh, nothing started" \
+    "$(printf '%s' "$out" | grep -c "no E17b snapshot $TROOT/snapshots/e17b-11111111-1024: the end-to-end check is skipped.*snapshot-e17b.sh --ram-mb 1024.*re-run E17B=1 setup.sh")/$(grep -c . "$calls")/$(printf '%s' "$out" | grep -c 'reached-end e2e_pending=1')" "1/0/1"
+  mkdir -p "$TROOT/snapshots/e17b-11111111-1024"
+  echo '{}' >"$TROOT/snapshots/e17b-11111111-1024/manifest.json"
+  out=$(run_e2e E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh")
+  check "e17b e2e: with the leaf -> the relay restarts from the E17b checkout, then the worker; its own stamp e2e-e17b" \
+    "$(tr '\n' ';' <"$calls")/$(printf '%s' "$out" | grep -c 'reached-end e2e_pending=0')" "stop e15-relay.service;start_relay ;start_worker sbx;stamp_set e2e-e17b;/1"
+  rm -rf "$TROOT/snapshots/e17b-11111111-1024"
+  out=$(run_e2e E17B=)
+  check "e17b e2e: E17B unset -> the sealed check (no relay restart, stamp e2e)" "$(tr '\n' ';' <"$calls")" "start_worker sbx;stamp_set e2e;"
 }
 test_e17b_builds_to_separate_binaries() {
   check "e17b build: stock worker, null-responder and stamp names follow the profile" \
@@ -2873,6 +2924,7 @@ test_sealed_binaries_untouched_when_e17b_set() {
 check "e17b: the pin-file-not-found error names both candidate paths" \
   "$(grep -c "but no e17b-pins.sh at.*e17-lease/rig/e17b-pins.sh.*e17/rig/e17b-pins.sh" "$RIG/lib.sh")" "1"
 test_e17b_setup_never_deletes_the_sealed_snapshot
+test_e17b_setup_e2e_step
 test_e17b_builds_to_separate_binaries
 test_worker_bin_follows_profile
 test_sealed_binaries_untouched_when_e17b_set

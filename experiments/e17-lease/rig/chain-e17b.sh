@@ -2,8 +2,9 @@
 # experiments/e17-lease/rig/chain-e17b.sh [--list] [--from STAGE] [--to STAGE] -- the E17b run list on the metal host
 # (experiments/e17-lease/PLAN-E17B.md Task 12 Steps 3 and 5, Task 14), in order, one stage at a time.
 #
-# Run by the controller only, as the rig's login user, from the staged copy, after bring-up (setup.sh and
-# bringup.sh with E17B=1, the snapshot-e17b.sh leaves):
+# Run by the controller only, as the rig's login user, from the staged copy, after bring-up (the order is in
+# experiments/e17-lease/rig/README.md, "E17b bring-up order": sealed setup.sh, E17B=1 setup.sh, the two
+# snapshot-e17b.sh leaves, E17B=1 setup.sh again for its end-to-end check, E17B=1 bringup.sh):
 #   bash /srv/e15/src/e17/rig/chain-e17b.sh               # from the first stage not done yet
 #   bash /srv/e15/src/e17/rig/chain-e17b.sh --from lat-pycache-sbx-n128 [--to ladder-default-ship-300]
 #   bash /srv/e15/src/e17/rig/chain-e17b.sh --list        # the stages, in order, with what each needs
