@@ -10,11 +10,23 @@ so the directory is removed and the name is never reissued (`issued` is monotoni
 VM's destroy as a push assigns the NEXT VM the wrong name. Here the replay retires the cgroups of VMs
 that have a `lease start` line, and recycles every other VM's.
 
-Identity (worker.log, SH_DIAG_PHASES=1): `vmpool: restore phases id=vm-N` is a VM birth, `destroy phases
-id=vm-N` its end, `vmpool: lease start workspace_key=.. vm=vm-N` marks a lease VM. Lines are replayed in
-log order, never by timestamp. Not visible in the log, so caught only by the validity check below: a
-restore that failed (its cgroup is released without a restore line) and a leaked cgroup (never
-reissued).
+Identity (worker.log, SH_DIAG_PHASES=1, parsed once): `vmpool: restore phases id=vm-N` is a VM birth,
+`destroy phases id=vm-N` its end. Lines are replayed in log order, never by timestamp.
+
+WHICH VMs RETIRE. launcher_firecracker.go LeaseCgroup sets `leaseCgroup` BEFORE it writes memory.max, so
+a VM is promoted (cgroup retired at Destroy) from the moment LeaseCgroup runs, whatever happens next.
+lease.go calls it after the VM is popped and before Resume, then logs `lease start` only at the very end,
+so a lease whose start fails after promotion has no `lease start` line. The markers read, per VM:
+  - `lease start ... vm=vm-N`                  : promoted AND a real lease (memory statistics, shares);
+  - `lease normalise ... vm=vm-N: <why>; the lease start fails`: promoted, start failed (not a lease VM);
+  - `lease cgroup ... vm=vm-N: <err>; the VM keeps the per-Exec memory bound`: promoted (the write failed
+    after the mark), EXCEPT `no pooled cgroup to lease`, which returns before the mark: not promoted.
+RESIDUAL: promotion with no marker in the log: a Resume failure, or a normalise cut by an abort (both
+log nothing here). The replay then recycles a retired name and later names shift. That is caught, never
+guessed: the samples then show a cgroup holding no live VM, and when that happens after any recycle the
+result is mapping_valid=false with the extra reason `lease_start_failed_without_marker_suspected`. Also
+invisible in the log, and caught only the same way: a failed restore (its cgroup is released with no
+restore line) and a leaked cgroup (never reissued).
 
 MAPPING VALIDITY. `mapping_valid` is false, with `mapping_reasons`, when: a vm id is restored twice, a
 destroy or a lease start or an Exec line names a vm with no restore (zero cgroups), a sampled cgroup
@@ -23,7 +35,8 @@ whole-second stamps), or a VM that lived 5 s with samples in its life never show
 false no cgroup name, memory table or FPR number is written (null): names are never guessed. The
 replacement-VM reading uses only the log and the calls, so it is kept.
 
-MEMORY. Per lease VM with samples: memory.current against VM age (since its restore line), 60 s bins,
+MEMORY. Per lease VM with samples: memory.current against VM age (since its restore line, not its
+promotion: a lease VM promoted from a standby carries its standby time), 60 s bins,
 median and p95 over VMs per bin; and the share of lease VMs whose PEAK exceeds 50% and 90% of guest RAM.
 
 MEMORY RETURNS (criterion 5, first half). Per heavy Exec (class in HEAVY_CLASSES, one Exec, on a lease
@@ -31,21 +44,26 @@ VM): memory.current at the Exec's end (the sample nearest it, within 1 s), 15 s 
 the Exec (samples from its send to its end). The Exec's end = calls.jsonl `ts` + observed_ms. VERDICT
 "charge follows the working set": value_15s <= peak - freed/2, where `freed` is the guest's freed amount
 for that Exec. That comes from the `py_shmem` reading (Task 10); until it exists it is an optional
-input, RUNDIR/freed.json = {"<session>:<call>": bytes}. Without it the three raw numbers are reported and
+input, RUNDIR/freed.json = {"session:call": bytes} (the key format is fixed: Task 10's py_shmem
+reading must be turned into exactly that; HEAVY_CLASSES stays py_analyze and py_test, py_shmem is only the
+source of the freed amount). Without it the three raw numbers are reported and
 the verdict is null, never false. It is also null when the 15 s sample is missing, the VM ended first, or
 the session's next call began within 15 s (the later Exec's charge is not "falling back").
 
 REPLACEMENT VM (criterion 5, second half). A lease whose first call is cold with reason `idle` (the key's
 previous lease ended by the idle timeout; warmcold_lease.py's cold_reason): its first ok `py_grep`
-observed_ms against the median ok `py_grep` of the `sbx` rung (--sbx) or --sbx-median-ms.
+observed_ms against the median ok `py_grep` of the `sbx` rung (--sbx) or --sbx-median-ms. Only calls with
+in_window true count, on both sides.
 """
 import argparse
 import bisect
+import calendar
 import json
 import math
 import os
 import re
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -61,33 +79,46 @@ MIN_LIFE_S = 5.0
 SAMPLE_TOL_S = 1.0
 AFTER_S = 15.0
 HEAVY_CLASSES = ("py_analyze", "py_test")
-LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})Z vmpool: (?:(restore|destroy) phases id=(vm-\d+) "
-                     r"|lease start workspace_key=\"(?:[^\"\\]|\\.)*\" vm=(\S*) )")
+LINE_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})Z vmpool: (?:(restore|destroy) phases id=(vm-\d+) "
+    r"|lease start workspace_key=\"(?:[^\"\\]|\\.)*\" vm=(?P<start>\S+) "
+    r"|lease normalise workspace_key=\"(?:[^\"\\]|\\.)*\" vm=(?P<norm>vm-\d+): "
+    r"|lease cgroup workspace_key=\"(?:[^\"\\]|\\.)*\" vm=(?P<cg>vm-\d+): (?P<cgerr>.*))")
+NO_POOLED = "no pooled cgroup to lease"
 
 
 def read_log(d):
-    """([(kind, vm id)] in log order, kind restore|destroy), the set of lease VM ids, the set of vm ids
-    that a lease start names but no restore line did). Raises LookupError when there are no restore lines."""
-    events, leases = [], []
+    """One pass over worker.log. Returns (events [(epoch s, "restore"|"destroy", vm id)] in log order,
+    started: vm ids with a `lease start` line, retired: vm ids whose cgroup LeaseCgroup promoted per the
+    markers in the module docstring). Raises SystemExit when there are no restore lines."""
+    events, started, norm, cg, nopool = [], set(), set(), set(), set()
     with V._open(d, "worker.log") as f:
         for line in f:
             m = LINE_RE.match(line)
             if not m:
                 continue
             if m.group(2):
-                events.append((m.group(2), m.group(3)))
-            elif m.group(4):
-                leases.append(m.group(4))
-    if not any(k == "restore" for k, _ in events):
-        raise LookupError("no 'restore phases' lines in worker.log (SH_DIAG_PHASES=1 is needed)")
-    return events, set(leases)
+                ts = float(calendar.timegm(time.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")))
+                events.append((ts, m.group(2), m.group(3)))
+            elif m.group("start"):
+                started.add(m.group("start"))
+            elif m.group("norm"):
+                norm.add(m.group("norm"))
+            elif NO_POOLED in m.group("cgerr"):
+                nopool.add(m.group("cg"))
+            else:
+                cg.add(m.group("cg"))
+    if not any(k == "restore" for _, k, _ in events):
+        raise SystemExit("no 'restore phases' lines in worker.log (SH_DIAG_PHASES=1 is needed)")
+    return events, started, (started | norm | cg) - nopool
 
 
-def vm_table_lease(events, lease_ids):
-    """Replay (kind, vm) events through the allocator with lease cgroups retired.
-    Returns (vms [{id, name, lease, born_i, end_i}], problems [str]). Events carry an opaque index
-    for time lookups by the caller; here only order matters."""
-    free, issued, live, seen, vms, problems = [], 0, {}, set(), [], []
+def vm_table_lease(events, retired_ids, started=None):
+    """Replay (kind, vm) events through the allocator with promoted (retired_ids) cgroups retired.
+    `started` (default: retired_ids) are the VMs that are real leases. Returns (vms [{id, name, lease,
+    retired, born_i, end_i}], problems [str], recycled: names popped off the free list). Only order matters."""
+    started = retired_ids if started is None else started
+    free, issued, live, seen, vms, problems, recycled = [], 0, {}, set(), [], [], 0
     for i, (kind, vid) in enumerate(events):
         if kind == "restore":
             if vid in seen:
@@ -96,9 +127,11 @@ def vm_table_lease(events, lease_ids):
             seen.add(vid)
             if free:
                 name = free.pop()
+                recycled += 1
             else:
                 name, issued = "pool-%d" % issued, issued + 1
-            v = {"id": vid, "name": name, "lease": vid in lease_ids, "born_i": i, "end_i": None}
+            v = {"id": vid, "name": name, "lease": vid in started, "retired": vid in retired_ids,
+                 "born_i": i, "end_i": None}
             live[vid] = v
             vms.append(v)
         else:
@@ -107,11 +140,11 @@ def vm_table_lease(events, lease_ids):
                 problems.append("%s destroyed with no live restore (event %d)" % (vid, i))
                 continue
             v["end_i"] = i
-            if not v["lease"]:
+            if not v["retired"]:
                 free.append(v["name"])
-    for vid in sorted(lease_ids - seen):
-        problems.append("lease start names %s, which has no restore line" % vid)
-    return vms, problems
+    for vid in sorted((retired_ids | started) - seen):
+        problems.append("a lease marker names %s, which has no restore line" % vid)
+    return vms, problems, recycled
 
 
 def _nearest(series, t, tol):
@@ -125,16 +158,18 @@ def _nearest(series, t, tol):
     return None if best is None else best[1]
 
 
-def attribute(d, vms, times):
+def attribute(d, vms, times, keep):
     """Attribute each sample of each cgroup name to the VM that held the name then.
-    Returns ({vm id: [(ts, val)]}, unattributed [(ts, name)], rows)."""
+    Returns (obs {vm id: [(ts, val)]} for the VMs in `keep` only, seen {vm id: number of samples},
+    unattributed [(ts, name)], sample_ts sorted)."""
     by_name = {}
     for v in vms:
         by_name.setdefault(v["name"], []).append(v)
     for vs in by_name.values():
         vs.sort(key=lambda v: times[v["born_i"]])
     borns = {n: [times[v["born_i"]] - TOL_S for v in vs] for n, vs in by_name.items()}
-    obs = {v["id"]: [] for v in vms}
+    obs = {i: [] for i in keep}
+    seen = {v["id"]: 0 for v in vms}
     unatt, rows = [], []
     for r in V.read_samples(d):
         ts = r.get("ts")
@@ -149,10 +184,13 @@ def attribute(d, vms, times):
             if v is None or (v["end_i"] is not None and ts > times[v["end_i"]] + TOL_S):
                 unatt.append((ts, name))
                 continue
-            obs[v["id"]].append((ts, val))
+            seen[v["id"]] += 1
+            if v["id"] in obs:
+                obs[v["id"]].append((ts, val))
     for s in obs.values():
         s.sort()
-    return obs, unatt, rows
+    rows.sort()
+    return obs, seen, unatt, rows
 
 
 def _median(xs):
@@ -168,7 +206,7 @@ def mem_vs_age(lease_vms, obs, born_ts):
         for b, xs in per.items():
             bins.setdefault(b, []).append(_median(xs))
     keys = sorted(bins)
-    return {"bin_s": BIN_S, "age": "seconds since the VM's restore line",
+    return {"bin_s": BIN_S, "age": "seconds since the VM's restore line, not its promotion (a lease VM promoted from a standby carries its standby time)",
             "bins_s": keys, "vms_per_bin": [len(bins[b]) for b in keys],
             "median_mib": [_median(bins[b]) for b in keys], "p95_mib": [V._p95(bins[b]) for b in keys]}
 
@@ -236,7 +274,8 @@ def fpr_reading(rows, calls, obs, vm_by_id, freed):
 
 def sbx_median_grep(d):
     xs = [c["observed_ms"] for c in W.read_calls(d)
-          if c.get("class") == "py_grep" and c.get("status") == "ok" and c.get("observed_ms") is not None]
+          if c.get("class") == "py_grep" and c.get("status") == "ok" and c.get("in_window")
+          and c.get("observed_ms") is not None]
     return _median(xs) if xs else None
 
 
@@ -254,7 +293,8 @@ def replacement_reading(rows, sbx_median):
                                      "first_grep_ms": None}
                     leases.append(seen[r["vm"]])
                 l = seen[r["vm"]]
-                if l["first_grep_ms"] is None and r["class"] == "py_grep" and r["status"] == "ok":
+                if l["first_grep_ms"] is None and r["class"] == "py_grep" and r["status"] == "ok" \
+                        and r["in_window"]:
                     l["first_grep_ms"] = r["observed_ms"]
     rep = [l for l in leases if l["replacement"]]
     got = [l for l in rep if l["first_grep_ms"] is not None]
@@ -277,14 +317,13 @@ def analyse(d, sbx_median_ms=None, freed=None, guest_ram_mib=None):
                                  "their cgroup (cgroup_pool.go retire), all others recycle it LIFO",
                      "tolerance_s": TOL_S, "bin_s": BIN_S}}
     try:
-        events = V.read_events(d)
-    except SystemExit:
-        out["mapping_reasons"].append("no 'restore phases' lines in worker.log (SH_DIAG_PHASES=1 is needed)")
+        events, started, retired = read_log(d)
+    except SystemExit as e:
+        out["mapping_reasons"].append(str(e))
         return out
-    _, lease_ids = read_log(d)
-    vms, problems = vm_table_lease([(k, v) for _, k, v in events], lease_ids)
+    vms, problems, recycled = vm_table_lease([(k, v) for _, k, v in events], retired, started)
     times = [t for t, _, _ in events]
-    obs, unatt, sample_ts = attribute(d, vms, times)
+    obs, seen, unatt, sample_ts = attribute(d, vms, times, {v["id"] for v in vms if v["lease"]})
     reasons = list(problems)
     known = {v["id"] for v in vms}
     for ev in WL.read_events(d).values():
@@ -294,14 +333,19 @@ def analyse(d, sbx_median_ms=None, freed=None, guest_ram_mib=None):
     if unatt:
         reasons.append("%d sample(s) of cgroups holding no live VM per the replay (first: %s at %.0f)"
                        % (len(unatt), unatt[0][1], unatt[0][0]))
+        if recycled:
+            reasons.append("lease_start_failed_without_marker_suspected: the replay recycled %d cgroup name(s); "
+                           "a promoted VM whose lease start failed without a log marker (Resume failure, "
+                           "aborted normalise) would shift the names" % recycled)
     for v in vms:
+        born = times[v["born_i"]]
         end = times[v["end_i"]] if v["end_i"] is not None else (sample_ts[-1] if sample_ts else None)
-        if end is None or end - times[v["born_i"]] < MIN_LIFE_S:
+        if end is None or end - born < MIN_LIFE_S:
             continue
-        inside = [t for t in sample_ts if times[v["born_i"]] <= t <= end]
-        if len(inside) >= 3 and not obs[v["id"]]:
+        inside = bisect.bisect_right(sample_ts, end) - bisect.bisect_left(sample_ts, born)
+        if inside >= 3 and not seen[v["id"]]:
             reasons.append("%s (%s) lived %.0f s with %d samples and never shows in them"
-                           % (v["id"], v["name"], end - times[v["born_i"]], len(inside)))
+                           % (v["id"], v["name"], end - born, inside))
     reasons = sorted(set(reasons))
     out["mapping_reasons"] = reasons
     out["mapping_valid"] = not reasons
@@ -316,7 +360,7 @@ def analyse(d, sbx_median_ms=None, freed=None, guest_ram_mib=None):
     lease_vms = [v for v in vms if v["lease"]]
     out["vms"] = [{"id": v["id"], "cgroup": v["name"], "lease": v["lease"], "born": born_ts[v["id"]],
                    "end": times[v["end_i"]] if v["end_i"] is not None else None,
-                   "samples": len(obs[v["id"]])} for v in vms]
+                   "samples": seen[v["id"]]} for v in vms]
     out["memory_vs_age"] = mem_vs_age(lease_vms, obs, born_ts)
     out["share_above"] = share_above(lease_vms, obs, guest_ram_mib)
     out["fpr"] = fpr_reading(rows, W.read_calls(d), obs, {v["id"]: v for v in vms}, freed)

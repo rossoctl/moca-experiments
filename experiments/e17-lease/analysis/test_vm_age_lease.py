@@ -64,7 +64,7 @@ def test_retired_cgroups_not_reused():
     # vm-1 is a lease (pool-0, retired at destroy); vm-3 is a per-Exec VM (pool-1, recycled).
     ev = [("restore", "vm-1"), ("restore", "vm-3"), ("destroy", "vm-3"), ("destroy", "vm-1"),
           ("restore", "vm-4"), ("restore", "vm-5")]
-    vms, problems = L.vm_table_lease(ev, {"vm-1"})
+    vms, problems, _ = L.vm_table_lease(ev, {"vm-1"})
     names = {v["id"]: v["name"] for v in vms}
     assert problems == []
     assert names == {"vm-1": "pool-0", "vm-3": "pool-1", "vm-4": "pool-1", "vm-5": "pool-2"}
@@ -217,3 +217,138 @@ def test_main_writes_json(tmp_path):
     L.main([d])
     out = json.load(open(os.path.join(d, "vm_age_lease.json")))
     assert out["mapping_valid"] is True and out["fpr"]["execs"][0]["follows"] is True
+
+
+# ---- fix round 1 -------------------------------------------------------------------------------
+
+def normalise_failed(t, key, vm):
+    return ('%s vmpool: lease normalise workspace_key="%s" vm=%s: exit 1; the lease start fails, '
+            'root_wrote stays set\n' % (stamp(T0 + t), key, vm))
+
+
+def cgroup_line(t, key, vm, err):
+    return ('%s vmpool: lease cgroup workspace_key="%s" vm=%s: %s; the VM keeps the per-Exec memory bound\n'
+            % (stamp(T0 + t), key, vm, err))
+
+
+def names_of(r):
+    return {v["id"]: v["cgroup"] for v in r["vms"]}
+
+
+def test_failed_normalise_retires_without_start_line(tmp_path):
+    # vm-1 was promoted (LeaseCgroup ran), its normalise failed, it was destroyed: no `lease start` line.
+    # Its cgroup is retired, so vm-2 gets pool-1, not the recycled pool-0, and vm-3 gets pool-2.
+    log = [restore(0, "vm-1"), normalise_failed(5, "A", "vm-1"), destroy(6, "vm-1"),
+           restore(10, "vm-2"), restore(11, "vm-3")]
+
+    def mem(t):
+        m = {}
+        if t < 6:
+            m["pool-0"] = 100 * MIB
+        if t >= 10:
+            m["pool-1"] = 100 * MIB
+        if t >= 11:
+            m["pool-2"] = 100 * MIB
+        return m
+    r = L.analyse(rung(tmp_path, log, mem, t_end=40))
+    assert r["mapping_valid"], r["mapping_reasons"]
+    assert names_of(r) == {"vm-1": "pool-0", "vm-2": "pool-1", "vm-3": "pool-2"}
+    assert r["lease_vms"] == 0  # a failed start is not a lease VM: no memory statistics for it
+
+
+def test_lease_cgroup_write_failure_still_retires(tmp_path):
+    # LeaseCgroup marks the VM BEFORE the memory.max write (launcher_firecracker.go), so a write
+    # failure ("keeps the per-Exec memory bound") still retires the cgroup.
+    ev = [("restore", "vm-1"), ("destroy", "vm-1"), ("restore", "vm-2")]
+    vms, _, _ = L.vm_table_lease(ev, {"vm-1"}, started=set())
+    assert {v["id"]: v["name"] for v in vms} == {"vm-1": "pool-0", "vm-2": "pool-1"}
+    d = rung(tmp_path, [restore(0, "vm-1"), cgroup_line(1, "A", "vm-1", "write memory.max: permission denied"),
+                        destroy(6, "vm-1"), restore(10, "vm-2")],
+             lambda t: {"pool-0": 1} if t < 6 else ({"pool-1": 1} if t >= 10 else {}), t_end=30)
+    assert names_of(L.analyse(d))["vm-2"] == "pool-1"
+
+
+def test_lease_cgroup_without_pooled_cgroup_is_not_promoted(tmp_path):
+    # LeaseCgroup returns before marking when the VM has no pooled cgroup: the name recycles normally.
+    err = "firecracker VM vm-1: no pooled cgroup to lease (ParentCgroup unset?)"
+    log = [restore(0, "vm-1"), cgroup_line(1, "A", "vm-1", err), lstart(2, "A", "vm-1"), destroy(6, "vm-1"),
+           restore(10, "vm-2")]
+    r = L.analyse(rung(tmp_path, log, lambda t: {"pool-0": 1} if (t < 6 or t >= 10) else {}, t_end=30))
+    assert r["mapping_valid"], r["mapping_reasons"]
+    assert names_of(r) == {"vm-1": "pool-0", "vm-2": "pool-0"}
+
+
+def test_unmarked_promotion_is_suspected_only_when_samples_disagree(tmp_path):
+    # A Resume failure promotes the cgroup (retired) but logs nothing: the replay recycles pool-0
+    # for vm-2 while the samples show vm-2 in pool-1.
+    log = [restore(0, "vm-1"), destroy(6, "vm-1"), restore(10, "vm-2")]
+    r = L.analyse(rung(tmp_path, log, lambda t: {"pool-0": 1} if t < 6 else ({"pool-1": 1} if t >= 10 else {}),
+                       t_end=30))
+    assert r["mapping_valid"] is False
+    assert any("lease_start_failed_without_marker_suspected" in x for x in r["mapping_reasons"])
+    assert r["vms"] is None
+    # no recycle happened -> the reason is not offered
+    log = [restore(0, "vm-1"), restore(1, "vm-2")]
+    r = L.analyse(rung(tmp_path, log, lambda t: {"pool-0": 1, "pool-1": 1, "pool-7": 1}, t_end=30, name="r2"))
+    assert r["mapping_valid"] is False
+    assert not any("suspected" in x for x in r["mapping_reasons"])
+
+
+def test_runs_fast_on_1500_vms(tmp_path):
+    import time
+    log, events, lease_ids = [], [], set()
+    for i in range(1500):
+        vm = "vm-%d" % i
+        log.append(restore(i * 2, vm))
+        if i % 2:
+            log.append(lstart(i * 2, "k%d" % i, vm))
+        log.append(destroy(i * 2 + 30, vm))
+    log.sort(key=lambda s: s[:20])  # stable: restore before its destroy
+    for line in log:
+        if "restore phases" in line:
+            events.append(("restore", line.split("id=")[1].split()[0]))
+        elif "destroy phases" in line:
+            events.append(("destroy", line.split("id=")[1].split()[0]))
+        elif "lease start" in line:
+            lease_ids.add(line.split("vm=")[1].split()[0])
+    vms, _, _ = L.vm_table_lease(events, lease_ids)
+    name = {v["id"]: v["name"] for v in vms}
+
+    d = rung(tmp_path, log, lambda t: {}, t_end=0)
+    with open(os.path.join(d, "samples.jsonl"), "w") as f:
+        for t in range(0, 3030):
+            live = {name["vm-%d" % i]: 10 * MIB for i in range(max(0, (t - 30) // 2), min(1500, t // 2 + 1))
+                    if i * 2 <= t < i * 2 + 30}
+            f.write(json.dumps({"ts": T0 + t + 0.3, "vm_mem": live}) + "\n")
+    t0 = time.time()
+    r = L.analyse(d)
+    assert time.time() - t0 < 10
+    assert r["mapping_valid"], r["mapping_reasons"][:3]
+    assert r["lease_vms"] == 750
+
+
+def test_in_window_is_honoured_on_both_sides(tmp_path):
+    log = [restore(0, "vm-1"), lstart(0, "A", "vm-1"), execl(5, "A", "vm-1"),
+           lend(60, "A", "vm-1", "idle"), destroy(60, "vm-1"), restore(70, "vm-2"), lstart(70, "A", "vm-2"),
+           execl(72, "A", "vm-2"), execl(75, "A", "vm-2")]
+    calls = [call("A", 1, "py_short", 4.5, 500), call("A", 2, "py_short", 71.5, 500),
+             call("A", 3, "py_grep", 74.5, 500, in_window=False)]
+    d = rung(tmp_path, log, lambda t: {"pool-0": 1} if t < 60 else ({"pool-1": 1} if t >= 70 else {}),
+             calls, t_end=100)
+    r = L.analyse(d, sbx_median_ms=400.0)
+    assert r["replacement"]["replacement_leases"] == 1
+    assert r["replacement"]["leases"][0]["first_grep_ms"] is None  # the only py_grep is out of window
+    # sbx baseline: out-of-window py_grep calls are not in the median
+    s = tmp_path / "sbx"
+    s.mkdir()
+    (s / "calls.jsonl").write_text("".join(json.dumps(c) + "\n" for c in [
+        call("A", 1, "py_grep", 0, 400), call("A", 2, "py_grep", 1, 9000, in_window=False)]))
+    assert L.sbx_median_grep(str(s)) == 400
+
+
+def test_age_text_and_freed_format_documented(tmp_path):
+    d = heavy_fixture(tmp_path, after_mib=300)
+    r = L.analyse(d)
+    assert "not its promotion" in r["memory_vs_age"]["age"]
+    assert '"session:call"' in L.__doc__ and "py_shmem" in L.__doc__
+    assert "lease_start_failed_without_marker_suspected" in L.__doc__
