@@ -64,6 +64,8 @@ chmod +x "$TMP/stub/systemctl" "$TMP/stub/sudo"
 cat >"$TMP/stub-baseline.sh" <<SH
 #!/usr/bin/env bash
 echo "baseline \$* e17b=\${E17B:-unset}" >>"$CLOG"
+# as baseline.sh:45 does: the arm's N1/baseline.json is removed before the first rung
+rm -f "\$E15_ROOT/runs/\$1/\$2/N1/baseline.json"
 [ -z "\${STUB_FAIL:-}" ] || exit 1
 mkdir -p "\$E15_ROOT/runs/\$1/\$2/N1"
 printf '{"class_medians": %s, "corpus_sha256": "c", "library_sha256": "l", "overhead_ms": 3.0, "global_median_ms": 2.0, "probe": "%s"}\n' \
@@ -111,8 +113,21 @@ test_probe_overhead_keeps_the_calibration() {
     "0/74.0 25.0 True"
   check "probe-overhead: a missing staged reference is a rig error" "$(probe E17B_OVERHEAD_REF="$TMP/nowhere.json")" "1"
   printf '{"class_medians": {"build": 1.0}, "probe": "calibration"}\n' >"$N1/baseline.json"
-  check "probe-overhead: a failed baseline.sh fails the probe; the calibration baseline is still kept aside" \
-    "$(probe STUB_FAIL=1)/$(find "$N1" -name 'baseline.before-probe-overhead-*.json' | wc -l | tr -d ' ')" "1/1"
+  check "probe-overhead: a failed baseline.sh (which removed N1/baseline.json) fails the probe and puts the calibration baseline back" \
+    "$(probe STUB_FAIL=1)/$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["probe"])' "$N1/baseline.json" 2>&1)/$(find "$N1" -name 'baseline.before-*' | wc -l | tr -d ' ')" \
+    "1/calibration/0"
+  rm -f "$N1/baseline.json"
+  check "probe-overhead: a failed probe with no calibration baseline leaves none" \
+    "$(probe STUB_FAIL=1)/$([ -e "$N1/baseline.json" ] && echo present || echo absent)" "1/absent"
+}
+test_probe_overhead_rerun_keeps_the_earlier_probe() {
+  rm -rf "$T/runs" && mkdir -p "$N1"
+  printf '{"class_medians": {"build": 1.0}, "probe": "calibration"}\n' >"$N1/baseline.json"
+  probe >/dev/null
+  probe STUB_MEDIANS='{"build": 99.0}' >/dev/null
+  check "probe-overhead: a re-run moves the earlier baseline.probe-overhead.json aside with a timestamp, never over it" \
+    "$(find "$N1" -name 'baseline.probe-overhead.prev-*.json' | wc -l | tr -d ' ')/$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["class_medians"]["build"])' "$N1/baseline.probe-overhead.json")/$(python3 -c 'import json,sys,glob; print(json.load(open(glob.glob(sys.argv[1] + "/baseline.probe-overhead.prev-*.json")[0]))["class_medians"]["build"])' "$N1")" \
+    "1/99.0/40.0"
 }
 
 own() { # ARGS: the staged ownwalk.sh; rc echoed, output in $TMP/o.out
@@ -154,6 +169,10 @@ test_ownwalk_host_steps() {
     "$(grep -c 'start_worker "\$ARM" "\$DIR" "\$IMAGE_MB"' "$s")/$(grep -c '" lease=on "' "$s")" "1/1"
   check "ownwalk: the per-rung token key is minted by the -e17b driver and removed on every exit (EXIT trap)" \
     "$(grep -c 'mint-key --out "\$TOKEN_DIR"' "$s")/$(grep -c 'e17b_token_dir_remove "\$TOKEN_DIR"' "$s")/$(grep -c '^trap cleanup EXIT' "$s")" "1/1/1"
+  check "ownwalk: shell values reach Python as argv/env only (every heredoc quoted, no \$ inside its source)" \
+    "$(grep -c "<<PY" "$s")/$(awk "/<<'PY'/ {inpy=1; next} /^PY\$/ {inpy=0} inpy && /\\\$[A-Za-z{(]/ {n++} END {print n+0}" "$s")" "0/0"
+  check "ownwalk: the header notes the relay's 30 min Exec deadline and the Task 12 smoke's 10k build time" \
+    "$(grep -c "^#.*relay's own default Exec deadline" "$s")/$(grep -c "^#.*Task 12 smoke runs ownwalk.sh 10000" "$s")" "1/1"
   touch "$TMP/worker-up"
   printf '#!/usr/bin/env bash\ncase "$*" in *e15-worker.service*) [ -e "%s/worker-up" ] ;; *) exit 1 ;; esac\n' "$TMP" >"$TMP/stub/systemctl"
   check "ownwalk: a rung's worker running -> refused before any host change" \
@@ -161,9 +180,25 @@ test_ownwalk_host_steps() {
   printf '#!/usr/bin/env bash\nexit 1\n' >"$TMP/stub/systemctl"
   rm -f "$TMP/worker-up"
 }
+test_ownwalk_500k_projection() {
+  rm -rf "$T/runs/ownwalk"
+  check "ownwalk: 500k with no smaller run: no projection, it runs" "$(own --plan 500000)/$(plan_field projected_build_s)/$(plan_field skip)" "0/none/no"
+  mkdir -p "$T/runs/ownwalk/ship-300/F100000"
+  printf '{"files": 100000, "runs": [{"build": {"ms": 250000}}, {"build": {"ms": 290000}}]}\n' >"$T/runs/ownwalk/ship-300/F100000/ownwalk.json"
+  check "ownwalk: 500k projects its build from the largest smaller run's slowest build (290 s x 5 = 1450 s <= 25 min): runs" \
+    "$(own --plan 500000)/$(plan_field projected_build_s)/$(plan_field skip)" "0/1450/no"
+  printf '{"files": 100000, "runs": [{"build": {"ms": 310000}}]}\n' >"$T/runs/ownwalk/ship-300/F100000/ownwalk.json"
+  check "ownwalk: a projection over 25 min (the relay's 30 min Exec deadline) skips 500k with a reason, exit 0, nothing touched" \
+    "$(own 500000)/$(grep -c 'SKIP 500000: projected build 1550 s' "$TMP/o.out")/$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["reason"][:20])' "$T/runs/ownwalk/ship-300/F500000/skipped.json")/$([ -e "$T/secrets" ] || [ -e "$T/template-ownwalk" ] && echo touched || echo clean)" \
+    "0/1/projected build 1550/clean"
+  check "ownwalk: 10k and 100k are never projected" "$(own --plan 100000)/$(plan_field skip)" "0/no"
+  rm -rf "$T/runs/ownwalk"
+}
 test_probe_overhead_uses_ship_arm
 test_probe_overhead_keeps_the_calibration
+test_probe_overhead_rerun_keeps_the_earlier_probe
 test_ownwalk_plan
+test_ownwalk_500k_projection
 test_ownwalk_host_steps
 
 echo

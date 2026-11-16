@@ -36,6 +36,7 @@ def test_per_class_added_latency(tmp_path):
     assert r["overhead_ms"] == {"ship": 35.0, "reference": -26.0, "added": 61.0}
     assert r["global_median_ms"] == {"ship": 20.0, "reference": -34.1, "added": 54.1}
     assert r["same_corpus"] is True and r["same_library"] is True and r["comparable"] is True
+    assert r["comparable_reasons"] == []
     assert r["median_added_ms"] == 50.1  # the median of the per-class differences (74.0, 26.2)
 
 
@@ -78,3 +79,17 @@ def test_reference_is_e17a_resident_patch_at_default():
                                                   for r in ref["probe_runs"])
     r = O.compare(REFERENCE, REFERENCE)
     assert r["comparable"] is True and all(c["added_ms"] == 0 for c in r["classes"].values())
+
+
+def test_missing_hashes_are_not_comparable(tmp_path):
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.write_text(json.dumps({"class_medians": {"build": 1.0}}))
+    b.write_text(json.dumps({"class_medians": {"build": 0.0}}))
+    r = O.compare(str(a), str(b))
+    assert r["comparable"] is False
+    assert r["comparable_reasons"] == ["corpus_sha256 missing on both sides", "library_sha256 missing on both sides"]
+    a.write_text(json.dumps({"class_medians": {"build": 1.0}, "corpus_sha256": "c", "library_sha256": "l"}))
+    r = O.compare(str(a), str(b))
+    assert r["comparable"] is False and r["comparable_reasons"] == ["corpus_sha256 missing on the reference",
+                                                                   "library_sha256 missing on the reference"]

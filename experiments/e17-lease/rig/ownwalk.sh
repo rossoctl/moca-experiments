@@ -16,13 +16,21 @@
 #      per-exec write: per repeat the per-exec build as root, set_mode lease (epoch 1), A, reset, B
 #   6. stop the worker (its VMs go with it), remove the token key; ownwalk-params.json beside the driver's
 #      ownwalk.json in $E15_RUNS/ownwalk/ship-300/F<FILES>/ (a previous one is moved aside, as rung.sh does)
+#   7. analysis/ownwalk_phases.py: the worker log's side of each repeat into ownwalk.json (A's and B's phase lines,
+#      A - B less the logged phases, the two lease starts; whether A walked and B did not when the worker logs a
+#      normalise phase, which the worker at this pin does not)
+# Exec deadlines. The build's timeout_s is 3600 (the worker clamps at 7200), but the relay's own default Exec deadline
+# is 30 min (moca vmpool pool.go), so a 500k build must finish well inside it. The Task 12 smoke runs ownwalk.sh 10000
+# and checks its build time; at 500000 the build time is projected from the largest smaller size already run (its
+# slowest build x 500000 / its files) and, over 25 min, 500000 is skipped with the reason in F500000/skipped.json
+# (exit 0). With no smaller run there is no projection and it runs.
 # No params.json is written there: the chain's per-rung analysis gate reads params.json, and this is not a rung.
 # No attach probe: the relay is restarted for this run, so no stale worker session can hold sandbox e15, and
 # start_worker waits for the worker's attach line.
 #
 # --plan prints the sizing, the keys, the paths and the driver command, and changes nothing.
-# Exit: the driver's (0 every repeat valid, 1 otherwise; ownwalk.json is written either way), 1 on a rig error,
-# 2 on bad usage.
+# Exit: the driver's (0 every repeat valid, 1 otherwise; ownwalk.json is written either way), else ownwalk_phases.py's
+# (1 when the worker log invalidates a repeat); 0 for a skipped 500000; 1 on a rig error; 2 on bad usage.
 set -euo pipefail
 E15_PROG=ownwalk.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,6 +79,30 @@ DRIVER_ARGS=(ownwalk --files "$FILES" --repeats "$REPEATS" --target "127.0.0.1:$
   --token-key "$TOKEN_DIR/token.key" --token-iss "$(e17b_token_iss)" --idle-timeout-s "${ARM#ship-}" --run-id "$RUN_ID"
   --out "$DIR" --build-script "$SCRIPT")
 
+# projected_build_s: 500000 only, from the largest smaller size's ownwalk.json under $E15_RUNS/ownwalk/$ARM ("none":
+# no smaller run, or not 500000). Over 1500 s (25 min) the size is skipped.
+PROJECTED=none
+if [ "$FILES" = 500000 ]; then
+  PROJECTED=$(python3 - "$E15_RUNS/ownwalk/$ARM" "$FILES" <<'PY'
+import json, os, sys
+root, files = sys.argv[1], int(sys.argv[2])
+for small in (100000, 10000):
+    try:
+        rep = json.load(open(os.path.join(root, "F%d" % small, "ownwalk.json")))
+    except (OSError, ValueError):
+        continue
+    ms = [r.get("build", {}).get("ms") for r in rep.get("runs") or []]
+    ms = [m for m in ms if isinstance(m, (int, float))]
+    if ms:
+        print(int(round(max(ms) / 1000.0 * files / small)))
+        sys.exit(0)
+print("none")
+PY
+  )
+fi
+SKIP=no
+[ "$PROJECTED" = none ] || [ "$PROJECTED" -le 1500 ] || SKIP=yes
+
 if [ "$PLAN" = 1 ]; then
   echo "files: $FILES"
   echo "inodes: $INODES"
@@ -80,6 +112,8 @@ if [ "$PLAN" = 1 ]; then
   echo "dir: $DIR"
   echo "template: $TEMPLATE"
   echo "driver: $DRIVER ${DRIVER_ARGS[*]}"
+  echo "projected_build_s: $PROJECTED"
+  echo "skip: $SKIP"
   exit 0
 fi
 
@@ -87,6 +121,19 @@ fi
 e17b_require_pin
 e17b_require_build
 e17b_lease_arm "$ARM" || die "$ARM is not a lease arm under E17B=1"
+if [ "$SKIP" = yes ]; then
+  refuse_outside_root "$DIR"
+  if [ -e "$DIR" ]; then mv "$DIR" "$DIR.prev-$(date -u +%Y%m%dT%H%M%SZ)"; fi
+  mkdir -p "$DIR"
+  why="projected build $PROJECTED s > 1500 s (25 min) from the largest smaller run's slowest build; the relay's 30 min Exec deadline would cut it"
+  python3 - "$DIR/skipped.json" "$FILES" "$PROJECTED" "$why" <<'PY'
+import json, sys
+json.dump({"files": int(sys.argv[2]), "skipped": True, "projected_build_s": int(sys.argv[3]), "reason": sys.argv[4]},
+          open(sys.argv[1], "w"), indent=2, sort_keys=True)
+PY
+  log "SKIP $FILES: $why ($DIR/skipped.json)"
+  exit 0
+fi
 if unit_active "$E15_UNIT_WORKER"; then die "a rung's worker ($E15_UNIT_WORKER) is running; refusing to preempt it"; fi
 e17b_require_snapshot
 [ -x "$DRIVER" ] || die "no $DRIVER (run setup.sh with E17B=1)"
@@ -162,9 +209,20 @@ log "ownwalk driver exit $driver_exit ($DIR/ownwalk.json)"
 cleanup
 trap - EXIT
 [ ! -f "$DIR/worker.log" ] || sudo -n chown "$(id -un):$(id -gn)" "$DIR/worker.log"
-python3 - "$DIR" <<PY
+# 7. the worker log's side of each repeat, into ownwalk.json; a repeat it invalidates fails the probe
+phases_exit=0
+if [ -f "$DIR/ownwalk.json" ] && [ -f "$DIR/worker.log" ]; then
+  python3 "$E17_SRC/analysis/ownwalk_phases.py" "$DIR" >"$DIR/ownwalk-phases.log" 2>&1 || phases_exit=$?
+  log "ownwalk_phases.py exit $phases_exit ($DIR/ownwalk-phases.log)"
+fi
+OW_ARM=$ARM OW_FILES=$FILES OW_REPEATS=$REPEATS OW_RUN_ID=$RUN_ID OW_KEYS="${KEYS[*]}" OW_INODES=$INODES \
+  OW_IMAGE_MB=$IMAGE_MB OW_TEMPLATE=$TEMPLATE OW_DRIVER_EXIT=$driver_exit OW_PHASES_EXIT=$phases_exit \
+  OW_MOCA_COMMIT=$E15_MOCA_PIN OW_DRIVER=$DRIVER OW_SCRIPT=$SCRIPT OW_WORKER_BIN=$(worker_bin "$ARM") \
+  OW_SNAP_MANIFEST=$E15_SNAPDIR/$(worker_snapimg)/manifest.json OW_SNAPIMG=$(worker_snapimg) \
+  OW_GUEST_RAM_MB=$(worker_guest_ram_mb) OW_PROFILE=$E15_HOST_PROFILE OW_BANNER=$banner \
+  python3 - "$DIR" <<'PY'
 import hashlib, json, os, sys
-d = sys.argv[1]
+d, E = sys.argv[1], os.environ
 def sha(p):
     try:
         with open(p, "rb") as f:
@@ -181,19 +239,21 @@ except OSError:
     pass
 snap = None
 try:
-    snap = json.load(open("$E15_SNAPDIR/$(worker_snapimg)/manifest.json"))
+    snap = json.load(open(E["OW_SNAP_MANIFEST"]))
 except (OSError, ValueError):
     pass
+arm = E["OW_ARM"]
 p = {
-    "probe": "ownwalk", "arm": "$ARM", "files": $FILES, "repeats": $REPEATS, "run_id": "$RUN_ID",
-    "keys": "${KEYS[*]}".split(), "inodes": $INODES, "image_mb": $IMAGE_MB, "template": "$TEMPLATE",
-    "idle_timeout_s": int("${ARM#ship-}"), "driver_exit": $driver_exit,
-    "moca_commit": "$E15_MOCA_PIN", "driver_bin_sha256": sha("$DRIVER"), "build_tree_sha256": sha("$SCRIPT"),
-    "worker_bin_sha256": sha("$(worker_bin "$ARM")"), "worker_env": env,
-    "snapshot_image": "$(worker_snapimg)", "snapshot_hash": snap and snap.get("hash"),
-    "guest_ram_mb": int("$(worker_guest_ram_mb)"), "host_profile": "$E15_HOST_PROFILE",
-    "lease_banner": """$banner""",
+    "probe": "ownwalk", "arm": arm, "files": int(E["OW_FILES"]), "repeats": int(E["OW_REPEATS"]),
+    "run_id": E["OW_RUN_ID"], "keys": E["OW_KEYS"].split(), "inodes": int(E["OW_INODES"]),
+    "image_mb": int(E["OW_IMAGE_MB"]), "template": E["OW_TEMPLATE"], "idle_timeout_s": int(arm[len("ship-"):]),
+    "driver_exit": int(E["OW_DRIVER_EXIT"]), "phases_exit": int(E["OW_PHASES_EXIT"]),
+    "moca_commit": E["OW_MOCA_COMMIT"], "driver_bin_sha256": sha(E["OW_DRIVER"]), "build_tree_sha256": sha(E["OW_SCRIPT"]),
+    "worker_bin_sha256": sha(E["OW_WORKER_BIN"]), "worker_env": env,
+    "snapshot_image": E["OW_SNAPIMG"], "snapshot_hash": snap and snap.get("hash"),
+    "guest_ram_mb": int(E["OW_GUEST_RAM_MB"]), "host_profile": E["OW_PROFILE"], "lease_banner": E["OW_BANNER"],
 }
 json.dump(p, open(os.path.join(d, "ownwalk-params.json"), "w"), indent=2, sort_keys=True)
 PY
+[ "$driver_exit" != 0 ] || driver_exit=$phases_exit
 exit "$driver_exit"

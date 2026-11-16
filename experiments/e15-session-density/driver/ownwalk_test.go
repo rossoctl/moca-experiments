@@ -239,7 +239,8 @@ func (r *owRelay) LeaseControl(ctx context.Context, req *pb.LeaseControlRequest)
 				s.pending = &pb.LeaseEvent{State: "end", Reason: "reset", AtUnixMs: r.clock.Now().UnixMilli(), Mode: pb.SandboxMode_SANDBOX_MODE_LEASE}
 			}
 		}
-		return &pb.LeaseControlResponse{Status: &pb.LeaseStatus{Mode: pb.SandboxMode_SANDBOX_MODE_LEASE, EpochKnown: true, State: "none"}}, nil
+		// The worker answers with the status after the op: no lease, the end(reset) pending (runner.go LeaseControl).
+		return &pb.LeaseControlResponse{Status: &pb.LeaseStatus{Mode: pb.SandboxMode_SANDBOX_MODE_LEASE, EpochKnown: true, State: "none", Pending: s.pending}}, nil
 	case pb.LeaseOp_LEASE_OP_STATUS:
 		r.ops = append(r.ops, owOp{key: key, op: "status"})
 		return &pb.LeaseControlResponse{Status: &pb.LeaseStatus{State: "none"}}, nil
@@ -298,6 +299,10 @@ func TestOwnwalkOrdersTheSteps(t *testing.T) {
 		}
 		if len(run.B.Events) != 1 || run.B.Events[0].State != "end" || run.B.Events[0].Reason != "reset" {
 			t.Errorf("repeat %d: B events %+v, want the end(reset) notice", run.Rep, run.B.Events)
+		}
+		if st := run.Reset.Status; st == nil || st.State != "none" || st.Mode != "lease" || !st.EpochKnown ||
+			st.Pending == nil || st.Pending.State != "end" || st.Pending.Reason != "reset" {
+			t.Errorf("repeat %d: reset status %+v, want no lease with the end(reset) pending", run.Rep, st)
 		}
 		if !strings.Contains(run.Build.Stdout, "files=10000") {
 			t.Errorf("repeat %d: build stdout %q", run.Rep, run.Build.Stdout)

@@ -19,8 +19,8 @@ probe-overhead.sh runs this on the rig only when a reference is staged, else the
 
 Writes OUT (default: none) with the per-class table, the classes only one side has, the weighted overhead
 (overhead_ms) and global median of each side and their differences, the median of the per-class
-differences, the hashes of both sides, and `comparable`: the corpus and library hashes agree (a different
-corpus is computed anyway and flagged). Prints the table. Exit 1 when an input is unreadable or has no
+differences, the hashes of both sides, and `comparable`: both sides carry the corpus and library hashes and
+they agree (`comparable_reasons` says which check failed; a different corpus is computed anyway and flagged). Prints the table. Exit 1 when an input is unreadable or has no
 class_medians.
 """
 import argparse
@@ -70,13 +70,23 @@ def compare(ship_path, ref_path):
     for c in sorted(set(sm) & set(rm)):
         classes[c] = {"ship_ms": r3(sm[c]), "reference_ms": r3(rm[c]), "added_ms": diff(sm[c], rm[c]),
                       "ship_n": sc.get(c), "reference_n": rc.get(c)}
-    same = {k: ship.get(k) == ref.get(k) for k in HASHES}
+    same = {k: ship.get(k) is not None and ship.get(k) == ref.get(k) for k in HASHES}
+    # comparable needs both hashes present on both sides and equal: two absent hashes prove nothing.
+    reasons = []
+    for k in ("corpus_sha256", "library_sha256"):
+        missing = [side for side, b in (("ship", ship), ("reference", ref)) if not b.get(k)]
+        if len(missing) == 2:
+            reasons.append("%s missing on both sides" % k)
+        elif missing:
+            reasons.append("%s missing on the %s" % (k, missing[0]))
+        elif ship[k] != ref[k]:
+            reasons.append("%s differs" % k)
     return {
         "ship": dict({"path": ship_path}, **{k: ship.get(k) for k in HASHES}),
         "reference": dict({"path": ref_path}, **{k: ref.get(k) for k in HASHES}),
         "same_corpus": same["corpus_sha256"], "same_library": same["library_sha256"],
         "same_point_sig": same["point_sig"],
-        "comparable": same["corpus_sha256"] and same["library_sha256"],
+        "comparable": not reasons, "comparable_reasons": reasons,
         "classes": classes,
         "only_ship": sorted(set(sm) - set(rm)), "only_reference": sorted(set(rm) - set(sm)),
         "median_added_ms": r3(median([v["added_ms"] for v in classes.values()])),
@@ -109,8 +119,7 @@ def main(argv=None):
         if r[side]:
             print("%s: %s" % (side, " ".join(r[side])))
     if not r["comparable"]:
-        print("WARNING: not comparable: corpus %s, library %s (the probe calls differ)" % (
-            "same" if r["same_corpus"] else "differs", "same" if r["same_library"] else "differs"))
+        print("WARNING: not comparable: %s (the probe calls may differ)" % "; ".join(r["comparable_reasons"]))
     if a.out:
         with open(a.out + ".tmp", "w") as f:
             json.dump(r, f, indent=2, sort_keys=True)

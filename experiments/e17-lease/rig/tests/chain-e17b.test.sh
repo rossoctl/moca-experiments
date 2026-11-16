@@ -285,6 +285,11 @@ test_chain_preflight_and_guards() {
   check "probe-overhead: the stage runs probe-overhead.sh: baseline.sh for ship-300 at the default point, under E17B=1" \
     "$(chain -- --from probe-overhead --to probe-overhead)/$(cat "$CLOG")/$([ -f "$T/runs/default/ship-300/N1/baseline.probe-overhead.json" ] && echo kept)" \
     "0/baseline default ship-300 tag=unset memmax=unset e17b=1 ram=unset/kept"
+  mkdir -p "$T/runs/default/ship-300/N1-s1"
+  printf '{"arm": "ship-300", "moca_commit": "c13d55649777e69ec7649d6fa8c08f4acb1f4e2e"}\n' >"$T/runs/default/ship-300/N1-s1/params.json"
+  check "probe-overhead: the commit preflight of default ship-300 runs first: another commit's rung there refuses the stage, nothing run" \
+    "$(chain -- --from probe-overhead --to probe-overhead)/$(grep -c 'is not from E17B_MOCA_PIN' "$T/e17b/probe-overhead.log")/$(grep -c . "$CLOG")" "1/1/0"
+  rm -rf "$T/runs/default/ship-300/N1-s1"
   check "optional: the ship-30/ship-120 ladder stages SKIP without E17B_OPTIONAL=1, run with it" \
     "$(chain -- --from base-default-ship-30 --to ladder-default-ship-120)/$(grep -c 'SKIP (optional' "$TMP/c.out")/$(chain E17B_OPTIONAL=1 -- --from base-default-ship-30 --to ladder-default-ship-120)/$(calls)" \
     "0/4/0/baseline default ship-30;baseline default ship-120;ladder default ship-30;ladder default ship-120;"

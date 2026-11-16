@@ -63,11 +63,32 @@ type OwnwalkConfig struct {
 
 // OwnwalkStep is one call of a repeat.
 type OwnwalkStep struct {
-	Ms     float64      `json:"ms"`
-	Exit   *int32       `json:"exit,omitempty"`
-	Events []leaseEvent `json:"events,omitempty"`
-	Stdout string       `json:"stdout,omitempty"`
-	Error  string       `json:"error,omitempty"`
+	Ms     float64             `json:"ms"`
+	Exit   *int32              `json:"exit,omitempty"`
+	Events []leaseEvent        `json:"events,omitempty"`
+	Stdout string              `json:"stdout,omitempty"`
+	Status *ownwalkLeaseStatus `json:"status,omitempty"` // set_mode's and reset's answer: the status after the op
+	Error  string              `json:"error,omitempty"`
+}
+
+// ownwalkLeaseStatus is a LeaseControl answer as ownwalk.json records it.
+type ownwalkLeaseStatus struct {
+	Mode       string      `json:"mode"`
+	EpochKnown bool        `json:"epoch_known"`
+	State      string      `json:"state"`
+	Pending    *leaseEvent `json:"pending,omitempty"`
+}
+
+func statusOf(st *pb.LeaseStatus) *ownwalkLeaseStatus {
+	if st == nil {
+		return nil
+	}
+	out := &ownwalkLeaseStatus{Mode: modeName(st.GetMode()), EpochKnown: st.GetEpochKnown(), State: st.GetState()}
+	if p := st.GetPending(); p != nil {
+		e := eventOf(p)
+		out.Pending = &e
+	}
+	return out
 }
 
 // OwnwalkRun is one repeat on its own workspace key.
@@ -222,8 +243,8 @@ func RunOwnwalk(ctx context.Context, client pb.SandboxExecClient, cfg OwnwalkCon
 
 		// 4. reset: the lease ends, the state is known and clean.
 		t0 = now()
-		_, err = ls.reset(ctx, client)
-		run.Reset.Ms = ms(now().Sub(t0))
+		rst, err := ls.reset(ctx, client)
+		run.Reset.Ms, run.Reset.Status = ms(now().Sub(t0)), statusOf(rst)
 		if err != nil {
 			fail(&run.Reset, "reset", err)
 			rep.Runs = append(rep.Runs, run)

@@ -11,7 +11,9 @@
 # Records. baseline.sh writes $E15_RUNS/default/ship-300/N1/baseline.json, where the calibration baseline
 # (stage cal-default-ship-300) is, and rung.sh moves the calibration's N1-s* and N1-probe-* directories aside
 # (*.prev-<UTC>). So the probe's baseline is kept as N1/baseline.probe-overhead.json and the one it replaced is put
-# back as N1/baseline.json: what the default ship-300 ladder's rungs read stays where their params.json points.
+# back as N1/baseline.json on every exit path, a failed probe's too (an EXIT trap): what the default ship-300 ladder's
+# rungs read stays where their params.json points. A re-run moves an earlier baseline.probe-overhead.json aside
+# (baseline.probe-overhead.prev-<UTC>.json).
 # Its runs are the N1-s* / N1-probe-* directories this probe wrote.
 # The comparison goes to N1/overhead.json. Its reference (overhead_compare.py's default, the resident patch's own N = 1
 # default probe in e15-session-density/results/metal/) is not on the rig, since sync.sh excludes results/: it runs
@@ -51,6 +53,16 @@ BASELINE=${E17B_BASELINE:-$E15_SRC/rig/baseline.sh}
 N1=$E15_RUNS/$POINT/$ARM/N1
 ts=$(date -u +%Y%m%dT%H%M%SZ)
 saved=""
+# restore_calibration (the EXIT trap, every exit path): put the calibration baseline back at N1/baseline.json. On a
+# failure, baseline.sh has already removed N1/baseline.json (baseline.sh:45) or left a partial one: that is moved aside
+# as baseline.probe-overhead.failed-<UTC>.json, never kept where the ladder's rungs read their baseline.
+restore_calibration() {
+  [ -n "$saved" ] && [ -f "$saved" ] || return 0
+  if [ -f "$N1/baseline.json" ]; then mv -f "$N1/baseline.json" "$N1/baseline.probe-overhead.failed-$ts.json"; fi
+  mv -f "$saved" "$N1/baseline.json"
+  log "the calibration baseline is back at $N1/baseline.json"
+}
+trap restore_calibration EXIT
 if [ -f "$N1/baseline.json" ]; then
   saved=$N1/baseline.before-probe-overhead-$ts.json
   cp -p "$N1/baseline.json" "$saved"
@@ -59,12 +71,15 @@ fi
 log "level-1 overhead probe: baseline.sh $POINT $ARM (E17B=1, pin $E15_MOCA_PIN)"
 bash "$BASELINE" "$POINT" "$ARM" || die "baseline.sh $POINT $ARM failed: rig error, no overhead reading"
 [ -f "$N1/baseline.json" ] || die "baseline.sh $POINT $ARM wrote no $N1/baseline.json"
-mv -f "$N1/baseline.json" "$N1/baseline.probe-overhead.json"
-if [ -n "$saved" ]; then
-  mv -f "$saved" "$N1/baseline.json"
-  log "the calibration baseline is back at $N1/baseline.json; the probe's is $N1/baseline.probe-overhead.json"
+# A re-run never replaces an earlier probe's baseline: it is moved aside, as rung.sh moves a re-run rung's directory.
+if [ -f "$N1/baseline.probe-overhead.json" ]; then
+  mv "$N1/baseline.probe-overhead.json" "$N1/baseline.probe-overhead.prev-$ts.json"
+  log "the earlier probe's baseline is kept as $N1/baseline.probe-overhead.prev-$ts.json"
 fi
-
+mv "$N1/baseline.json" "$N1/baseline.probe-overhead.json"
+restore_calibration
+saved=""
+log "the probe's baseline is $N1/baseline.probe-overhead.json"
 REF=${E17B_OVERHEAD_REF:-}
 if [ -n "$REF" ]; then
   [ -f "$REF" ] || die "E17B_OVERHEAD_REF=$REF does not exist"

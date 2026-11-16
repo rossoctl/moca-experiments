@@ -43,7 +43,8 @@
 # pycache-d64, and the squeeze as point squeeze-256 (D=768 scales to 192; ruling E17B-R21) under its own
 # E17B_SQUEEZE256_MEMMAX_MB. The §7.4 probes (Task 11): probe-overhead runs probe-overhead.sh (baseline.sh default
 # ship-300, then the comparison with the resident patch), ownwalk runs ownwalk.sh once per workspace size, each with its
-# own worker. A stage kind "blocked" fails naming what is missing (none is left).
+# own worker. The probe-overhead stage runs the same commit preflight as a baseline stage (default ship-300) first.
+# A stage kind "blocked" fails naming what is missing (none is left).
 #
 # Output: "E17B <stage> START|DONE|FAILED|SKIP ..." lines. Exit 0 when every selected stage is done, 1 on a
 # refusal or a failed stage, 2 on bad usage.
@@ -112,7 +113,7 @@ STAGES=(
   "squeeze-ship-300|seal|squeeze-ladder squeeze ship-300|budget = MemoryMax - 8192 (E17B-R20); the host-MemAvailable reclaim trigger is not exercised by the squeeze"
   "squeeze-sbx|seal|squeeze-rung squeeze sbx"
   # Task 14 Step 4: the §7.4 probes (Task 11)
-  "probe-overhead|seal|script probe-overhead.sh"
+  "probe-overhead|seal|probe-overhead"
   "ownwalk|seal|ownwalk 10000 100000 500000|the walk is A - B per size, 5 repeats (ownwalk.json under runs/ownwalk/ship-300/F<files>)"
   # Task 14 Step 2, optional: the ship-30 and ship-120 ladders at default (the user may cut them)
   "base-default-ship-30|opt|baseline default ship-30"
@@ -392,6 +393,11 @@ run_cmd() {
     shift
     [ -f "$E17_SRC/rig/$n" ] || die "no $E17_SRC/rig/$n (Task 11 provides it)"
     bash "$E17_SRC/rig/$n" "$@"
+    ;;
+  probe-overhead) # probe-overhead.sh runs baseline.sh default ship-300: the same commit preflight as a baseline stage
+    preflight default ship-300
+    [ -f "$E17_SRC/rig/probe-overhead.sh" ] || die "no $E17_SRC/rig/probe-overhead.sh"
+    bash "$E17_SRC/rig/probe-overhead.sh"
     ;;
   ownwalk) # FILES...: the ownership-walk probe, one ownwalk.sh (its own worker cycle) per workspace size, in order
     for n in "$@"; do
