@@ -27,14 +27,21 @@
 # Before a stage, its run directories ($E15_RUNS/POINT/ARM) must hold no params.json from another moca commit than
 # E17B_MOCA_PIN (a result that mixes commits is not one arm; under E17B=1 nothing sealed is overwritten, E17B-R3).
 # After a stage, every rung it wrote for a ship-* arm is analysed (Task 14 Step 5): warmcold_lease.py, lease_ends.py
-# and vm_age_lease.py; an unknown call, a source disagreement, an unmatched lease end, or an analysis failure stops
-# the chain there for the user. latency_report.py is the report's, over all rungs (Task 15).
+# and vm_age_lease.py. The chain stops there for the user on: an unknown call, a source disagreement, warmcold
+# valid false, an unmatched lease end, lease_ends valid false or criterion4_pass false (null, no lease ended, does not
+# stop), vm_age_lease mapping_valid false, or an analysis failure. After a measured stage (not "-"),
+# latency_report.py runs over every rung the stage wrote, to $L/<stage>.latency/ (informational: not a stop).
 #
-# The squeeze stages (Task 14 Step 3) need E17B_SQUEEZE_MEMMAX_MB (MiB; chosen from a first short climb): the
-# ship-300 climb is ladder.sh squeeze ship-300 under it (its stop rule: experiments/e17-lease/analysis/squeeze_rule.py);
-# sbx then runs once at the N that climb stopped at, under the same value, both read from its ladder.json.
-# Stages that cannot run yet are "blocked" and fail naming what is missing: the 256 MiB guest runs (no guest-RAM or
-# snapshot selection is wired into worker_env yet) and the ownership-walk runner (Task 11).
+# The squeeze stages (Task 14 Step 3) need E17B_SQUEEZE_MEMMAX_MB (MiB, above 8192; chosen from a first short climb):
+# the ship-300 climb is ladder.sh squeeze ship-300 under it (its stop rule: experiments/e17-lease/analysis/squeeze_rule.py);
+# sbx then runs once at the N that climb stopped at, under the same value, both read from its ladder.json. At the
+# squeeze point every arm's committed budget is MemoryMax - 8192 MiB (E17B-R20, lib.sh worker_env), so the worker's
+# budget-driven memory_reclaim fires; the host-MemAvailable reclaim trigger is not exercised by the squeeze (the host
+# stays large).
+# Guest RAM (E17B-R17): every stage runs on the snapshot leaf e17b-<pin8>-1024; the ram256-* stages set
+# E17B_GUEST_RAM_MB=256 (leaf e17b-<pin8>-256) with D scaled to the same dataset-to-RAM ratio: pycache (D=256) runs as
+# pycache-d64. Stages that cannot run yet are "blocked" and fail naming what is missing: the 256 MiB squeeze (D=768
+# scales to 192, which has no template or point) and the ownership-walk runner (Task 11).
 #
 # Output: "E17B <stage> START|DONE|FAILED|SKIP ..." lines. Exit 0 when every selected stage is done, 1 on a
 # refusal or a failed stage, 2 on bad usage.
@@ -48,7 +55,7 @@ export E15_HOST_PROFILE=fresh-metal
 export E15_MANIFEST=${E15_MANIFEST:-$HOME/e17-manifest.md}
 SQUEEZE_MB=${E17B_SQUEEZE_MEMMAX_MB:-}
 unset E15_MAX_SESSIONS E15_START_ZERO E15_TAG E15_SEED E15_WARMUP_S E15_WINDOW_S E15_GRACE_S E15_LADDER_RUNGS \
-  E15_LADDER_TAG E15_K_MULT E15_CORPUS_OVERRIDE E15_END_SESSION_DEFER E15_SQUEEZE_MEMMAX_MB
+  E15_LADDER_TAG E15_K_MULT E15_CORPUS_OVERRIDE E15_END_SESSION_DEFER E15_SQUEEZE_MEMMAX_MB E17B_GUEST_RAM_MB
 E15_RIG=$HERE/../../e15/rig
 [ -f "$E15_RIG/lib.sh" ] || {
   printf '%s: no %s/lib.sh: run the staged copy (/srv/e15/src/e17/rig/chain-e17b.sh)\n' "$E15_PROG" "$E15_RIG" >&2
@@ -94,10 +101,11 @@ STAGES=(
   # Task 14 Step 2: capacity ladders at default, both arms at the new pin
   "ladder-default-sbx|seal|ladder default sbx"
   "ladder-default-ship-300|seal|ladder default ship-300"
-  # Task 14 Step 3: squeeze (its own baselines, then the ship-300 climb, then sbx at its stop N)
+  # Task 14 Step 3: squeeze (its own baselines, then the ship-300 climb, then sbx at its stop N). Every arm's committed
+  # budget there is MemoryMax - 8192 (E17B-R20); the host-MemAvailable reclaim trigger is not exercised by the squeeze.
   "base-squeeze-sbx|seal|baseline squeeze sbx"
   "base-squeeze-ship-300|seal|baseline squeeze ship-300"
-  "squeeze-ship-300|seal|squeeze-ladder ship-300"
+  "squeeze-ship-300|seal|squeeze-ladder ship-300 (budget = MemoryMax - 8192; the host-MemAvailable reclaim trigger is not exercised by the squeeze)"
   "squeeze-sbx|seal|squeeze-rung sbx"
   # Task 14 Step 4: the §7.4 probes (Task 11)
   "probe-overhead|seal|script probe-overhead.sh"
@@ -107,10 +115,10 @@ STAGES=(
   "base-default-ship-120|opt|baseline default ship-120"
   "ladder-default-ship-30|opt|ladder default ship-30"
   "ladder-default-ship-120|opt|ladder default ship-120"
-  # Task 14 Steps 1 and 3 at 256 MiB guests (spec §5): not wired yet
-  "ram256-pycache-sbx-n1|seal|blocked a 256 MiB guest-RAM and snapshot selection for the rung's worker (lib.sh worker_env writes SH_GUEST_RAM_MB=1024 and SH_SNAPSHOT_IMAGE=\$E15_SNAPIMG)"
-  "ram256-pycache-ship-300-n1|seal|blocked a 256 MiB guest-RAM and snapshot selection (see ram256-pycache-sbx-n1)"
-  "ram256-squeeze|seal|blocked a 256 MiB guest-RAM and snapshot selection, and D scaled to the dataset-to-RAM ratio"
+  # Task 14 Steps 1 and 3 at 256 MiB guests (spec §5), D scaled to the same dataset-to-RAM ratio
+  "ram256-pycache-sbx-n1|seal|rung256 sbx 1 pycache-d64"
+  "ram256-pycache-ship-300-n1|seal|rung256 ship-300 1 pycache-d64"
+  "ram256-squeeze|seal|blocked the 256 MiB squeeze: D=768 scales to D=192, which has no template (bringup.sh builds D=64, 256, 768) or point"
 )
 
 usage() {
@@ -241,7 +249,7 @@ for arm in arms:
             print("%s (moca_commit %s)" % (p, c))
             sys.exit(0)
 PY
-  )
+  ) || die "preflight check failed under $E15_RUNS/$point (${bad:-no output}): refusing, not passing"
   [ -z "$bad" ] || die "$bad is not from E17B_MOCA_PIN $E15_MOCA_PIN: a result that mixes commits is not one arm; move that arm's runs aside first"
 }
 
@@ -265,14 +273,23 @@ import json, sys
 d = sys.argv[1]
 w = json.load(open(d + "/warmcold-report.json"))
 e = json.load(open(d + "/lease_ends.json"))
+v = json.load(open(d + "/vm_age_lease.json"))
 why = []
 if w.get("unknown"):
     why.append("%d unknown call(s)" % w["unknown"])
 if w.get("disagreements"):
     why.append("%d source disagreement(s)" % w["disagreements"])
+if w.get("valid") is False:
+    why.append("warmcold-report valid false")
 un = (e.get("notices") or {}).get("unmatched_ends") or []
 if un:
     why.append("%d unmatched lease end(s)" % len(un))
+if e.get("valid") is False:
+    why.append("lease_ends.json valid false (%s)" % "; ".join(e.get("invalid_reasons") or []))
+if e.get("criterion4_pass") is False:
+    why.append("criterion 4 failed")
+if v.get("mapping_valid") is False:
+    why.append("vm_age_lease mapping_valid false (%s)" % "; ".join(v.get("mapping_reasons") or []))
 print("; ".join(why))
 PY
     ) || out="the analysis outputs are unreadable"
@@ -282,6 +299,19 @@ PY
     fi
   done < <(find "$E15_RUNS" -name params.json -newer "$marker" 2>/dev/null | sort)
   return "$rc"
+}
+
+# latency MARKER OUT: latency_report.py over every rung written since MARKER (every arm), to OUT (Task 14 Step 5).
+# Informational: a failure is reported, not a stop.
+latency() {
+  local dirs=() f out
+  while IFS= read -r f; do dirs+=("$(dirname "$f")"); done < <(find "$E15_RUNS" -name params.json -newer "$1" 2>/dev/null | sort)
+  [ ${#dirs[@]} -gt 0 ] || return 0
+  if out=$(python3 "$ANALYSIS/latency_report.py" "${dirs[@]}" --out "$2" 2>&1); then
+    echo "E17B $STAGE latency_report.py: $2"
+  else
+    echo "E17B $STAGE latency_report.py FAILED (not a stop): $(printf '%s' "$out" | tail -1)"
+  fi
 }
 
 # run_cmd KIND ARGS...: one stage's work (its output goes to the stage log).
@@ -300,6 +330,10 @@ run_cmd() {
   rung)
     preflight "$3" "$1"
     E15_TAG=lat bash "$RUNG" "$1" "$2" "$3"
+    ;;
+  rung256)
+    preflight "$3" "$1"
+    E17B_GUEST_RAM_MB=256 E15_TAG=ram256 bash "$RUNG" "$1" "$2" "$3"
     ;;
   ladder)
     preflight "$1" "$2"
@@ -362,6 +396,7 @@ for i in $(seq "$first" "$last"); do
     rc=1
     break
   fi
+  [ "$(s_needs "$st")" = - ] || latency "$L/$STAGE.start" "$L/$STAGE.latency"
   date -u +%FT%TZ >"$L/$STAGE.done"
   echo "E17B $STAGE DONE $(date -u +%FT%TZ)"
 done

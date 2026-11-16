@@ -134,8 +134,8 @@ if [ "$POINT" = squeeze ]; then
     echo "ladder.sh: the squeeze climb is for a ship arm (its stop rule reads the worker's lease reclaims); sbx runs one rung.sh at the N the ship-300 climb stopped at" >&2
     exit 2
   }
-  [[ "${E15_SQUEEZE_MEMMAX_MB:-}" =~ ^[1-9][0-9]*$ ]] && [ "$E15_SQUEEZE_MEMMAX_MB" -gt 1024 ] || {
-    echo "ladder.sh: POINT squeeze needs E15_SQUEEZE_MEMMAX_MB (an integer above 1024, the e15.slice limit every rung runs under)" >&2
+  [[ "${E15_SQUEEZE_MEMMAX_MB:-}" =~ ^[1-9][0-9]*$ ]] && [ "$E15_SQUEEZE_MEMMAX_MB" -gt 8192 ] || {
+    echo "ladder.sh: POINT squeeze needs E15_SQUEEZE_MEMMAX_MB (an integer above 8192: the e15.slice limit every rung runs under, its committed budget MemoryMax - 8192)" >&2
     exit 2
   }
   SQUEEZE_RULE=$E15_ROOT/src/e17/analysis/squeeze_rule.py

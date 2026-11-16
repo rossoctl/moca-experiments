@@ -2379,6 +2379,7 @@ SH
   printf 'E17B_MOCA_PIN=%s\n' 1111111111111111111111111111111111111111 >"$TMP/sm-e17b-pins.sh"
   printf '#!/bin/sh\n' >"$SM/bin/microvm-worker-e17b"
   chmod +x "$SM/bin/microvm-worker-e17b"
+  mkdir -p "$SM/snapshots/e17b-11111111-1024" && echo '{}' >"$SM/snapshots/e17b-11111111-1024/manifest.json"
   check "E17 smoke (stubbed): under E17B=1 the arms are sbx and the ship arms only, in that order" \
     "$(smoke E17B=1 E15_TEST_PINS="$TMP/sm-e17b-pins.sh")/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx ship-30 ship-120 ship-300 "
   check "E17 smoke (stubbed): E17B=0 keeps the E17 arms" "$(smoke E17B=0)/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx resident-300 lease-30 lease-120 "
@@ -2907,10 +2908,11 @@ test_sbx_arm_unchanged() {
   local a="$TMP/sbx-wenv-a" b="$TMP/sbx-wenv-b"
   t17m fresh-metal unset 'worker_env sbx "'"$a"'"' >/dev/null
   t17m fresh-metal 1 'worker_env sbx "'"$b"'"' >/dev/null
-  check "sbx worker_env under E17B=1 is byte-identical to E17B unset" "$(cmp -s "$a" "$b" && echo same || echo differ)" "same"
+  check "sbx worker_env under E17B=1 differs from E17B unset only in the snapshot leaf (E17B-R17)" \
+    "$(diff "$a" "$b" | grep '^[<>]' | tr '\n' ' ')" "< SH_SNAPSHOT_IMAGE=e15 > SH_SNAPSHOT_IMAGE=e17b-11111111-1024 "
   check "sbx worker_env keeps depth 2, 256 slots and the 1 TiB budget" "$(grep -E '^(SH_STANDBY_DEPTH|WORKER_MAX_CONCURRENT|SH_MAX_COMMITTED_MB)=' "$b" | tr '\n' ' ')" "SH_STANDBY_DEPTH=2 WORKER_MAX_CONCURRENT=256 SH_MAX_COMMITTED_MB=1048576 "
-  check "resident-300 and lease-30 worker_env are unchanged by the profile" \
-    "$(for ev in unset 1; do t17m fresh-metal $ev 'for x in resident-300 lease-30; do worker_env $x "'"$a"'"; sha256sum <"'"$a"'"; done'; done | sort | uniq -c | awk '{print $1}' | tr '\n' ' ')" "2 2 "
+  check "resident-300 and lease-30 worker_env are unchanged by the profile but for the snapshot leaf (E17B-R17)" \
+    "$(for ev in unset 1; do t17m fresh-metal $ev 'for x in resident-300 lease-30; do worker_env $x "'"$a"'"; grep -v "^SH_SNAPSHOT_IMAGE=" "'"$a"'" | sha256sum; done'; done | sort | uniq -c | awk '{print $1}' | tr '\n' ' ')" "2 2 "
 }
 test_e17b_driver_builds_to_separate_binaries() {
   local blk="$TMP/e17b-driver-build.sh" rec="$TMP/e17b-driver-calls.log"
@@ -2993,6 +2995,11 @@ test_ship_rung_harness() {
   printf '{"table": {"mean_span_min": 30}}\n' >"$RS/corpora/pycache/corpus-report.json"
   echo '{}' >"$RS/src/e17/workload/library.json"
   head -c 4096 /dev/zero >"$RS/template-pycache-d768/workspace.img"
+  # the E17b snapshot leaves (snapshot-e17b.sh; E17B-R17): e17b-<pin8>-<RAM>
+  for r in 1024 256; do
+    mkdir -p "$RS/snapshots/e17b-${E17B_FIXPIN:0:8}-$r"
+    printf '{"hash": "h%s", "guest_ram_mb": %s, "features": ["lease-v1", "balloon-fpr-v1"]}\n' "$r" "$r" >"$RS/snapshots/e17b-${E17B_FIXPIN:0:8}-$r/manifest.json"
+  done
   # e15.slice as setup.sh leaves it for this host's RAM (lib.sh e15_slice_limits): what `systemctl show` reports
   read -r SLICE_MAX0 SLICE_HIGH0 < <(t17m fresh-metal 1 'e15_slice_limits 402653184')
   printf 'MemoryMax=%s\nMemoryHigh=%s\n' "$SLICE_MAX0" "$SLICE_HIGH0" >"$RS/slice.state"
@@ -3034,12 +3041,14 @@ systemctl)
   *"stop e15-relay.service"*) rm -f "$RS/relay-up" ;;
   *"stop e15-worker.service"*) rm -f "$RS/worker-up"; echo worker-stop >>"$SORD" ;;
   *"show e15.slice --property=MemoryMax,MemoryHigh"*) echo show-slice >>"$SORD"; cat "$RS/slice.state" ;;
+  *daemon-reload*) echo daemon-reload >>"$SORD" ;;
   *"set-property --runtime e15.slice "*)
     echo "set-property \${*:5}" >>"$SORD"
     [ -z "\${STUB_SETPROP_FAIL:-}" ] || exit 1
     printf '%s\n' "\${@:5}" >"$RS/slice.state" ;;
   esac
   exit 0 ;;
+rm) echo "sudo-\$*" >>"$SORD"; exit 0 ;;
 systemd-run)
   echo "\$*" >>"$SSYS"
   case "\$*" in
@@ -3185,34 +3194,35 @@ test_squeeze_point_defined() {
   check "squeeze: a ship-300 rung at the point runs (exit 0) with the D=768 template" "$?/$(qparam ship-300 point)/$(qparam ship-300 dataset_mib)" '0/"squeeze"/768'
 }
 test_memmax_set_and_restored_on_error() {
-  local want_set="set-property MemoryMax=8589934592 MemoryHigh=7516192768" want_restore="set-property MemoryMax=$SLICE_MAX0 MemoryHigh=$SLICE_HIGH0"
+  local want_set="set-property MemoryMax=17179869184 MemoryHigh=16106127360" want_restore="set-property MemoryMax=$SLICE_MAX0 MemoryHigh=$SLICE_HIGH0"
   local orig="MemoryMax=$SLICE_MAX0 MemoryHigh=$SLICE_HIGH0 "
   : >"$TMP/ship.md"
-  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=8192
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=16384
   check "memmax: a squeeze rung with the knob completes (exit 0)" "$?" "0"
-  check "memmax: the originals are read first, the limit set (MemoryHigh = MemoryMax - 1 GiB) before the worker starts, the originals restored after it stops" \
-    "$(grep -E '^(show-slice|set-property|worker-start|driver|worker-stop)' "$SORD" | tr '\n' ';')" "show-slice;$want_set;worker-start;driver;worker-stop;$want_restore;"
+  check "memmax: the originals are read first, the limit set (MemoryHigh = MemoryMax - 1 GiB) before the worker starts, the originals restored after it stops, then the runtime drop-ins removed and systemd reloaded" \
+    "$(grep -E '^(show-slice|set-property|worker-start|driver|worker-stop|sudo-rm|daemon-reload)' "$SORD" | tr '\n' ';')" \
+    "show-slice;$want_set;worker-start;driver;worker-stop;$want_restore;sudo-rm -f -- /run/systemd/system.control/e15.slice.d/50-MemoryMax.conf /run/systemd/system.control/e15.slice.d/50-MemoryHigh.conf;daemon-reload;"
   check "memmax: the slice is back at its original values" "$(tr '\n' ' ' <"$RS/slice.state")" "$orig"
   check "memmax: one manifest line for the change, its UNDO the restore to the originals" \
-    "$(grep -c "e15.slice MemoryMax=8589934592 MemoryHigh=7516192768 .*| UNDO: sudo -n systemctl set-property --runtime e15.slice MemoryMax=$SLICE_MAX0 MemoryHigh=$SLICE_HIGH0\$" "$TMP/ship.md")/$(grep -c 'UNDO' "$TMP/ship.md")" "1/1"
+    "$(grep -c "e15.slice MemoryMax=17179869184 MemoryHigh=16106127360 .*| UNDO: sudo -n systemctl set-property --runtime e15.slice MemoryMax=$SLICE_MAX0 MemoryHigh=$SLICE_HIGH0; sudo -n rm -f -- /run/systemd/system.control/e15.slice.d/50-MemoryMax.conf /run/systemd/system.control/e15.slice.d/50-MemoryHigh.conf; sudo -n systemctl daemon-reload\$" "$TMP/ship.md")/$(grep -c 'UNDO' "$TMP/ship.md")" "1/1"
   check "memmax: params.json records the knob, the squeezed and the original values, and the restore" \
     "$(qparam ship-300 squeeze_memmax_mb)/$(qparam ship-300 squeeze_slice)" \
-    "8192/{\"MemoryHigh\": 7516192768, \"MemoryMax\": 8589934592, \"original_MemoryHigh\": \"$SLICE_HIGH0\", \"original_MemoryMax\": \"$SLICE_MAX0\", \"restored\": true}"
-  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=8192 STUB_BANNER=off
+    "16384/{\"MemoryHigh\": 16106127360, \"MemoryMax\": 17179869184, \"original_MemoryHigh\": \"$SLICE_HIGH0\", \"original_MemoryMax\": \"$SLICE_MAX0\", \"restored\": true}"
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=16384 STUB_BANNER=off
   check "memmax on error: the rung dies before the driver (lease=off) and the trap still restores the slice" \
     "$?/$(grep -c '^driver$' "$SORD")/$(grep -E '^set-property' "$SORD" | tr '\n' ';')/$(tr '\n' ' ' <"$RS/slice.state")" "1/0/$want_set;$want_restore;/$orig"
-  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=8192 STUB_DRIVER_TERM=1
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=16384 STUB_DRIVER_TERM=1
   check "memmax on a signal: the rung killed (SIGTERM) while the driver runs restores the slice" \
     "$?/$(grep -E '^set-property' "$SORD" | tr '\n' ';')/$(tr '\n' ' ' <"$RS/slice.state")" "143/$want_set;$want_restore;/$orig"
-  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=8192 STUB_SETPROP_FAIL=1
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=16384 STUB_SETPROP_FAIL=1
   check "memmax: a failing set-property dies before the worker starts, and the restore is still attempted" \
     "$?/$(grep -c '^worker-start' "$SORD")/$(grep -c '^set-property' "$SORD")/$(grep -c 'could not restore e15.slice' "$TMP/ship-rung.out")" "1/0/2/1"
   qrung ship-300 E15_SQUEEZE_MEMMAX_MB=999999999
   check "memmax: a value above the slice's own MemoryMax is refused (a squeeze only lowers it), nothing set" \
     "$?/$(grep -c '^set-property' "$SORD")/$(grep -c 'a squeeze only lowers it' "$TMP/ship-rung.out")" "1/0/1"
-  check "memmax: bad values are usage errors before any host change (exit 2, no systemd call)" \
-    "$(for v in abc 1024 0 -5 08192; do qrung ship-300 E15_SQUEEZE_MEMMAX_MB=$v; printf '%s:%s ' "$?" "$(grep -c . "$SSYS")"; done)" "2:0 2:0 2:0 2:0 2:0 "
-  srung ship-300 E15_SQUEEZE_MEMMAX_MB=8192
+  check "memmax: bad values (incl. 8192: no committed budget left, E17B-R20) are usage errors before any host change (exit 2, no systemd call)" \
+    "$(for v in abc 1024 0 -5 08192 8192; do qrung ship-300 E15_SQUEEZE_MEMMAX_MB=$v; printf '%s:%s ' "$?" "$(grep -c . "$SSYS")"; done)" "2:0 2:0 2:0 2:0 2:0 2:0 "
+  srung ship-300 E15_SQUEEZE_MEMMAX_MB=16384
   check "memmax: refused at any point but squeeze (exit 2, no systemd call, slice untouched)" "$?/$(grep -c . "$SSYS")/$(grep -cE '^(show-slice|set-property)' "$SORD")" "2/0/0"
   qrung ship-300
   check "memmax: unset at squeeze -> the slice is neither read nor set; params has no squeeze fields" \
@@ -3222,6 +3232,11 @@ test_memmax_set_and_restored_on_error() {
   check "refuse_units (fresh-metal): set-property on e15.slice with MemoryMax/MemoryHigh passes; another unit or property is refused" \
     "$(for c in 'set-property --runtime e15.slice MemoryMax=1 MemoryHigh=1' 'set-property --runtime system.slice MemoryMax=1' 'set-property --runtime sh-relay.service MemoryMax=1' 'set-property --runtime e15.slice CPUQuota=10%'; do t17m fresh-metal 1 "(refuse_units $c) >/dev/null 2>&1 && echo pass || echo refused"; done | tr '\n' ' ')" "pass refused refused refused "
   check "lib.sh e15_squeeze_limits: MemoryMax = MB MiB, MemoryHigh = MemoryMax - 1 GiB (the slice rule)" "$(t17m fresh-metal 1 'e15_squeeze_limits 8192')" "8589934592 7516192768"
+  srung sbx E17B= E15_SQUEEZE_ACTIVE=1 E15_SQUEEZE_ORIG_MAX=1 E15_SQUEEZE_ORIG_HIGH=1
+  check "memmax: an exported E15_SQUEEZE_ACTIVE=1 does not leak into a sealed rung (no set-property, no drop-in removal)" \
+    "$(grep -cE '^(set-property|sudo-rm|daemon-reload)' "$SORD")" "0"
+  qrung ship-300 E15_SQUEEZE_ACTIVE=1 E15_SQUEEZE_ORIG_MAX=1 E15_SQUEEZE_ORIG_HIGH=1
+  check "memmax: nor into a squeeze rung without the knob" "$(grep -cE '^(set-property|sudo-rm|daemon-reload)' "$SORD")" "0"
 }
 test_rung_removes_token_keys() {
   local n
@@ -3260,7 +3275,7 @@ test_rung_removes_token_keys() {
 test_ship_rung_checks_lease_banner() {
   srung ship-300 STUB_BANNER=off
   check "lease banner: lease=off -> the rung dies before the driver starts, naming lease-v1" \
-    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c "banner says lease=off.*lease-v1" "$TMP/ship-rung.out")" "1/0/1"
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c "banner says lease=off: the snapshot $RS/snapshots/e17b-11111111-1024 does not advertise lease-v1" "$TMP/ship-rung.out")" "1/0/1"
   srung ship-300 STUB_BANNER=none
   check "lease banner: no banner -> the rung dies before the driver starts" "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'no startup banner' "$TMP/ship-rung.out")" "1/0/1"
   srung ship-300
@@ -3314,7 +3329,13 @@ test_squeeze_stop_rule() {
   mkq "$q/e" 60 300 '-1'
   check "stop rule: worker stats without leaseEnds (sbx) -> not met, 0 reclaims" "$(sqr "$q/e")" "0/false/0/minute"
   mkq "$q/f" 60 300 'None if 230 <= t <= 241 else t // 30'
-  check "stop rule: no worker stats within 5 s before a minute boundary -> undecidable (null), never guessed" "$(sqr "$q/f")/$(grep -c 't=240' "$q/f/squeeze-rule.json")" "0/null/None/no/1"
+  check "stop rule: samples missing around a boundary but rows inside each minute -> judged (first row at or after the start, last at or before the end)" \
+    "$(sqr "$q/f")/$(python3 -c 'import json,sys; print([b["memory_reclaim"] for b in json.load(open(sys.argv[1]))["bins"]])' "$q/f/squeeze-rule.json")" "0/true/1/-/[2, 2, 1, 2, 2]"
+  mkq "$q/f2" 60 300 'None if 175 <= t <= 245 else t // 30'
+  check "stop rule: a minute with no worker stats inside it -> undecidable (null), never guessed" "$(sqr "$q/f2")/$(grep -c 'no worker stats inside minute \[180, 240)' "$q/f2/squeeze-rule.json")" "0/null/None/no/1"
+  mkq "$q/f3" 60 300 '(t - 5) // 30 if t % 60 >= 5 else None'
+  check "stop rule: the bound is conservative (no tolerance): reclaims before a minute's first row are not counted in it" \
+    "$(sqr "$q/f3")/$(python3 -c 'import json,sys; print([b["memory_reclaim"] for b in json.load(open(sys.argv[1]))["bins"]])' "$q/f3/squeeze-rule.json")" "0/true/1/-/[1, 1, 1, 1, 1]"
   mkq "$q/g" 60 300 't // 30 if t < 200 else 0'
   check "stop rule: a counter that goes down (the worker restarted) -> undecidable (null)" "$(sqr "$q/g")" "0/null/None/memory_reclaim"
   mkq "$q/h" 60 30 't'
@@ -3349,7 +3370,7 @@ json.dump({"warmup_s": 60, "window_s": 300, "arm": "ship-300", "n": n, "memory_a
 with open(d + "/samples.jsonl", "w") as o:
     for t in range(0, 400):
         r = {"t": t, "ts": 1e9 + t}
-        if not (gap and 230 <= t <= 241):
+        if not (gap and 175 <= t <= 245):
             r["worker"] = {"leaseEnds": {"memory_reclaim": t * per // 60}}
         o.write(json.dumps(r) + "\n")
 PY
@@ -3365,34 +3386,78 @@ SH
       E15_RUNG="$SR" SQ_LOG="$TMP/sq.log" PATH="$STUB:$PATH" "$@" bash "$RIG/ladder.sh" "$pt" "$arm" >"$TMP/sq.out" 2>&1
   }
   sqj() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(eval(sys.argv[2], {"d": d})))' "$SQ/runs/${2:-squeeze}/${3:-ship-300}/ladder.json" "$1" 2>&1; }
-  sql ship-300 E15_SQUEEZE_MEMMAX_MB=8192
+  sql ship-300 E15_SQUEEZE_MEMMAX_MB=16384
   check "squeeze ladder: climbs past the latency break (N=16) and stops at the first N whose window meets the rule (64)" \
     "$?/$(cut -d' ' -f3 "$TMP/sq.log" | tr '\n' ' ')" "0/1 8 16 24 32 40 48 56 64 "
-  check "squeeze ladder: every rung ran with the knob" "$(grep -c 'memmax=8192$' "$TMP/sq.log")" "9"
+  check "squeeze ladder: every rung ran with the knob" "$(grep -c 'memmax=16384$' "$TMP/sq.log")" "9"
   check "squeeze ladder: ladder.json records the stop N, why, the knob, and each rung's rule verdict; n_max is still the latency one" \
     "$(sqj 'd["squeeze"]["stop_n"]')/$(sqj 'd["squeeze"]["stopped_by"]')/$(sqj 'd["squeeze"]["memmax_mb"]')/$(sqj '[r["met"] for r in d["squeeze"]["rungs"]]')/$(sqj 'd["n_max"]')" \
-    '64/"reclaim_rate"/8192/[false, false, false, false, false, false, false, false, true]/8'
+    '64/"reclaim_rate"/16384/[false, false, false, false, false, false, false, false, true]/8'
   check "squeeze ladder: each rung dir has its squeeze-rule.json" "$(find "$SQ/runs/squeeze/ship-300" -name squeeze-rule.json | wc -l | tr -d ' ')" "9"
-  sql ship-300 E15_SQUEEZE_MEMMAX_MB=8192 SQ_ABORT_N=32
+  sql ship-300 E15_SQUEEZE_MEMMAX_MB=16384 SQ_ABORT_N=32
   check "squeeze ladder: a memory-guard event (the watchdog's memory_abort) stops the climb there (criterion 3 already failed)" \
     "$?/$(sqj 'd["squeeze"]["stop_n"]')/$(sqj 'd["squeeze"]["stopped_by"]')/$(tail -1 "$TMP/sq.log" | cut -d' ' -f3)" '0/32/"guard"/32'
-  sql ship-300 E15_SQUEEZE_MEMMAX_MB=8192 SQ_GAP_N=24
+  sql ship-300 E15_SQUEEZE_MEMMAX_MB=16384 SQ_GAP_N=24
   check "squeeze ladder: an undecidable rung (stats missing at a boundary) is a rig error: the ladder dies there" \
     "$?/$(tail -1 "$TMP/sq.log" | cut -d' ' -f3)/$(grep -c 'squeeze stop rule undecidable at N=24' "$TMP/sq.out")" "1/24/1"
-  sql ship-300 E15_SQUEEZE_MEMMAX_MB=8192 E15_LADDER_RUNGS="1 8 16"
+  sql ship-300 E15_SQUEEZE_MEMMAX_MB=16384 E15_LADDER_RUNGS="1 8 16"
   check "squeeze ladder: never met within the rungs climbed -> stop_n null, stopped_by top_of_ladder" \
     "$?/$(sqj 'd["squeeze"]["stop_n"]')/$(sqj 'd["squeeze"]["stopped_by"]')" '0/null/"top_of_ladder"'
+  sql ship-300 E15_SQUEEZE_MEMMAX_MB=8192
+  check "squeeze ladder: refused with a value that leaves no committed budget (8192, E17B-R20)" "$?/$(grep -c . "$TMP/sq.log")" "2/0"
   sql ship-300
   check "squeeze ladder: refused without E15_SQUEEZE_MEMMAX_MB (exit 2, no rung)" "$?/$(grep -c . "$TMP/sq.log")/$(grep -c 'E15_SQUEEZE_MEMMAX_MB' "$TMP/sq.out")" "2/0/1"
-  sql sbx E15_SQUEEZE_MEMMAX_MB=8192
+  sql sbx E15_SQUEEZE_MEMMAX_MB=16384
   check "squeeze ladder: refused for sbx (exit 2, no rung): sbx runs one rung at the N the ship-300 climb stopped at" "$?/$(grep -c . "$TMP/sq.log")" "2/0"
   sql ship-300 pycache-d768
   check "squeeze ladder: any other point keeps the E15 stop rule (both verdicts broken at 16), no squeeze record" \
     "$?/$(cut -d' ' -f3 "$TMP/sq.log" | tr '\n' ' ')/$(sqj '"squeeze" in d' pycache-d768)" "0/1 8 16 /false"
-  sql ship-300 pycache-d768 E15_SQUEEZE_MEMMAX_MB=8192
+  sql ship-300 pycache-d768 E15_SQUEEZE_MEMMAX_MB=16384
   check "squeeze ladder: the knob is refused at another point (exit 2, no rung)" "$?/$(grep -c . "$TMP/sq.log")" "2/0"
   rm -rf "$SQ" "$SR"
 }
+# --- E17b Task 9 fix round 1: the E17b snapshot leaf (E17B-R17) and the squeezed committed budget (E17B-R20) ---
+test_e17b_snapshot_leaf_selected() {
+  local f="$TMP/leaf-wenv" ev='grep -E "^(SH_SNAPSHOT_IMAGE|SH_GUEST_RAM_MB)=" "'"$TMP/leaf-wenv"'" | tr "\n" " "'
+  check "leaf: under E17B=1 every arm's worker env names e17b-<pin8>-1024 at 1024 MiB, never the sealed e15 leaf" \
+    "$(for a in sbx ship-30 ship-300; do t17m fresh-metal 1 "worker_env $a '$f'; $ev"; echo; done | sort -u | tr -d '\n')" "SH_SNAPSHOT_IMAGE=e17b-11111111-1024 SH_GUEST_RAM_MB=1024 "
+  check "leaf: E17B_GUEST_RAM_MB=256 selects e17b-<pin8>-256 and a 256 MiB guest" \
+    "$(t17m fresh-metal 1 "worker_env ship-300 '$f'; $ev" E17B_GUEST_RAM_MB=256)" "SH_SNAPSHOT_IMAGE=e17b-11111111-256 SH_GUEST_RAM_MB=256 "
+  check "leaf: E17B unset -> the sealed e15 leaf and 1024 MiB, whatever E17B_GUEST_RAM_MB says" \
+    "$(t17m fresh-metal unset "worker_env sbx '$f'; $ev" E17B_GUEST_RAM_MB=256)" "SH_SNAPSHOT_IMAGE=e15 SH_GUEST_RAM_MB=1024 "
+  check "leaf: a guest RAM snapshot-e17b.sh does not build (512) is refused" "$(t17m fresh-metal 1 "(worker_env sbx '$f') >/dev/null 2>&1; echo \$?" E17B_GUEST_RAM_MB=512)" "1"
+  srung ship-300
+  check "leaf: params.json records the leaf, the guest RAM and the leaf's manifest hash" \
+    "$(sparams ship-300 snapshot_image)/$(sparams ship-300 guest_ram_mb)/$(sparams ship-300 snapshot_hash)" "e17b-11111111-1024/1024/h1024"
+  srung ship-300 E17B_GUEST_RAM_MB=256
+  check "leaf: a 256 MiB rung records the 256 leaf" "$(sparams ship-300 snapshot_image)/$(sparams ship-300 guest_ram_mb)/$(sparams ship-300 snapshot_hash)" "e17b-11111111-256/256/h256"
+  mv "$RS/snapshots/e17b-11111111-1024" "$RS/snapshots/hold-1024"
+  srung sbx
+  check "leaf: a missing leaf dies before the worker starts (and before the relay restart), naming the leaf and snapshot-e17b.sh" \
+    "$?/$(grep -c '^worker-start' "$SORD")/$(grep -c '^relay-start' "$SORD")/$(grep -c "no E17b snapshot $RS/snapshots/e17b-11111111-1024 .*snapshot-e17b.sh" "$TMP/ship-rung.out")" "1/0/0/1"
+  check "leaf: start_worker refuses a missing leaf too (smoke.sh's analyze check calls it directly)" \
+    "$(sed -n '/^start_worker()/,/^}/p' "$RIG/lib.sh" | grep -c 'e17b_require_snapshot')" "1"
+  mv "$RS/snapshots/hold-1024" "$RS/snapshots/e17b-11111111-1024"
+  srung sbx E17B=
+  check "leaf: a sealed rung records the e15 leaf's hash as before, and no snapshot_image key" "$(sparams sbx snapshot_image | grep -c KeyError)" "1"
+}
+test_squeeze_budget_follows_memmax() {
+  qrung ship-300 E15_SQUEEZE_MEMMAX_MB=16384
+  check "budget: at squeeze with the knob, ship-300's SH_MAX_COMMITTED_MB = MemoryMax - 8192 (the squeezed host); params records it" \
+    "$(grep '^SH_MAX_COMMITTED_MB=' "$RS/runs/squeeze/ship-300/N1/worker.env")/$(qparam ship-300 committed_mb)/$(qparam ship-300 squeeze_memmax_mb)" "SH_MAX_COMMITTED_MB=8192/8192/16384"
+  qrung sbx E15_SQUEEZE_MEMMAX_MB=16384
+  check "budget: sbx at squeeze gets the same squeezed budget (the guard comparison is fair)" \
+    "$(grep '^SH_MAX_COMMITTED_MB=' "$RS/runs/squeeze/sbx/N1/worker.env")/$(qparam sbx committed_mb)" "SH_MAX_COMMITTED_MB=8192/8192"
+  qrung ship-300
+  check "budget: at squeeze without the knob the arm's own budget stands (host RAM - 8192), no committed_mb key" \
+    "$(grep '^SH_MAX_COMMITTED_MB=' "$RS/runs/squeeze/ship-300/N1/worker.env")/$(qparam ship-300 committed_mb)" "SH_MAX_COMMITTED_MB=385024/null"
+  srung sbx
+  check "budget: unchanged at other points (sbx keeps E16's never-binding budget)" "$(grep '^SH_MAX_COMMITTED_MB=' "$RS/runs/default/sbx/N1/worker.env")" "SH_MAX_COMMITTED_MB=1048576"
+  check "budget: worker_env refuses a squeeze that leaves no budget" "$(t17m fresh-metal 1 "(worker_env ship-300 '$TMP/b-wenv') >/dev/null 2>&1; echo \$?" E15_SQUEEZE_MEMMAX_MB=8192)" "1"
+  check "budget: the comment says the host-MemAvailable reclaim trigger is not exercised by the squeeze" "$(grep -c 'host-MemAvailable reclaim trigger is not exercised' "$RIG/lib.sh")" "1"
+}
+test_e17b_snapshot_leaf_selected
+test_squeeze_budget_follows_memmax
 test_squeeze_point_defined
 test_memmax_set_and_restored_on_error
 test_rung_removes_token_keys

@@ -61,7 +61,7 @@ chmod +x "$TMP/stub/systemctl" "$TMP/stub/sudo"
 mkstub() {
   cat >"$TMP/stub-$1.sh" <<SH
 #!/usr/bin/env bash
-line="$1 \$* tag=\${E15_TAG:-unset} memmax=\${E15_SQUEEZE_MEMMAX_MB:-unset} e17b=\${E17B:-unset}"
+line="$1 \$* tag=\${E15_TAG:-unset} memmax=\${E15_SQUEEZE_MEMMAX_MB:-unset} e17b=\${E17B:-unset} ram=\${E17B_GUEST_RAM_MB:-unset}"
 echo "\$line" >>"$CLOG"
 case "\$line" in "\${FAIL_ON:-NONE}"*) echo "stub failure: \$line" >&2; exit 1 ;; esac
 case "$1" in
@@ -83,17 +83,36 @@ for k in rung ladder baseline smoke; do mkstub "$k"; done
 # analysis stubs: warmcold_lease.py writes warmcold-report.json (unknown = STUB_UNKNOWN), lease_ends.py lease_ends.json
 cat >"$TMP/an/warmcold_lease.py" <<'PY'
 import json, os, sys
-json.dump({"unknown": int(os.environ.get("STUB_UNKNOWN", "0")), "disagreements": 0}, open(sys.argv[1] + "/warmcold-report.json", "w"))
+json.dump({"unknown": int(os.environ.get("STUB_UNKNOWN", "0")), "disagreements": int(os.environ.get("STUB_DIS", "0")),
+           "valid": os.environ.get("STUB_WC_VALID", "1") == "1"}, open(sys.argv[1] + "/warmcold-report.json", "w"))
 print("warm 1 cold 1 unknown %s" % os.environ.get("STUB_UNKNOWN", "0"))
 open(os.environ["ALOG"], "a").write("warmcold_lease %s\n" % sys.argv[1])
 PY
 cat >"$TMP/an/lease_ends.py" <<'PY'
 import json, os, sys
-json.dump({"notices": {"unmatched_ends": [{"key": "k"}] * int(os.environ.get("STUB_UNMATCHED", "0"))}}, open(sys.argv[1] + "/lease_ends.json", "w"))
+c4 = {"1": True, "0": False, "null": None}[os.environ.get("STUB_C4", "1")]
+json.dump({"notices": {"unmatched_ends": [{"key": "k"}] * int(os.environ.get("STUB_UNMATCHED", "0"))},
+           "valid": os.environ.get("STUB_LE_VALID", "1") == "1", "invalid_reasons": ["stub reason"], "criterion4_pass": c4},
+          open(sys.argv[1] + "/lease_ends.json", "w"))
 print("valid True")
 open(os.environ["ALOG"], "a").write("lease_ends %s\n" % sys.argv[1])
 PY
-printf 'import os, sys\nopen(os.environ["ALOG"], "a").write("vm_age_lease %%s\\n" %% sys.argv[1])\nprint("ok")\n' >"$TMP/an/vm_age_lease.py"
+cat >"$TMP/an/vm_age_lease.py" <<'PY'
+import json, os, sys
+json.dump({"mapping_valid": os.environ.get("STUB_MAP_VALID", "1") == "1", "mapping_reasons": ["stub mapping"]}, open(sys.argv[1] + "/vm_age_lease.json", "w"))
+open(os.environ["ALOG"], "a").write("vm_age_lease %s\n" % sys.argv[1])
+print("mapping_valid")
+PY
+# latency_report.py stub: logs its rung dirs and --out
+cat >"$TMP/an/latency_report.py" <<'PY'
+import os, sys
+a = sys.argv[1:]
+out = a[a.index("--out") + 1]
+os.makedirs(out, exist_ok=True)
+open(os.path.join(out, "latency.json"), "w").write("{}")
+dirs = [x for x in a if x != "--out" and x != out]
+open(os.environ["ALOG"], "a").write("latency_report %s --out %s\n" % (" ".join(sorted(dirs)), out))
+PY
 
 seal() { printf '{"status": "sealed", "sealed": %s, "predictions": []}\n' "$1" >"$PRED"; }
 chain() { # [VAR=val ...] -- ARGS: run the staged chain; rc echoed, output in $TMP/c.out
@@ -148,7 +167,7 @@ test_chain_runs_bringup_unsealed() {
   check "bring-up: --to cal-pycache-ship-300 runs without the seal: smoke, then the four calibration baselines, in order" \
     "$(chain -- --to cal-pycache-ship-300)/$(calls)" "0/$BRINGUP"
   check "bring-up: every stage ran with E17B=1, each wrote its own log and a .done" \
-    "$(grep -c 'e17b=1$' "$CLOG")/$(find "$T/e17b" -name '*.log' | wc -l | tr -d ' ')/$(find "$T/e17b" -name '*.done' | wc -l | tr -d ' ')" "5/5/5"
+    "$(grep -c 'e17b=1 ' "$CLOG")/$(find "$T/e17b" -name '*.log' | wc -l | tr -d ' ')/$(find "$T/e17b" -name '*.done' | wc -l | tr -d ' ')" "5/5/5"
   check "bring-up: the stage log holds the stage's own output" "$(grep -c 'stub' "$T/e17b/smoke.log")/$(grep -c 'E17B smoke DONE' "$TMP/c.out")" "0/1"
   check "bring-up: run again, everything selected is done: nothing runs" "$(chain -- --to cal-pycache-ship-300)/$(grep -c . "$CLOG")/$(grep -c 'is done' "$TMP/c.out")" "0/0/1"
 }
@@ -172,21 +191,22 @@ test_chain_resumes_at_stage() {
   check "resume: a full sealed run goes stage by stage in the list's order (to the squeeze climb)" \
     "$(chain E17B_SQUEEZE_MEMMAX_MB=8192 -- --to squeeze-ship-300)/$(calls)" \
     "0/${BRINGUP}baseline pycache-low sbx;baseline pycache-low ship-300;baseline pycache ship-30;baseline pycache ship-120;rung sbx 1 pycache;rung ship-300 1 pycache;rung sbx 1 pycache-low;rung ship-300 1 pycache-low;rung sbx 128 pycache;rung ship-300 128 pycache;rung sbx 128 pycache-low;rung ship-300 128 pycache-low;rung ship-30 128 pycache;rung ship-120 128 pycache;ladder default sbx;ladder default ship-300;baseline squeeze sbx;baseline squeeze ship-300;ladder squeeze ship-300;"
-  check "resume: rung stages are tagged lat; the caller's E15_TAG and E15_SQUEEZE_MEMMAX_MB never reach a stage" \
-    "$(chain E15_TAG=evil E15_SQUEEZE_MEMMAX_MB=1 -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(sed 's/.* tag=//' "$CLOG")" "0/lat memmax=unset e17b=1"
+  check "resume: rung stages are tagged lat; the caller's E15_TAG, E15_SQUEEZE_MEMMAX_MB and E17B_GUEST_RAM_MB never reach a stage" \
+    "$(chain E15_TAG=evil E15_SQUEEZE_MEMMAX_MB=1 E17B_GUEST_RAM_MB=256 -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(sed 's/.* tag=//' "$CLOG")" "0/lat memmax=unset e17b=1 ram=unset"
 }
 test_chain_squeeze_stages() {
   reset
   seal true
+  check "squeeze: the stage list says the host-MemAvailable reclaim trigger is not exercised" "$(chain -- --list)/$(grep -c 'host-MemAvailable reclaim trigger is not exercised' "$TMP/c.out")" "0/1"
   check "squeeze: the climb without E17B_SQUEEZE_MEMMAX_MB fails, naming it" \
     "$(chain -- --from squeeze-ship-300 --to squeeze-ship-300)/$(grep -c 'needs E17B_SQUEEZE_MEMMAX_MB' "$T/e17b/squeeze-ship-300.log")/$(grep -c . "$CLOG")" "1/1/0"
   check "squeeze: the climb is ladder.sh squeeze ship-300 under the value, then sbx runs once at its stop N under the same" \
     "$(chain E17B_SQUEEZE_MEMMAX_MB=8192 -- --from squeeze-ship-300 --to squeeze-sbx)/$(tr '\n' ';' <"$CLOG")" \
-    "0/ladder squeeze ship-300 tag=unset memmax=8192 e17b=1;rung sbx 64 squeeze tag=sq memmax=8192 e17b=1;"
+    "0/ladder squeeze ship-300 tag=unset memmax=8192 e17b=1 ram=unset;rung sbx 64 squeeze tag=sq memmax=8192 e17b=1 ram=unset;"
   check "squeeze: sbx refuses a value other than the climb's" \
     "$(chain E17B_SQUEEZE_MEMMAX_MB=4096 -- --from squeeze-sbx --to squeeze-sbx)/$(grep -c 'the ship-300 climb ran under 8192' "$T/e17b/squeeze-sbx.log")" "1/1"
   check "squeeze: sbx alone takes the climb's value from its ladder.json" \
-    "$(chain -- --from squeeze-sbx --to squeeze-sbx)/$(cat "$CLOG")" "0/rung sbx 64 squeeze tag=sq memmax=8192 e17b=1"
+    "$(chain -- --from squeeze-sbx --to squeeze-sbx)/$(cat "$CLOG")" "0/rung sbx 64 squeeze tag=sq memmax=8192 e17b=1 ram=unset"
   printf '{"squeeze": {"stop_n": null, "memmax_mb": 8192}}\n' >"$T/runs/squeeze/ship-300/ladder.json"
   check "squeeze: a climb that stopped at no N leaves sbx nothing to run (fails)" \
     "$(chain -- --from squeeze-sbx --to squeeze-sbx)/$(grep -c 'stopped at no N' "$T/e17b/squeeze-sbx.log")/$(grep -c . "$CLOG")" "1/1/0"
@@ -195,15 +215,31 @@ test_chain_analysis_gate() {
   reset
   seal true
   check "gate: each ship-* rung the stage wrote is analysed (warmcold_lease, lease_ends, vm_age_lease); sbx rungs are not" \
-    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-ship-300-n1)/$(sed "s#$T/runs/##" "$TMP/alog" | tr '\n' ';')" \
+    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-ship-300-n1)/$(grep -v '^latency_report' "$TMP/alog" | sed "s#$T/runs/##" | tr '\n' ';')" \
     "0/warmcold_lease pycache/ship-300/N1-lat;lease_ends pycache/ship-300/N1-lat;vm_age_lease pycache/ship-300/N1-lat;"
   check "gate: an unknown call stops the chain at that stage, which stays not done" \
     "$(chain STUB_UNKNOWN=2 -- --from lat-pycache-ship-300-n1 --to lat-pycache-low-sbx-n1)/$(grep -c 'STOP pycache/ship-300/N1-lat: 2 unknown call(s)' "$TMP/c.out")/$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open)/$(grep -c . "$CLOG")" \
     "1/1/open/1"
   check "gate: an unmatched lease end stops it too" \
     "$(chain STUB_UNMATCHED=1 -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c '1 unmatched lease end(s)' "$TMP/c.out")" "1/1"
-  check "gate: a rung written before the stage started is not re-analysed" \
-    "$(chain -- --from lat-pycache-sbx-n128 --to lat-pycache-sbx-n128)/$(grep -c . "$TMP/alog")" "0/0"
+  check "gate: a rung written before the stage started is not re-analysed (only the stage's own rung is reported)" \
+    "$(chain -- --from lat-pycache-sbx-n128 --to lat-pycache-sbx-n128)/$(grep -c '^warmcold_lease' "$TMP/alog")" "0/0"
+  local v
+  for v in "STUB_LE_VALID=0:lease_ends.json valid false (stub reason)" "STUB_C4=0:criterion 4 failed" "STUB_WC_VALID=0:warmcold-report valid false" \
+    "STUB_DIS=1:1 source disagreement(s)" "STUB_MAP_VALID=0:vm_age_lease mapping_valid false (stub mapping)"; do
+    printf '%s=%s:%s ' "${v%%:*}" "$(chain "${v%%:*}" -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)" "$(grep -cF "STOP pycache/ship-300/N1-lat: ${v#*:}" "$TMP/c.out")"
+  done >"$TMP/gate.out"
+  check "gate: stops on lease_ends valid false, criterion4_pass false, warmcold valid false, any disagreement, vm_age_lease mapping_valid false" \
+    "$(cat "$TMP/gate.out")" "STUB_LE_VALID=0=1:1 STUB_C4=0=1:1 STUB_WC_VALID=0=1:1 STUB_DIS=1=1:1 STUB_MAP_VALID=0=1:1 "
+  check "gate: criterion4_pass null (no lease ended: vacuous) does not stop" "$(chain STUB_C4=null -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)" "0"
+  check "gate: after a measured stage latency_report.py runs over the stage's rungs (every arm) to the stage's log dir" \
+    "$(chain -- --from lat-pycache-sbx-n128 --to lat-pycache-ship-300-n128)/$(grep '^latency_report' "$TMP/alog" | sed "s#$T/runs/##g; s#$T/e17b/##" | tr '\n' ';')/$([ -s "$T/e17b/lat-pycache-ship-300-n128.latency/latency.json" ] && echo written)" \
+    "0/latency_report pycache/sbx/N128-lat --out lat-pycache-sbx-n128.latency;latency_report pycache/ship-300/N128-lat --out lat-pycache-ship-300-n128.latency;/written"
+  reset
+  rm -f "$PRED"
+  check "gate: no latency_report after a bring-up stage (not a measured stage)" \
+    "$(chain -- --to cal-default-sbx)/$(grep -c '^latency_report' "$TMP/alog")" "0/0"
+  seal true
 }
 test_chain_preflight_and_guards() {
   reset
@@ -213,8 +249,16 @@ test_chain_preflight_and_guards() {
   check "preflight: a run directory holding another commit's rung refuses the stage (nothing run)" \
     "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(grep -c 'is not from E17B_MOCA_PIN' "$T/e17b/lat-pycache-sbx-n1.log")/$(grep -c . "$CLOG")" "1/1/0"
   reset
-  check "blocked: the ownership-walk and 256 MiB stages fail naming what is missing" \
-    "$(chain -- --from ownwalk --to ownwalk)/$(grep -c 'not wired: the ownership-walk runner' "$T/e17b/ownwalk.log")/$(chain -- --from ram256-squeeze)/$(grep -c 'not wired: a 256 MiB guest-RAM' "$T/e17b/ram256-squeeze.log")" "1/1/1/1"
+  mkdir -p "$T/runs/pycache/sbx/N1-list"
+  echo '[1, 2]' >"$T/runs/pycache/sbx/N1-list/params.json"
+  check "preflight: a check that fails (a params.json that is not an object) refuses the stage, not passes it" \
+    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(grep -c 'preflight check failed' "$T/e17b/lat-pycache-sbx-n1.log")/$(grep -c . "$CLOG")" "1/1/0"
+  reset
+  check "ram256: the pycache N=1 stages run at pycache-d64 (D scaled 256 -> 64 with the RAM) with E17B_GUEST_RAM_MB=256, tag ram256" \
+    "$(chain -- --from ram256-pycache-sbx-n1 --to ram256-pycache-ship-300-n1)/$(tr '\n' ';' <"$CLOG")" \
+    "0/rung sbx 1 pycache-d64 tag=ram256 memmax=unset e17b=1 ram=256;rung ship-300 1 pycache-d64 tag=ram256 memmax=unset e17b=1 ram=256;"
+  check "blocked: the ownership-walk stage and the 256 MiB squeeze (no D=192 template) fail naming what is missing" \
+    "$(chain -- --from ownwalk --to ownwalk)/$(grep -c 'not wired: the ownership-walk runner' "$T/e17b/ownwalk.log")/$(chain -- --from ram256-squeeze)/$(grep -c 'not wired: .*D=192' "$T/e17b/ram256-squeeze.log")" "1/1/1/1"
   check "probe-overhead: fails while Task 11's probe-overhead.sh is missing" \
     "$(chain -- --from probe-overhead --to probe-overhead)/$(grep -c 'probe-overhead.sh (Task 11 provides it)' "$T/e17b/probe-overhead.log")" "1/1"
   check "optional: the ship-30/ship-120 ladder stages SKIP without E17B_OPTIONAL=1, run with it" \

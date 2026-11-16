@@ -48,9 +48,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # repo has it at $HERE/../../../experiments/e15-session-density/rig. Use whichever exists.
 E15_RIG=$HERE/../../e15/rig
 [ -f "$E15_RIG/lib.sh" ] || E15_RIG=$HERE/../../../experiments/e15-session-density/rig
-# shellcheck source=SCRIPTDIR/../../experiments/e15-session-density/rig/lib.sh
+# shellcheck source=SCRIPTDIR/../../e15-session-density/rig/lib.sh
 . "$E15_RIG/lib.sh"
-# shellcheck source=SCRIPTDIR/../../experiments/e15-session-density/rig/points.sh
+# shellcheck source=SCRIPTDIR/../../e15-session-density/rig/points.sh
 . "$E15_RIG/points.sh"
 
 POINT=pycache

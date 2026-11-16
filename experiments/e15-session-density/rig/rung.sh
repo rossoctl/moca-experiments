@@ -88,8 +88,8 @@ if [ -n "$SQUEEZE_MB" ]; then
     echo "rung.sh: E15_SQUEEZE_MEMMAX_MB is for POINT squeeze only (got POINT $POINT)" >&2
     exit 2
   }
-  [[ "$SQUEEZE_MB" =~ ^[1-9][0-9]*$ ]] && [ "$SQUEEZE_MB" -gt 1024 ] || {
-    echo "rung.sh: E15_SQUEEZE_MEMMAX_MB must be an integer above 1024 (MemoryHigh is 1 GiB below it), got '$SQUEEZE_MB'" >&2
+  [[ "$SQUEEZE_MB" =~ ^[1-9][0-9]*$ ]] && [ "$SQUEEZE_MB" -gt 8192 ] || {
+    echo "rung.sh: E15_SQUEEZE_MEMMAX_MB must be an integer above 8192 (the committed budget is MemoryMax - 8192 MiB, E17B-R20), got '$SQUEEZE_MB'" >&2
     exit 2
   }
 fi
@@ -195,6 +195,8 @@ fi
 # end baseline resolution
 [ -f "$TEMPLATE" ] || die "no workspace template $TEMPLATE for point $POINT (run setup.sh)"
 if [ "$ARM" != control ]; then
+  # E17b (E17B-R17): the arm's snapshot leaf must exist before anything is stopped, wiped or restarted.
+  e17b_require_snapshot
   unit_active "$E15_UNIT_RELAY" || die "$E15_UNIT_RELAY is not running (run setup.sh)"
 fi
 
@@ -222,6 +224,10 @@ log "rung $ARM N=$N point=$POINT warmup=${WARMUP}s window=${WINDOW}s -> $DIR"
 # which rung.sh also creates and wipes without one. A rung killed with SIGKILL leaves it under $E15_SECRETS, which
 # teardown.sh --purge removes with $E15_ROOT. relay-lease.env (the public keyset only) stays for the relay.
 TOKEN_DIR=""
+# Never from the caller's environment: only e15_slice_squeeze in this rung marks the slice squeezed.
+E15_SQUEEZE_ACTIVE=0
+E15_SQUEEZE_RESTORED=0
+unset E15_SQUEEZE_ORIG_MAX E15_SQUEEZE_ORIG_HIGH E15_SQUEEZE_MAX E15_SQUEEZE_HIGH
 rung_host_restore() {
   local rc=0
   e15_slice_unsqueeze || rc=1
@@ -369,7 +375,7 @@ else
     [ -n "$banner" ] || die "no startup banner ('microvm-worker: relay=...') in $DIR/worker.log: lease=on cannot be confirmed (E17B=1); the driver was not started"
     case " $banner " in
     *" lease=on "*) log "worker banner: lease=on (${banner#*lease=on})" ;;
-    *" lease=off "*) die "the worker's banner says lease=off: the snapshot $E15_SNAPDIR/$E15_SNAPIMG does not advertise lease-v1 (or the VMM is not firecracker); E17b arms need the snapshot-e17b.sh leaf. The driver was not started. Banner: $banner" ;;
+    *" lease=off "*) die "the worker's banner says lease=off: the snapshot $E15_SNAPDIR/$(worker_snapimg) does not advertise lease-v1 (or the VMM is not firecracker); E17b arms need the snapshot-e17b.sh leaf. The driver was not started. Banner: $banner" ;;
     *) die "the worker's banner has no lease= field (a worker without lease mode?): $banner; the driver was not started" ;;
     esac
   fi
@@ -565,7 +571,7 @@ for line in (readf(os.path.join(d, "worker.env")) or "").splitlines():
 report = json.load(open("$CORPUS_DIR/corpus-report.json"))
 snap = None
 try:
-    snap = json.load(open("$E15_SNAPDIR/$E15_SNAPIMG/manifest.json"))
+    snap = json.load(open("$E15_SNAPDIR/$(worker_snapimg)/manifest.json"))
 except (OSError, ValueError):
     pass
 arm = "$ARM"
@@ -615,7 +621,8 @@ p = {
         "set_mode_failed_calls": int("$set_mode_failed"), "rung_failed": json.loads('$rung_failed'),
         "token_issuer": "$(e17b_lease_arm "$ARM" && e17b_token_iss)"}
        if arm.startswith("ship-") else {}),
-    **({"squeeze_memmax_mb": int("$SQUEEZE_MB"),
+    **({"snapshot_image": "$(worker_snapimg)", "guest_ram_mb": int("$(worker_guest_ram_mb)")} if "${E17B:-}" == "1" else {}),
+    **({"squeeze_memmax_mb": int("$SQUEEZE_MB"), "committed_mb": int(env.get("SH_MAX_COMMITTED_MB", "0")),
         "squeeze_slice": {"MemoryMax": int("${E15_SQUEEZE_MAX:-0}"), "MemoryHigh": int("${E15_SQUEEZE_HIGH:-0}"),
                           "original_MemoryMax": "${E15_SQUEEZE_ORIG_MAX:-}", "original_MemoryHigh": "${E15_SQUEEZE_ORIG_HIGH:-}",
                           "restored": "${E15_SQUEEZE_RESTORED:-0}" == "1"}}

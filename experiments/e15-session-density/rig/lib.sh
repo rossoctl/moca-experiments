@@ -778,23 +778,43 @@ e15_slice_squeeze() {
   E15_SQUEEZE_HIGH=$high
   m_init
   m_change "$E15_SLICE MemoryMax=$max MemoryHigh=$high (runtime, $why; was MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH)" \
-    "sudo -n systemctl set-property --runtime $E15_SLICE MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH"
+    "sudo -n systemctl set-property --runtime $E15_SLICE MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH; sudo -n rm -f -- $(e15_slice_dropins | paste -sd' ' -); sudo -n systemctl daemon-reload"
   E15_SQUEEZE_ACTIVE=1
   sctl set-property --runtime "$E15_SLICE" "MemoryMax=$max" "MemoryHigh=$high" ||
     die "systemctl set-property --runtime $E15_SLICE MemoryMax=$max MemoryHigh=$high failed"
   log "$E15_SLICE squeezed: MemoryMax=$max MemoryHigh=$high (was $E15_SQUEEZE_ORIG_MAX / $E15_SQUEEZE_ORIG_HIGH)"
 }
 
-# e15_slice_unsqueeze: restore what e15_slice_squeeze read (a no-op when nothing was squeezed). Never dies, so a trap
-# can call it: returns 1 when the restore failed (logged with the command; the manifest's UNDO line has it too).
+# e15_slice_dropins: the two runtime drop-ins `set-property --runtime` writes for e15.slice (systemd's system.control
+# directory). The restore removes exactly these two files; nothing else under /run is ever deleted. (A function, not a
+# variable: lib.sh defines no new E15_* variable for the sealed procedures.)
+e15_slice_dropins() { printf '%s\n' /run/systemd/system.control/e15.slice.d/50-MemoryMax.conf /run/systemd/system.control/e15.slice.d/50-MemoryHigh.conf; }
+
+# e15_slice_unsqueeze: restore what e15_slice_squeeze read (a no-op when nothing was squeezed), then remove the two
+# runtime drop-ins and daemon-reload, so the slice is back to its unit file only. Never dies, so a trap can call it:
+# returns 1 when the restore failed (logged with the command; the manifest's UNDO line has it too).
 e15_slice_unsqueeze() {
   [ "${E15_SQUEEZE_ACTIVE:-0}" = 1 ] || return 0
+  local dmax dhigh
+  { read -r dmax && read -r dhigh; } < <(e15_slice_dropins)
   if sctl set-property --runtime "$E15_SLICE" "MemoryMax=$E15_SQUEEZE_ORIG_MAX" "MemoryHigh=$E15_SQUEEZE_ORIG_HIGH"; then
     E15_SQUEEZE_ACTIVE=0
-    E15_SQUEEZE_RESTORED=1
     m_note "$E15_SLICE restored: MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH"
     log "$E15_SLICE restored: MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH"
-    return 0
+    case "$dmax $dhigh" in
+    "/run/systemd/system.control/e15.slice.d/50-MemoryMax.conf /run/systemd/system.control/e15.slice.d/50-MemoryHigh.conf") ;;
+    *)
+      log "WARNING: refusing to remove drop-ins other than e15.slice's 50-MemoryMax.conf/50-MemoryHigh.conf"
+      return 1
+      ;;
+    esac
+    if sudo -n rm -f -- "$dmax" "$dhigh" && sctl daemon-reload; then
+      E15_SQUEEZE_RESTORED=1
+      m_note "$E15_SLICE runtime drop-ins removed ($dmax, $dhigh), daemon-reload"
+      return 0
+    fi
+    log "WARNING: $E15_SLICE values restored, but removing its runtime drop-ins or daemon-reload failed; run: sudo -n rm -f -- $dmax $dhigh; sudo -n systemctl daemon-reload"
+    return 1
   fi
   log "WARNING: could not restore $E15_SLICE; run: sudo -n systemctl set-property --runtime $E15_SLICE MemoryMax=$E15_SQUEEZE_ORIG_MAX MemoryHigh=$E15_SQUEEZE_ORIG_HIGH (the manifest's UNDO line)"
   return 1
@@ -866,7 +886,9 @@ stop_rung_units() {
 # worker_env ARM OUT [IMAGE_MB]: write the worker's non-secret environment for ARM (SPEC §7.1-§7.2).
 # IMAGE_MB is the point's workspace image size (points.sh E15_P_IMAGE_MB; default 256).
 worker_env() {
-  local arm=$1 out=$2 image_mb=${3:-256} depth committed=$E15_MAX_COMMITTED_MB slots=256
+  local arm=$1 out=$2 image_mb=${3:-256} depth committed=$E15_MAX_COMMITTED_MB slots=256 snap ram
+  snap=$(worker_snapimg) || exit 1
+  ram=$(worker_guest_ram_mb) || exit 1
   case "$arm" in
   sbx) depth=2 ;;
   resident-inf | resident-300) depth=0 ;;
@@ -886,6 +908,15 @@ worker_env() {
     ;;
   *) die "worker_env: no worker for arm $arm" ;;
   esac
+  # E17b squeeze (E17B-R20; rung.sh allows E15_SQUEEZE_MEMMAX_MB at POINT squeeze only): the worker never reads
+  # e15.slice's MemoryMax. Its memory_reclaim fires on the committed budget (admission) or on host MemAvailable below
+  # its reclaim floor, so the no-overcommit rule is applied to the squeezed host: every arm at the point (ship-300 and
+  # sbx alike) gets SH_MAX_COMMITTED_MB = MemoryMax - 8192. The host-MemAvailable reclaim trigger is not exercised by
+  # the squeeze (the host itself stays large).
+  if [ "${E17B:-}" = 1 ] && [ -n "${E15_SQUEEZE_MEMMAX_MB:-}" ]; then
+    committed=$((E15_SQUEEZE_MEMMAX_MB - 8192))
+    [ "$committed" -gt 0 ] || die "worker_env: E15_SQUEEZE_MEMMAX_MB=$E15_SQUEEZE_MEMMAX_MB leaves no committed budget (MemoryMax - 8192 MiB)"
+  fi
   {
     echo "RELAY_ADDR=127.0.0.1:$E15_PORT_ATTACH"
     echo "RELAY_TLS=false"
@@ -894,11 +925,11 @@ worker_env() {
     echo "SH_JAILER_BIN=$E15_JAILER"
     echo "SH_FIRECRACKER_BIN=$E15_FIRECRACKER"
     echo "SH_SNAPSHOT_DIR=$E15_SNAPDIR"
-    echo "SH_SNAPSHOT_IMAGE=$E15_SNAPIMG"
+    echo "SH_SNAPSHOT_IMAGE=$snap"
     echo "SH_WORKSPACE_ROOT=$E15_WORKSPACES"
     echo "SH_CHROOT_BASE=$E15_JAIL"
     echo "SH_PARENT_CGROUP=$E15_PARENT_CGROUP"
-    echo "SH_GUEST_RAM_MB=1024"
+    echo "SH_GUEST_RAM_MB=$ram"
     echo "SH_STANDBY_DEPTH=$depth"
     echo "WORKER_MAX_CONCURRENT=$slots"
     echo "SH_MAX_RUNS=$E15_MAX_RUNS"
@@ -932,6 +963,35 @@ e17b_require_build() {
 e17b_lease_arm() { [ "${E17B:-}" = 1 ] && case "$1" in ship-30 | ship-120 | ship-300) true ;; *) false ;; esac; }
 # e17b_idle_timeout_s ARM: the lease idle timeout of a ship arm (the token's idle_timeout_s claim).
 e17b_idle_timeout_s() { e17b_lease_arm "$1" || die "e17b_idle_timeout_s: $1 is not a ship arm (E17B=1)"; echo "${1#ship-}"; }
+# E17b snapshot leaf (ruling E17B-R17): under E17B=1 every arm's worker runs on snapshot-e17b.sh's leaf
+# e17b-<first 8 of E15_MOCA_PIN>-<E17B_GUEST_RAM_MB> (1024 by default; 256 for the 256 MiB stages) with that guest RAM,
+# never on the sealed e15 leaf. With E17B unset: $E15_SNAPIMG and 1024 MiB, as before.
+e17b_guest_ram_mb() {
+  case "${E17B_GUEST_RAM_MB:-1024}" in
+  1024 | 256) echo "${E17B_GUEST_RAM_MB:-1024}" ;;
+  *) die "E17B_GUEST_RAM_MB=${E17B_GUEST_RAM_MB} is not 1024 or 256 (the guest RAMs snapshot-e17b.sh builds)" ;;
+  esac
+}
+worker_snapimg() {
+  if [ "${E17B:-}" = 1 ]; then
+    local ram
+    ram=$(e17b_guest_ram_mb) || exit 1
+    echo "e17b-${E15_MOCA_PIN:0:8}-$ram"
+  else
+    echo "$E15_SNAPIMG"
+  fi
+}
+worker_guest_ram_mb() { if [ "${E17B:-}" = 1 ]; then e17b_guest_ram_mb; else echo 1024; fi; }
+# e17b_require_snapshot: under E17B=1, the selected leaf must hold a manifest.json (rung.sh before any host change,
+# start_worker before the worker starts); a no-op with E17B unset.
+e17b_require_snapshot() {
+  [ "${E17B:-}" = 1 ] || return 0
+  local leaf ram
+  leaf=$(worker_snapimg) || exit 1
+  ram=$(e17b_guest_ram_mb) || exit 1
+  [ -f "$E15_SNAPDIR/$leaf/manifest.json" ] ||
+    die "no E17b snapshot $E15_SNAPDIR/$leaf (manifest.json): build it with experiments/e17-lease/rig/snapshot-e17b.sh --ram-mb $ram --leaf $leaf"
+}
 # e17b_token_iss: the token issuer the relay's SH_SANDBOX_TOKEN_ISSUER and the driver's --token-iss share.
 e17b_token_iss() { echo e17b-driver; }
 # e17b_token_dir_ok DIR: DIR is one token-<run> leaf directly under $E15_SECRETS ([A-Za-z0-9._-], no ..), lexically.
@@ -988,6 +1048,7 @@ start_worker() {
   local arm=$1 dir=$2 image_mb=${3:-256} bin
   bin=$(worker_bin "$arm")
   [ -x "$bin" ] || die "no worker binary $bin (run setup.sh)"
+  e17b_require_snapshot
   unit_active "$E15_UNIT_WORKER" && die "$E15_UNIT_WORKER is already running"
   refuse_ports "$E15_PORT_STATS"
   worker_env "$arm" "$dir/worker.env" "$image_mb"
