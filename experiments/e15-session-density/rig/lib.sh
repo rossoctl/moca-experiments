@@ -923,7 +923,10 @@ worker_env() {
     # E17b (E17B=1): the shipped lease. Admission is bounded by host RAM less 8 GiB (spec §6) and the slots sit above the
     # ladder's top N; the lease knobs (SH_LEASE_*) are left unset, so the worker's defaults stand and its banner prints them.
     [ "${E17B:-}" = 1 ] || die "worker_env: arm $arm exists only under E17B=1"
-    depth=0
+    # Standby depth 2, the worker's default (ruling E17B-R44): the stock microvm-worker refuses SH_STANDBY_DEPTH=0
+    # ("must be a positive integer"; vmpool treats <= 0 as the default) and a shipped lease is promoted from a standby,
+    # so depth 0 (the E15 resident patch's setting, E17a) is not a configuration the shipped worker has.
+    depth=2
     local mem_kb top=0 n
     mem_kb=$(awk '/^MemTotal:/{print $2}' "$E15_MEMINFO" 2>/dev/null)
     [[ "$mem_kb" =~ ^[1-9][0-9]*$ ]] || die "worker_env: no MemTotal in $E15_MEMINFO: the lease admission budget (host RAM - 8192 MiB) cannot be derived"

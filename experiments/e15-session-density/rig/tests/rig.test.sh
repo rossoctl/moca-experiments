@@ -2770,13 +2770,15 @@ test_e17b_pin_is_a_full_sha() {
   check "e17b: the pins file says the placeholder must be replaced before any rig run" "$(grep -ci 'replace.*before any rig run' "$e17b_pin_file")" "1"
   check "e17b: pins file is not sourced (and E17B_MOCA_PIN not defined) with E17B unset" "$(t17 unset 'echo "${E17B_MOCA_PIN:-none}"')" "none"
   check "e17b: a real sha is accepted by e17b_require_pin" "$(t17 1 'e17b_require_pin && echo ok' E15_TEST_PINS="$TMP/e17b-test-pins.sh")" "ok"
-  check "e17b: the placeholder sha is refused, naming the pin file" "$(t17 1 '(e17b_require_pin)' 2>&1 | grep -c 'E17B_MOCA_PIN.*placeholder')/$(t17 1 '(e17b_require_pin) >/dev/null 2>&1; echo $?')" "1/1"
+  # The placeholder is a fixture: the repo's e17b-pins.sh holds the real pin once bring-up sets it.
+  printf 'E17B_MOCA_PIN=0000000000000000000000000000000000000000\n' >"$TMP/e17b-placeholder.sh"
+  check "e17b: the placeholder sha is refused, naming the pin file" "$(t17 1 '(e17b_require_pin)' E15_TEST_PINS="$TMP/e17b-placeholder.sh" 2>&1 | grep -c 'E17B_MOCA_PIN.*placeholder')/$(t17 1 '(e17b_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17b-placeholder.sh")" "1/1"
   check "e17b: a short or non-hex pin is refused" \
     "$(printf 'E17B_MOCA_PIN=abc123\n' >"$TMP/e17b-bad1.sh"; t17 1 '(e17b_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17b-bad1.sh")/$(printf 'E17B_MOCA_PIN=ZZZ%s\n' "${E17B_FIXPIN:3}" >"$TMP/e17b-bad2.sh"; t17 1 '(e17b_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17b-bad2.sh")" "1/1"
   check "e17b: setup.sh and rung.sh call e17b_require_pin when E17B=1, before any host change" \
     "$(grep -c '^\[ "\${E17B:-}" != 1 \] || e17b_require_pin$' "$RIG/setup.sh")/$(grep -c '^\[ "\${E17B:-}" != 1 \] || { e17b_require_pin && e17b_require_build; }$' "$RIG/rung.sh")" "1/1"
   check "e17b: a rung with E17B=1 and the placeholder pin refuses to start (exit 1, names the pin)" \
-    "$(env E17B=1 E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash "$RIG/rung.sh" sbx 1 default >"$TMP/e17b-rung.out" 2>&1; echo $?)/$(grep -c 'E17B_MOCA_PIN.*placeholder' "$TMP/e17b-rung.out")" "1/1"
+    "$(env E17B=1 E15_TEST_PINS="$TMP/e17b-placeholder.sh" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash "$RIG/rung.sh" sbx 1 default >"$TMP/e17b-rung.out" 2>&1; echo $?)/$(grep -c 'E17B_MOCA_PIN.*placeholder' "$TMP/e17b-rung.out")" "1/1"
 }
 test_e17b_profile_off_is_unchanged() {
   check "e17b off: E15_MOCA_PIN is the old pin" "$(t17 unset 'echo $E15_MOCA_PIN')" "c13d55649777e69ec7649d6fa8c08f4acb1f4e2e"
@@ -2965,8 +2967,8 @@ test_ship_worker_env_has_admission() {
   check "ship worker_env: SH_MAX_COMMITTED_MB = host RAM MiB - 8192" "$(t17m fresh-metal 1 'worker_env ship-120 "'"$f"'"; grep "^SH_MAX_COMMITTED_MB=" "'"$f"'"')" "SH_MAX_COMMITTED_MB=385024"
   check "ship worker_env: WORKER_MAX_CONCURRENT is above the ladder's top N (also with E15_LADDER_EXTRA)" \
     "$(t17m fresh-metal 1 'worker_env ship-30 "'"$f"'"; top=0; for n in "${E15_LADDER[@]}"; do [ "$n" -gt "$top" ] && top=$n; done; v=$(sed -n "s/^WORKER_MAX_CONCURRENT=//p" "'"$f"'"); [ "$v" -gt "$top" ] && echo above' E15_LADDER_EXTRA="1280 1536")" "above"
-  check "ship worker_env: standby depth 0, no resident knobs, no lease knobs (the defaults stand)" \
-    "$(t17m fresh-metal 1 'worker_env ship-300 "'"$f"'"; sed -n "s/^SH_STANDBY_DEPTH=//p" "'"$f"'"; grep -cE "^(E15_RESIDENT|SH_LEASE_)" "'"$f"'"' | tr '\n' ' ')" "0 0 "
+  check "ship worker_env: standby depth 2 (the worker default, E17B-R44), no resident knobs, no lease knobs (the defaults stand)" \
+    "$(t17m fresh-metal 1 'worker_env ship-300 "'"$f"'"; sed -n "s/^SH_STANDBY_DEPTH=//p" "'"$f"'"; grep -cE "^(E15_RESIDENT|SH_LEASE_)" "'"$f"'"' | tr '\n' ' ')" "2 0 "
   check "ship worker_env: the three ship arms differ in nothing (the idle timeout is the token's)" \
     "$(t17m fresh-metal 1 'for a in ship-30 ship-120 ship-300; do worker_env $a "'"$f"'"; sha256sum <"'"$f"'"; done' | sort -u | wc -l | tr -d ' ')" "1"
   check "ship worker_env: it keeps the physical guard and the other sbx lines" \
