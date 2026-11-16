@@ -57,7 +57,7 @@ import sys
 import time
 
 EXEC_RE = re.compile(r'vmpool: exec req=(?P<req>\d+) workspace_key="(?P<key>(?:[^"\\]|\\.)*)" '
-                     r'vm=(?P<vm>\S*) cold="(?P<cold>(?:[^"\\]|\\.)*)" exit=(?P<exit>-?\d+) err=(?P<err>.*)$')
+                     r'(?:kind=\S+ )?vm=(?P<vm>\S*) cold="(?P<cold>(?:[^"\\]|\\.)*)" exit=(?P<exit>-?\d+) err=(?P<err>.*)$')
 RESIDENT_RE = re.compile(r'vmpool: e15 resident (?P<kind>idle-destroy|retire|end-session) '
                          r'workspace_key="(?P<key>(?:[^"\\]|\\.)*)" vm=(?P<vm>\S*)')
 PROBE_KEY = "_e15-attach-probe"  # experiments/e15-session-density/rig/rung.sh's relay attach check: never a session key

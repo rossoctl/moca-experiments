@@ -288,3 +288,12 @@ def test_cli_writes_warmcold_jsonl_from_gz(tmp_path):
     assert sum(x["warm"] is True for x in rows) == 107
     rep = json.loads((d / "warmcold-report.json").read_text())
     assert rep["warm"] == 107 and rep["cold"] == 5 and rep["unknown"] == 0
+
+
+def test_exec_re_tolerates_optional_kind():
+    # E17B-R10: the shipped worker's exec line has kind= before vm=; E17a's logs never do.
+    old = 'vmpool: exec req=3 workspace_key="K" vm=vm-1 cold="" exit=0 err=<nil>'
+    new = 'vmpool: exec req=3 workspace_key="K" kind=command vm=vm-1 cold="" exit=0 err=<nil>'
+    for line in (old, new):
+        m = W.EXEC_RE.search(line)
+        assert m and m.group("vm") == "vm-1" and m.group("key") == "K" and m.group("req") == "3"

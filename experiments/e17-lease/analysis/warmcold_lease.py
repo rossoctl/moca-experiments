@@ -131,7 +131,10 @@ def tag_key(calls, seq):
             rows.append(row(c, False, vm, prev_vm, "vm-changed", True))
         else:
             rows.append(row(c, True, vm, prev_vm, None, True))
-        between = (between if not vm else []) + [r for e in mine[1:] for r in e["ends"]]
+        # Ends before a call's later Execs lie before its LAST Exec, not between it and the next call;
+        # ends after the last Exec are carried by the next call's first Exec. With no vm to compare
+        # against (no-vm), the ends before it carry over.
+        between = between if not vm else []
         last_vm = next((e["vm"] for e in reversed(mine) if e["vm"]), None)
         if last_vm:
             prev_vm = last_vm

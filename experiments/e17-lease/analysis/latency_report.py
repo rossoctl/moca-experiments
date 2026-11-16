@@ -69,8 +69,12 @@ def join_rung(d, arm):
 def summarize(rows):
     # Calls tagged first_lease (the first-lease ownership walk, Review Focus 6) are reported on their
     # own and kept out of the counts and the warm/cold classes. Rows of other arms never carry the tag.
-    firsts = [r for r in rows if r.get("first_lease") and r["warm"] != "set_mode_failed"]
-    rows = [r for r in rows if r not in firsts]
+    firsts, rest = [], []
+    for r in rows:
+        if r["warm"] == "set_mode_failed":
+            continue  # never sent: reported by the join's set_mode_failed count, in no class
+        (firsts if r.get("first_lease") else rest).append(r)
+    rows = rest
     counts = {"calls": len(rows), "used": 0, "unknown": 0, "not_in_window": 0, "not_ok": 0}
     by_class, after = {}, []
     for r in rows:
@@ -101,15 +105,17 @@ def summarize(rows):
     for r in firsts:
         if r["in_window"] and r["status"] == "ok":
             fl_by.setdefault(r["class"], []).append(r["observed_ms"])
-    return {
-        "first_lease": {"calls": len(firsts), "all": stats(fl),
-                        "by_class": {k: stats(v) for k, v in sorted(fl_by.items())}},
+    out = {
         "counts": counts,
         "classes": classes,
         "warm_share": (n_warm / float(counts["used"])) if counts["used"] else None,
         "first_after_idle": {"all": stats([r["observed_ms"] for r in after]),
                              "by_class": {k: stats(v) for k, v in sorted(after_by.items())}},
     }
+    if firsts:  # only ship arms: an E17a group keeps its exact shape
+        out["first_lease"] = {"calls": len(firsts), "all": stats(fl),
+                              "by_class": {k: stats(v) for k, v in sorted(fl_by.items())}}
+    return out
 
 
 def build(rung_dirs, baseline_arm="sbx", arms=None):
@@ -125,15 +131,25 @@ def build(rung_dirs, baseline_arm="sbx", arms=None):
                 raise SystemExit("latency_report.py: will not pool point %s N %s arm %s: %s %r in %s, %r in %s"
                                  % (gk + (f, g["params"].get(f), g["dir"], p.get(f), d)))
         rows, summary = join_rung(d, p.get("arm"))
+        keys = ("warm", "cold", "unknown", "unknown_keys", "dropped_end_session_execs")
+        if str(p.get("arm")).startswith("ship-"):
+            # A ship rung the join cannot vouch for is listed, never pooled (E17B-R9).
+            why = [k + "=%s" % summary[k] for k in ("disagreements", "set_mode_failed") if summary[k]]
+            if why or not summary["valid"] or not summary["countable"]:
+                g.setdefault("excluded", []).append({"dir": d, "reason": ", ".join(why) or "not valid"})
+                continue
+            keys += ("valid", "countable", "disagreements", "set_mode_failed")
         g["rows"].extend(rows)
-        g["rungs"].append({"dir": d, "warmcold": {k: summary[k] for k in (
-            "warm", "cold", "unknown", "unknown_keys", "dropped_end_session_execs")}})
+        g["rungs"].append({"dir": d, "warmcold": {k: summary[k] for k in keys}})
     groups, first_dir = [], {}
     for (point, n, arm), g in pooled.items():
         first_dir[(point, n, arm)] = g["dir"]
         s = summarize(g["rows"])
+        extra = {}
+        if str(arm).startswith("ship-"):
+            extra = {"excluded_rungs": g.get("excluded", []), "countable": not g.get("excluded")}
         groups.append(dict(point=point, n=n, arm=arm, rungs=g["rungs"],
-                           **{f: g["params"].get(f) for f in MUST_MATCH}, **s))
+                           **{f: g["params"].get(f) for f in MUST_MATCH}, **extra, **s))
     base = {(g["point"], g["n"]): g for g in groups if g["arm"] == baseline_arm}
     for g in groups:
         if g["arm"] == baseline_arm:

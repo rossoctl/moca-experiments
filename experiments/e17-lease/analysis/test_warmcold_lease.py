@@ -188,3 +188,119 @@ def test_latency_report_arms_filter(tmp_path):
             "--out", str(out)])
     rep = json.load(open(out / "latency.json"))
     assert sorted(g["arm"] for g in rep["groups"]) == ["sbx", "ship-30"]
+
+
+# ---- fix round 1 ----
+
+def test_multi_exec_call_end_between_its_execs_does_not_make_next_call_cold(tmp_path):
+    # Call 2 is a retry: two Execs with a lease end between them (the second on the replacement vm).
+    # The next call runs warm on that replacement vm: the end lies before call 2's last Exec.
+    log = first() + [exec_line("A", "vm-1", req=2), end_line("A", "vm-1"), start_line("A", "vm-2"),
+                     exec_line("A", "vm-2", req=3), exec_line("A", "vm-2", req=4)]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]),
+             call("A", 2, execs=2, lease_events=[ev("end", "idle")]), call("A", 3)]
+    rows, _ = WL.join(rung(tmp_path, calls, log))
+    assert tags(rows)[("A", 3)] == (True, None)
+
+
+def test_end_after_last_exec_makes_next_call_cold_with_its_reason(tmp_path):
+    log = first() + [exec_line("A", "vm-1", req=2), end_line("A", "vm-1", "memory_reclaim"),
+                     start_line("A", "vm-2"), exec_line("A", "vm-2", req=3)]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]), call("A", 2),
+             call("A", 3, lease_events=[ev("end", "memory_reclaim")])]
+    rows, _ = WL.join(rung(tmp_path, calls, log))
+    assert tags(rows)[("A", 3)] == (False, "memory_reclaim")
+
+
+def test_two_keys_interleaved_and_ending_in_the_same_second(tmp_path):
+    log = [start_line("A", "vm-1"), start_line("B", "vm-2"), exec_line("A", "vm-1", req=1),
+           exec_line("B", "vm-2", req=2),
+           end_line("B", "vm-2", "idle"), end_line("A", "vm-1", "memory_reclaim"),
+           start_line("A", "vm-3"), exec_line("A", "vm-3", req=3),
+           exec_line("B", "vm-2", req=4)]  # B has no live lease again: no start after its end
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]),
+             call("B", 1, first_lease=True, lease_events=[ev("start")]),
+             call("A", 2, lease_events=[ev("end", "memory_reclaim")]),
+             call("B", 2, lease_events=[ev("end", "idle")])]
+    rows, _ = WL.join(rung(tmp_path, calls, log))
+    t = tags(rows)
+    assert t[("A", 2)] == (False, "memory_reclaim")
+    assert t[("B", 2)] == ("unknown", "no-live-lease")
+
+
+def test_worker_restart_end_makes_next_call_cold(tmp_path):
+    log = first() + [end_line("A", "vm-1", "worker_restart", age="2m0s"), start_line("A", "vm-9"),
+                     exec_line("A", "vm-9", req=2)]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]),
+             call("A", 2, lease_events=[ev("end", "worker_restart")])]
+    rows, s = WL.join(rung(tmp_path, calls, log))
+    assert tags(rows)[("A", 2)] == (False, "worker_restart") and s["disagreements"] == 0
+
+
+def test_driver_field_names_match_the_task3_driver():
+    # record.go json tags and lease.go leaseEvent / causeSetMode, as the Task 3 driver writes them.
+    drv = os.path.join(HERE, "..", "..", "e15-session-density", "driver")
+    rec = open(os.path.join(drv, "record.go")).read()
+    lease = open(os.path.join(drv, "lease.go")).read()
+    assert 'json:"lease_events,omitempty"' in rec and 'json:"first_lease,omitempty"' in rec
+    assert 'causeSetMode      = "%s"' % WL.SET_MODE_FAILED in lease
+    assert 'State == "start"' in lease
+
+
+def lease_ship_dirs(tmp_path, bad=None):
+    """Two clean ship-120 rungs and, optionally, a third one with a defect."""
+    out = []
+    for i in range(2):
+        log = [start_line("A", "vm-1"), exec_line("A", "vm-1"), exec_line("A", "vm-1", req=2)]
+        calls = [call("A", 1, ms=30000, first_lease=True, lease_events=[ev("start")]), call("A", 2, ms=5000 + i * 2000)]
+        out.append(params(rung(tmp_path, calls, log, name="ok%d" % i), "ship-120"))
+    if bad == "disagree":
+        log = first() + [exec_line("A", "vm-1", req=2)]
+        calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]),
+                 call("A", 2, ms=99000, lease_events=[ev("end", "idle")])]
+        out.append(params(rung(tmp_path, calls, log, name="bad"), "ship-120"))
+    if bad == "set_mode":
+        log = first() + [exec_line("A", "vm-1", req=2)]
+        calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]), call("A", 2, ms=99000),
+                 call("B", 1, execs=0, status="err", cause="set_mode_failed", first_lease=True)]
+        out.append(params(rung(tmp_path, calls, log, name="bad"), "ship-120"))
+    sbx = params(rung(tmp_path, [call("S", 1, ms=10000)], [exec_line("S", "vm-1")], name="sbx"), "sbx")
+    return out, sbx
+
+
+@pytest.mark.parametrize("bad,reason", [("disagree", "disagreements"), ("set_mode", "set_mode_failed")])
+def test_uncountable_ship_rung_excluded_from_pool(tmp_path, bad, reason):
+    ships, sbx = lease_ship_dirs(tmp_path, bad)
+    rep = L.build(ships + [sbx], baseline_arm="sbx")
+    g = next(x for x in rep["groups"] if x["arm"] == "ship-120")
+    assert g["countable"] is False
+    assert [e["dir"] for e in g["excluded_rungs"]] == [ships[2]]
+    assert reason in g["excluded_rungs"][0]["reason"]
+    pa = g["classes"]["py_analyze"]
+    assert pa["warm"]["n"] == 2 and pa["warm"]["median_ms"] == 6000  # the bad rung's 99 s is not pooled
+    assert pa["gain"] == pytest.approx(0.4)
+    assert len(g["rungs"]) == 2
+
+
+def test_clean_ship_group_is_countable_and_has_no_excluded_rungs(tmp_path):
+    ships, sbx = lease_ship_dirs(tmp_path)
+    g = next(x for x in L.build(ships + [sbx])["groups"] if x["arm"] == "ship-120")
+    assert g["countable"] is True and g["excluded_rungs"] == []
+    r = g["rungs"][0]["warmcold"]
+    assert r["valid"] is True and r["countable"] is True and r["disagreements"] == 0 and r["set_mode_failed"] == 0
+
+
+def test_non_lease_arm_summary_has_no_first_lease_key_and_old_group_shape(tmp_path):
+    # Keeps a regenerated E17a latency.json byte-identical: no new keys for non-ship arms.
+    d = params(rung(tmp_path, [call("S", 1)], [exec_line("S", "vm-1")], name="old"), "lease-120")
+    g = L.build([d])["groups"][0]
+    assert "first_lease" not in g and "countable" not in g and "excluded_rungs" not in g
+    assert sorted(g["rungs"][0]["warmcold"]) == ["cold", "dropped_end_session_execs", "unknown",
+                                                 "unknown_keys", "warm"]
+
+
+def test_set_mode_failed_rows_not_in_counts(tmp_path):
+    rows = [{"session": "B", "call": 1, "class": "x", "observed_ms": 1, "status": "ok", "in_window": True,
+             "warm": "set_mode_failed", "cold_reason": "set_mode_failed", "first_lease": False}]
+    s = L.summarize(rows)
+    assert s["counts"]["calls"] == 0 and s["counts"]["used"] == 0 and s["classes"] == {}
