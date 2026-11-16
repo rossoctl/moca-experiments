@@ -1,0 +1,3 @@
+{"key":"s1","state":"none","pending":{"state":"end","reason":"memory_reclaim","at_unix_ms":1789466500000,"mode":"lease"}}
+{"key":"s2","state":"none","pending":{"state":"end","reason":"idle","at_unix_ms":1789466705000,"mode":"lease"}}
+{"key":"s3","state":"active"}

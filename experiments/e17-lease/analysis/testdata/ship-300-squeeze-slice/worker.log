@@ -1,0 +1,5 @@
+2026-11-15T10:00:00Z vmpool: lease start workspace_key="s1" vm=vm-1 mode=lease
+2026-11-15T10:00:01Z vmpool: lease start workspace_key="s2" vm=vm-2 mode=lease
+2026-11-15T10:00:02Z vmpool: lease start workspace_key="s3" vm=vm-3 mode=lease
+2026-11-15T10:01:40Z vmpool: lease end workspace_key="s1" vm=vm-1 mode=lease reason=memory_reclaim age=1m40s
+2026-11-15T10:05:05Z vmpool: lease end workspace_key="s2" vm=vm-2 mode=lease reason=idle age=5m4s

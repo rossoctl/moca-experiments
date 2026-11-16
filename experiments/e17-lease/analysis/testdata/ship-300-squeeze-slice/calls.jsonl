@@ -1,0 +1,4 @@
+{"session":"s1","call":1,"ts":"2026-11-15T10:00:00.500000Z","observed_ms":2000,"status":"ok","cause":"","execs":1,"first_lease":true,"lease_events":[{"state":"start","at_unix_ms":1,"mode":"lease"}]}
+{"session":"s2","call":1,"ts":"2026-11-15T10:00:01.500000Z","observed_ms":2000,"status":"ok","cause":"","execs":1,"first_lease":true}
+{"session":"s3","call":1,"ts":"2026-11-15T10:00:02.500000Z","observed_ms":2000,"status":"ok","cause":"","execs":1,"first_lease":true}
+{"session":"s3","call":2,"ts":"2026-11-15T10:01:30.000000Z","observed_ms":3000,"status":"ok","cause":"","execs":1}
