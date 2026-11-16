@@ -59,6 +59,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
 # shellcheck source=points.sh
 . "$HERE/points.sh"
+# E17b profile: refuse the placeholder or a malformed E17B_MOCA_PIN before any host change.
+[ "${E17B:-}" != 1 ] || e17b_require_pin
 
 [ "$(id -u)" != 0 ] || die "run as the login user, not root (sudo -n is used per step)"
 sudo -n true 2>/dev/null || die "needs passwordless sudo"
@@ -253,6 +255,9 @@ elif ! stamp_ok go-driver "$k"; then
   stamp_set go-driver "$k"
   m_note "built $E15_BIN/e15-driver (src $k)"
 fi
+# E17b (E17B=1): the shipped worker runs from its own pin; the resident patch does not apply to it and is not built.
+# (The guarded block is deliberately not re-indented: rig.test.sh greps it by its original text.)
+if [ "${E17B:-}" != 1 ]; then
 k=$(src_key resident)
 if ! stamp_ok go-resident "$k"; then
   log "resident build: resident/apply.sh (patch tests run here; log $E15_LOGS/apply.log)"
@@ -267,6 +272,7 @@ if ! stamp_ok go-resident "$k"; then
     >"$E15_LOGS/apply.log" 2>&1 || die "resident/apply.sh failed; see $E15_LOGS/apply.log"
   stamp_set go-resident "$k"
   m_note "built $E15_BIN/microvm-worker-resident (patch sha256 $(sha256_of "$E15_SRC/resident/resident.patch"))"
+fi
 fi
 
 # --- 7. rootfs + snapshot --------------------------------------------------------------------

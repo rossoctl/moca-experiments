@@ -46,6 +46,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
 # shellcheck source=points.sh
 . "$HERE/points.sh"
+# E17b profile: refuse the placeholder or a malformed E17B_MOCA_PIN before any host change.
+[ "${E17B:-}" != 1 ] || e17b_require_pin
 
 usage() {
   echo "usage: rung.sh ARM N POINT   (ARM: ${E15_ARMS[*]})" >&2

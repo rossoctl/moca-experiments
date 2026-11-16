@@ -77,6 +77,40 @@ E15_SHARED=/opt/serverless-harness
 E15_MOCA_PIN=c13d55649777e69ec7649d6fa8c08f4acb1f4e2e
 E15_MOCA_URL=${E15_MOCA_URL:-https://github.com/rossoctl/moca.git}
 
+# E17b profile (experiments/e17-lease/PLAN-E17B.md): with E17B=1 every arm runs from E17B_MOCA_PIN
+# (experiments/e17-lease/rig/e17b-pins.sh) in its own checkout, $E15_ROOT/moca-e17b (set below), so
+# setup.sh's clone, build stamps, snapshot key, relay, microvm-worker and guest agent all follow it.
+# With E17B unset (or anything but 1) nothing here runs and the sealed E15/E16/E17a procedures resolve
+# as before. rig.test.sh only: a fixture pin file (E15_TEST_PINS) is applied last, as for pins.sh.
+if [ "${E17B:-}" = 1 ]; then
+  _e17b_here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  # The repo layout (experiments/e17-lease) and the rig's staged one (/srv/e15/src/e17, sync.sh).
+  for _e17b_f in "$_e17b_here/../../e17-lease/rig/e17b-pins.sh" "$_e17b_here/../../e17/rig/e17b-pins.sh"; do
+    [ -f "$_e17b_f" ] && break
+  done
+  [ -f "$_e17b_f" ] || {
+    printf 'lib.sh: E17B=1 but no e17b-pins.sh (experiments/e17-lease/rig/e17b-pins.sh)\n' >&2
+    exit 3
+  }
+  # shellcheck disable=SC1090
+  . "$_e17b_f"
+  case "$E15_ROOT" in
+  */e15-rig-test.*) [ -n "${E15_TEST_PINS:-}" ] && [ "${E15_TEST_ROOT:-}" = "$E15_ROOT" ] && . "$E15_TEST_PINS" ;;
+  esac
+  E15_MOCA_PIN=$E17B_MOCA_PIN
+fi
+# e17b_require_pin: refuse an E17B_MOCA_PIN that is not a full 40-hex sha or is the all-zero placeholder.
+# setup.sh and rung.sh call it when E17B=1; teardown.sh does not (it must always be able to undo).
+e17b_require_pin() {
+  case "${E17B_MOCA_PIN:-}" in
+  0000000000000000000000000000000000000000)
+    die "E17B_MOCA_PIN is still the placeholder (all zeros) in e17b-pins.sh; replace it with the upstream/main sha before any rig run"
+    ;;
+  esac
+  printf '%s' "${E17B_MOCA_PIN:-}" | grep -qE '^[0-9a-f]{40}$' ||
+    die "E17B_MOCA_PIN '${E17B_MOCA_PIN:-}' is not a full 40-hex sha (e17b-pins.sh)"
+}
+
 # Ports (SPEC §4): relay attach, relay exec, null-responder (control arm), worker /stats, Redis.
 E15_PORT_ATTACH=9643
 E15_PORT_EXEC=9644
@@ -652,6 +686,7 @@ E15_SECRETS=$E15_ROOT/secrets
 E15_STATE=$E15_ROOT/state
 E15_LOGS=$E15_ROOT/logs
 E15_MOCA=$E15_ROOT/moca
+[ "${E17B:-}" != 1 ] || E15_MOCA=$E15_ROOT/moca-e17b # E17b profile (above): its own checkout
 E15_SNAPDIR=$E15_ROOT/snapshots
 E15_SNAPIMG=e15
 E15_TEMPLATE=$E15_ROOT/template/workspace.img
