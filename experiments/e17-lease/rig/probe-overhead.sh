@@ -21,7 +21,8 @@
 # copied N1/baseline.probe-overhead.json.
 #
 # Exit 0 when the probe's baseline.json was written (the comparison, when run, too); 1 on a rig error; 2 on bad usage.
-# Test hook: E17B_BASELINE replaces baseline.sh (as in chain-e17b.sh).
+# Test hook: E17B_BASELINE replaces baseline.sh (as in chain-e17b.sh), honoured only with E17B_TEST_HARNESS=1 (set by
+# tests/probes.test.sh); set without it, the probe refuses to start (PR #34 fix round 2, as chain-e17b.sh's R36).
 set -euo pipefail
 E15_PROG=probe-overhead.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,6 +44,9 @@ E15_RIG=$HERE/../../e15/rig
 . "$E15_RIG/lib.sh"
 E17_SRC=$E15_ROOT/src/e17
 case "$HERE" in "$E17_SRC"/rig) ;; *) die "run the staged copy: $E17_SRC/rig/probe-overhead.sh (not $HERE)" ;; esac
+if [ -n "${E17B_BASELINE+x}" ] && [ "${E17B_TEST_HARNESS:-}" != 1 ]; then
+  die "REFUSED: E17B_BASELINE is set in the environment: a test hook (tests/probes.test.sh only) that replaces baseline.sh; unset it"
+fi
 [ "$E15_HOST_PROFILE" = fresh-metal ] || die "the E17b probes run on fresh-metal only (this host: $E15_HOST_PROFILE)"
 e17b_require_pin
 e17b_require_build

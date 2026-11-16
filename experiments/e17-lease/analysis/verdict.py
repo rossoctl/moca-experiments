@@ -19,8 +19,9 @@ and nothing already fails. Criterion 5 keeps `pass` null until its thresholds ar
   3  At each squeeze point whose climb ran (squeeze is required; squeeze-256 is judged when it ran), over the
      climb's rungs: zero guard events (each rung's criterion3_guards_pass true), zero refusals while an idle lease
      existed (memory-budget and host-memory, none unclassified), no wrong / unknown / victim_executing reclaim, and
-     at least one reclaim at the point (E17B-R39: else false, "no reclaim happened"). A rung without lease_ends.json,
-     invalid, or with its guard or refusal reading unavailable leaves it null.
+     at least one reclaim at the point (E17B-R39: else false, "no reclaim happened", when every rung of the climb
+     was read and valid). A rung without lease_ends.json, invalid, or with its guard or refusal reading unavailable
+     leaves it null, as does a climb with no rungs.
   4  R16 (r16_met).
 
   1 capacity   RUNS/default/{ship-300,sbx}/ladder.json n_max (n_max_abs reported): ship_300_n_max, sbx_n_max and
@@ -171,7 +172,7 @@ def reclaim(root, rungs):
                 unknown.append("no squeeze climb")
             continue
         inputs.append(lp)
-        rows = []
+        rows, unread = [], 0
         tot = {"guards": 0, "refusals_with_idle_lease": 0, "host_memory_with_idle_lease": 0, "reclaims": 0,
                "wrong": 0, "unknown": 0, "victim_executing": 0}
         for sr in sq.get("rungs") or []:
@@ -182,6 +183,7 @@ def reclaim(root, rungs):
             if e is None:
                 missing.append(ep)
                 unknown.append("%s: no lease_ends.json" % d)
+                unread += 1
                 rows.append(row)
                 continue
             inputs.append(ep)
@@ -214,9 +216,15 @@ def reclaim(root, rungs):
                     why.append("%s N=%s: %s %s reclaim(s)" % (point, row["n"], rec.get(k), k))
             if e.get("valid") is not True:
                 unknown.append("%s N=%s: lease_ends.json valid %s" % (point, row["n"], e.get("valid")))
+                unread += 1
             rows.append(row)
+        # "No reclaim happened" is known only when every rung of the climb was read and valid (fix round 2).
         if not tot["reclaims"]:
-            why.append("%s: no reclaim happened" % point)
+            if rows and not unread:
+                why.append("%s: no reclaim happened" % point)
+            else:
+                unknown.append("%s: no reclaim counted, but %s" % (
+                    point, "%d rung(s) unread or invalid" % unread if rows else "the climb lists no rungs"))
         sbx = [{"dir": r["dir"], "n": r["params"].get("n"), "memory_abort": r["params"].get("memory_abort"),
                 "oom_kills": r["params"].get("oom_kills")}
                for r in rungs if r["point"] == point and r["arm"] == "sbx" and r["name"].endswith("-sq")]

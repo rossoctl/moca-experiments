@@ -383,3 +383,7 @@ def test_default_tmpfs_share_is_e17a(tmp_path):
     e17a, _, _ = share0(tmp_path)
     assert (out / "corpus.jsonl").read_bytes() == (e17a / "corpus.jsonl").read_bytes()
     assert report["tmpfs_share"] == 0.0 and all("tmpfs" not in s for s in corpus)
+    # fix round 2, minor 3: the report records the default as 0.0, as an explicit --tmpfs-share 0 does
+    assert isinstance(report["tmpfs_share"], float)
+    assert json.loads((e17a / "corpus-report.json").read_text())["tmpfs_share"] == report["tmpfs_share"]
+    assert '"tmpfs_share": 0.0' in (out / "corpus-report.json").read_text()

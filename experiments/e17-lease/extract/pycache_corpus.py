@@ -88,7 +88,7 @@ SKELETON = {"py_analyze": "python analyze.py", "py_test": "python -m pytest -x -
             "py_grep": "grep -rc def venv"}
 TURN_HEAD = ("py_analyze", "py_test", "py_import", "py_grep")
 SHORT_SKELETONS = ("grep", "read", "edit")
-TMPFS_SHARE = 0  # E17a's: the E17b corpora are written with 0.5 by gen_corpora.sh under E17B=1 (PR #34 nit)
+TMPFS_SHARE = 0.0  # E17a's: the E17b corpora are written with 0.5 by gen_corpora.sh under E17B=1 (PR #34 nit)
 SHMEM_MS = 100          # py_shmem's planned duration: the library's nominal_ms, one invocation
 SHMEM_SKELETON = "awk Shmem /proc/meminfo"
 

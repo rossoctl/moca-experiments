@@ -305,3 +305,25 @@ def test_criterion_5_pass_stays_null(tmp_path):
     root = str(tmp_path)
     write_rung(root, "pycache", "ship-300", "N1-lat", 1, vm_age_lease_json=vml(t=3, f=0))
     assert crit(V.verdict(root), "5")["pass"] is None
+
+
+def test_criterion_3_is_null_when_no_lease_ends_was_read(tmp_path):
+    # Fix round 2, minor 2: with no lease_ends.json read (or a climb listing no rungs) "no reclaim happened" is not
+    # known: null, not a fail.
+    root = str(tmp_path / "unread")
+    d = write_rung(root, "squeeze", "ship-300", "N32", 32)  # no lease_ends.json
+    ladder(root, "squeeze", "ship-300", squeeze={"stop_n": 32, "stopped_by": "reclaim_rate", "memmax_mb": 65536,
+                                                 "rungs": [{"n": 32, "met": True, "dir": d}]})
+    c = crit(V.verdict(root), "3")
+    assert c["pass"] is None and not any("no reclaim happened" in w for w in c["why"])
+    root = str(tmp_path / "norungs")
+    os.makedirs(root)
+    ladder(root, "squeeze", "ship-300", squeeze={"stop_n": None, "stopped_by": "none", "memmax_mb": 65536, "rungs": []})
+    assert crit(V.verdict(root), "3")["pass"] is None
+    # one rung read with no reclaim, another unread: still not known
+    root = c3_root(tmp_path, "mixed", [dict(reclaims=0)])
+    d2 = write_rung(root, "squeeze", "ship-300", "N64x", 64)
+    lj = json.load(open(os.path.join(root, "squeeze", "ship-300", "ladder.json")))
+    lj["squeeze"]["rungs"].append({"n": 64, "met": True, "dir": d2})
+    json.dump(lj, open(os.path.join(root, "squeeze", "ship-300", "ladder.json"), "w"))
+    assert crit(V.verdict(root), "3")["pass"] is None

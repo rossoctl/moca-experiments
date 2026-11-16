@@ -36,8 +36,10 @@ tolerance. Disagreements and anything unmatched are LISTED, never resolved (E17B
     idle and are not candidates. POSSIBLY EXECUTING (E17B-R38): the worker skips every lease whose gate is
     held (reclaimLeasesLocked), which includes an Exec queued or sent within T's second, and the log does
     not say where in the second the reclaim fell; so a non-victim lease with a call sent in [T, T+1) is
-    possibly_executing, listed, and not a candidate. For the victim itself such a call came after the
-    reclaim (its replacement lease) and is not one of its Exec ends. The victim must have the longest idle
+    possibly_executing, listed, and not a candidate. For the victim itself, only a call in [T, T+1) that carries
+    this reclaim's end notice (a lease_events end with reason memory_reclaim) came after the reclaim (it runs in
+    the replacement lease) and is not one of its Exec ends; any other victim call there ran in the old lease and
+    counts (PR #34 fix round 2). The victim must have the longest idle
     time; a victim within 1 s of a longer-idle lease is correct and reported as a tie. No reclaim at all
     leaves criterion3_order_pass null (vacuous, as criterion 4), never a pass (E17B-R39).
     A call's end is its `ts` + `observed_ms`.
@@ -206,18 +208,19 @@ def match_notices(log, calls, tails):
 
 def idle_times(candidates, spans, t, victim=None):
     """({key: idle seconds at t, or None when it has no Exec end by then}, executing keys, possibly executing
-    keys). A non-victim key with a call sent in [t, t+1) is possibly executing (E17B-R38); the victim's calls
-    sent in [t, t+1) are its replacement lease's, not Exec ends before the reclaim."""
+    keys). spans are (start, end, carries a memory_reclaim end notice). A non-victim key with a call sent in
+    [t, t+1) is possibly executing (E17B-R38); the victim's call sent in [t, t+1) that carries the reclaim's end
+    notice is its replacement lease's, not an Exec end before the reclaim."""
     idle, executing, possibly = {}, set(), set()
     for k in candidates:
         sp = spans.get(k, [])
-        if any(s <= t and e >= t + 1 for s, e in sp):
+        if any(s <= t and e >= t + 1 for s, e, _ in sp):
             executing.add(k)
             continue
-        if k != victim and any(t <= s < t + 1 for s, e in sp):
+        if k != victim and any(t <= s < t + 1 for s, e, _ in sp):
             possibly.add(k)
             continue
-        ends = [e for s, e in sp if e <= t + 1 and (k != victim or s < t)]
+        ends = [e for s, e, notice in sp if e <= t + 1 and not (k == victim and notice and t <= s < t + 1)]
         idle[k] = t - max(ends) if ends else None
     return idle, executing, possibly
 
@@ -227,7 +230,8 @@ def reclaim_order(log, calls):
     for c in calls:
         sp = call_span(c)
         if sp and c.get("cause") != WL.SET_MODE_FAILED and int(c.get("execs") or 0) > 0:
-            spans.setdefault(c.get("session"), []).append(sp)
+            notice = any(e.get("state") == "end" and e.get("reason") == MEMORY_RECLAIM for e in c.get("lease_events") or [])
+            spans.setdefault(c.get("session"), []).append(sp + (notice,))
     alive, details = set(), []
     for ev in log:
         if ev["kind"] == "start":

@@ -535,12 +535,21 @@ def test_reclaim_call_sent_just_before_the_reclaim_second_is_not_possibly_execut
     assert d["verdict"] == "wrong" and d["longest_idle"] == "k3" and d["possibly_executing"] == []
 
 
-def test_reclaim_victim_call_sent_in_the_reclaim_second_is_its_replacement_lease():
-    # The worker reclaims idle leases only, so a call of the VICTIM sent in [T, T+1) came after the reclaim (its
-    # replacement lease): it is not the victim's last Exec end before the reclaim.
-    calls = [call("a", 1, 9), call("a", 2, 100.4, dur=0.3), call("b", 1, 49), call("c", 1, 59)]
+def test_reclaim_victim_call_carrying_this_reclaims_notice_is_its_replacement_lease():
+    # The victim's call sent in [T, T+1) that carries THIS reclaim's end notice came after the reclaim (it runs in the
+    # replacement lease): it is not the victim's last Exec end before the reclaim (fix round 2, minor 1).
+    calls = [call("a", 1, 9), call("a", 2, 100.4, dur=0.3, events=[end_ev("memory_reclaim")]), call("b", 1, 49),
+             call("c", 1, 59)]
     d = run(reclaim_calls(calls))["reclaim"]["details"][0]
     assert d["verdict"] == "correct" and d["idle_s"]["a"] == 90.0
+
+
+def test_reclaim_victim_short_call_in_the_old_lease_just_before_the_reclaim_still_counts():
+    # A victim call sent at T+0.2 that ended at T+0.5, before the reclaim at T+0.6, with no end notice ran in the
+    # reclaimed lease: the worker reclaimed a lease idle 0.1 s, a real wrong pick, and it must read wrong.
+    calls = [call("a", 1, 9), call("a", 2, 100.2, dur=0.3), call("b", 1, 49), call("c", 1, 59)]
+    d = run(reclaim_calls(calls))["reclaim"]["details"][0]
+    assert d["verdict"] == "wrong" and d["longest_idle"] == "b"
 
 
 def test_order_pass_is_null_without_a_reclaim():

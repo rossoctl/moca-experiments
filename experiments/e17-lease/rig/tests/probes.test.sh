@@ -84,7 +84,7 @@ probe() { # [VAR=val ...] -- ARGS: the staged probe-overhead.sh; rc echoed, outp
   [ "${1:-}" != -- ] || shift
   : >"$CLOG"
   env E17B=1 E15_ROOT="$T" E15_TEST_ROOT="$T" E15_TEST_PINS="$TMP/pins.sh" E15_MANIFEST="$TMP/m.md" PATH="$TMP/stub:$PATH" \
-    E17B_BASELINE="$TMP/stub-baseline.sh" ${envs[@]+"${envs[@]}"} bash "$T/src/e17/rig/probe-overhead.sh" "$@" >"$TMP/p.out" 2>&1
+    E17B_TEST_HARNESS=1 E17B_BASELINE="$TMP/stub-baseline.sh" ${envs[@]+"${envs[@]}"} bash "$T/src/e17/rig/probe-overhead.sh" "$@" >"$TMP/p.out" 2>&1
   echo $?
 }
 N1="$T/runs/default/ship-300/N1"
@@ -98,6 +98,8 @@ test_probe_overhead_uses_ship_arm() {
   check "probe-overhead: no reference staged -> no overhead.json, the log names the laptop command" \
     "$([ -e "$N1/overhead.json" ] && echo written || echo none)/$(grep -c 'overhead_compare.py <that copy>' "$TMP/p.out")" "none/1"
   check "probe-overhead: extra arguments are a usage error, nothing run" "$(probe -- default)/$(grep -c . "$CLOG")" "2/0"
+  check "probe-overhead (PR #34 fix round 2): E17B_BASELINE outside the test harness is refused, named, nothing run" \
+    "$(probe E17B_TEST_HARNESS= --)/$(grep -c 'REFUSED: .*E17B_BASELINE' "$TMP/p.out")/$(grep -c . "$CLOG")" "1/1/0"
   check "probe-overhead: refused without E17B=1, nothing run" \
     "$(env -u E17B E15_ROOT="$T" E15_TEST_ROOT="$T" E15_TEST_PINS="$TMP/pins.sh" PATH="$TMP/stub:$PATH" E17B_BASELINE="$TMP/stub-baseline.sh" \
       bash "$T/src/e17/rig/probe-overhead.sh" >"$TMP/p.out" 2>&1; echo $?)/$(grep -c 'E17B=1 is required' "$TMP/p.out")/$(grep -c . "$CLOG")" "1/1/0"
