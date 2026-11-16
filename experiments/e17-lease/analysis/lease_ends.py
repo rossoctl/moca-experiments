@@ -33,8 +33,13 @@ tolerance. Disagreements and anything unmatched are LISTED, never resolved (E17B
     whole-second timestamp. The ranking does not depend on a common reference, and measuring from the
     reclaim itself (not from the end of the run) uses only the Execs that had finished by then: a key that
     ran again after the reclaim must not look recently active at it. Leases executing across T are not
-    idle and are not candidates. The victim must have the longest idle time; a victim within 1 s of a
-    longer-idle lease is correct and reported as a tie.
+    idle and are not candidates. POSSIBLY EXECUTING (E17B-R38): the worker skips every lease whose gate is
+    held (reclaimLeasesLocked), which includes an Exec queued or sent within T's second, and the log does
+    not say where in the second the reclaim fell; so a non-victim lease with a call sent in [T, T+1) is
+    possibly_executing, listed, and not a candidate. For the victim itself such a call came after the
+    reclaim (its replacement lease) and is not one of its Exec ends. The victim must have the longest idle
+    time; a victim within 1 s of a longer-idle lease is correct and reported as a tie. No reclaim at all
+    leaves criterion3_order_pass null (vacuous, as criterion 4), never a pass (E17B-R39).
     A call's end is its `ts` + `observed_ms`.
 (c) Refusals while an idle lease existed (E17B-R15: BOTH `memory-budget` and `host-memory`, reported and
     gated separately): /stats samples carry cumulative refusals[<reason>]; each
@@ -42,12 +47,17 @@ tolerance. Disagreements and anything unmatched are LISTED, never resolved (E17B
     interval's samples. An increase it cannot classify (a sample without worker stats at either end) is
     listed as unclassified and fails the criterion.
 (d) Guard events: memory_floor (params memory_abort), memory_high (delta of e15_mem_events.high), OOM kills
-    (the larger of params oom_kills and the e15_mem_events.oom_kill delta).
+    (the larger of params oom_kills and the e15_mem_events.oom_kill delta), and host_memory: every host-memory
+    refusal (the worker's physical backstop firing), whether or not a lease was idle (E17B-R39). The reading
+    is `available` only when the samples carry e15_mem_events: params.json always exists and is no evidence
+    that nothing fired. criterion3_guards_pass is false on any event counted, else true when available,
+    else null.
 Duplicates (E17B-R14): criterion 4 counts end -> notice AFTER the clients' own dedupe on at_unix_ms (lease spec
 section 5), which the driver's fresh() applies before writing calls.jsonl, so a raw duplicate delivery is invisible
 here and is not a missing notice. `duplicate_notices` lists only what the rows still show (a tail `pending` that
-repeats a call's event, or rows written by a driver that did not dedupe) and is informational for the gate,
-though it still makes criterion4_pass false.
+repeats a call's event, or rows written by a driver that did not dedupe). It is informational and does not fail
+criterion 4: the worker re-tells an unacknowledged event, harmlessly (lease_event.go:124), and the duplicate is
+left out of the pairing, so it cannot shift a later pair.
 A reclaim victim that is itself executing across T gets verdict victim_executing (a worker bug: it reclaims idle
 leases only), which fails criterion3_order_pass, distinct from unknown and wrong. Rows that ran no Exec (`execs`
 0: deadline, token-mint failure, cut at the end) and set_mode_failed rows are not Exec spans.
@@ -194,17 +204,22 @@ def match_notices(log, calls, tails):
     return out
 
 
-def idle_times(candidates, spans, t):
-    """({key: idle seconds at t, or None when it has no Exec end by then}, executing keys)."""
-    idle, executing = {}, set()
+def idle_times(candidates, spans, t, victim=None):
+    """({key: idle seconds at t, or None when it has no Exec end by then}, executing keys, possibly executing
+    keys). A non-victim key with a call sent in [t, t+1) is possibly executing (E17B-R38); the victim's calls
+    sent in [t, t+1) are its replacement lease's, not Exec ends before the reclaim."""
+    idle, executing, possibly = {}, set(), set()
     for k in candidates:
         sp = spans.get(k, [])
         if any(s <= t and e >= t + 1 for s, e in sp):
             executing.add(k)
             continue
-        ends = [e for s, e in sp if e <= t + 1]
+        if k != victim and any(t <= s < t + 1 for s, e in sp):
+            possibly.add(k)
+            continue
+        ends = [e for s, e in sp if e <= t + 1 and (k != victim or s < t)]
         idle[k] = t - max(ends) if ends else None
-    return idle, executing
+    return idle, executing, possibly
 
 
 def reclaim_order(log, calls):
@@ -219,14 +234,17 @@ def reclaim_order(log, calls):
             alive.add(ev["key"])
             continue
         if ev["reason"] == MEMORY_RECLAIM and ev["ts"] is not None:
-            idle, executing = idle_times(alive | {ev["key"]}, spans, ev["ts"])
-            details.append(judge(ev["key"], ev["ts"], idle, executing))
+            idle, executing, possibly = idle_times(alive | {ev["key"]}, spans, ev["ts"], victim=ev["key"])
+            row = judge(ev["key"], ev["ts"], idle, executing)
+            row["possibly_executing"] = sorted(possibly)
+            details.append(row)
         alive.discard(ev["key"])
     return {"total": len(details), "correct": sum(x["verdict"] == "correct" for x in details),
             "ties": sum(bool(x.get("tie_with")) for x in details),
             "wrong": sum(x["verdict"] == "wrong" for x in details),
             "unknown": sum(x["verdict"] == "unknown" for x in details),
-            "victim_executing": sum(x["verdict"] == "victim_executing" for x in details), "details": details,
+            "victim_executing": sum(x["verdict"] == "victim_executing" for x in details),
+            "possibly_executing": sum(len(x["possibly_executing"]) for x in details), "details": details,
             "reference": "the reclaim end line's own whole-second timestamp T; idle = T - the key's last Exec end by T+1 s"}
 
 
@@ -290,7 +308,7 @@ def refusals_with_idle(samples):
     return out
 
 
-def guard_events(samples, params):
+def guard_events(samples, params, refusals):
     ev = [s["e15_mem_events"] for s in samples if isinstance(s.get("e15_mem_events"), dict)]
 
     def delta(k):
@@ -299,8 +317,9 @@ def guard_events(samples, params):
     floor = 1 if params.get("memory_abort") else 0
     high = delta("high")
     oom = max(int(params.get("oom_kills") or 0), delta("oom_kill"))
-    return {"memory_floor": floor, "memory_high": high, "oom_kills": oom, "total": floor + high + oom,
-            "available": bool(ev) or bool(params)}
+    host = int(refusals.get("host_memory_total") or 0)
+    return {"memory_floor": floor, "memory_high": high, "oom_kills": oom, "host_memory": host,
+            "total": floor + high + oom + host, "available": bool(ev)}
 
 
 def stats_lease_ends(samples, log):
@@ -340,23 +359,24 @@ def analyse(d):
     notices = match_notices(log, calls, tails)
     reclaim = reclaim_order(log, calls)
     refusals = refusals_with_idle(samples)
-    guards = guard_events(samples, params)
+    guards = guard_events(samples, params, refusals)
     if why:
         c4 = False
     elif notices["ends_in_log"] - notices["ended_after_sweep"] == 0 and notices["notices_seen"] == 0:
         c4 = None  # vacuous: no lease ended in this rung
     else:
-        c4 = not (notices["unmatched_ends"] or notices["unmatched_notices"] or notices["reason_mismatches"]
-                  or notices["duplicate_notices"])
+        c4 = not (notices["unmatched_ends"] or notices["unmatched_notices"] or notices["reason_mismatches"])
     return {
         "valid": not why, "invalid_reasons": why, "keys_without_tail": no_tail,
         "notices": notices, "criterion4_pass": c4,
-        "reclaim": reclaim, "criterion3_order_pass": reclaim["wrong"] == 0 and reclaim["unknown"] == 0 and reclaim["victim_executing"] == 0,
+        "reclaim": reclaim,
+        "criterion3_order_pass": (reclaim["wrong"] == 0 and reclaim["unknown"] == 0 and reclaim["victim_executing"] == 0)
+        if reclaim["total"] else None,
         "refusals": refusals,
         "criterion3_refusals_pass": (refusals["with_idle_lease"] == 0 and refusals["host_memory_with_idle_lease"] == 0
                                     and not refusals["unclassified"]) if refusals["available"] else None,
         "guards": guards,
-        "criterion3_guards_pass": guards["total"] == 0 if guards["available"] else None,
+        "criterion3_guards_pass": False if guards["total"] else (True if guards["available"] else None),
         "stats_lease_ends": stats_lease_ends(samples, log),
     }
 

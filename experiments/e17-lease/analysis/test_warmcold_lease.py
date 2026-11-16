@@ -176,6 +176,7 @@ def test_latency_report_for_ship_arms(tmp_path):
     assert g["first_lease"]["all"]["n"] == 1 and g["first_lease"]["all"]["median_ms"] == 30000
     assert g["first_after_idle"]["all"]["n"] == 1
     assert g["counts"]["used"] == 3 and g["warm_share"] == pytest.approx(2 / 3.0)
+    assert g["rungs"][0]["warmcold"]["failed_no_vm"] == 0  # E17B-R35: reported per ship rung
 
 
 def test_latency_report_arms_filter(tmp_path):
@@ -321,3 +322,39 @@ def test_py_shmem_excluded_from_gates(tmp_path):
     g = L.build([d])["groups"][0]
     assert set(g["classes"]) == {"py_analyze"} and g["counts"]["used"] == 1
     assert g["reported_only"]["py_shmem"]["all"]["n"] == 1
+
+
+# E17B-R35 (PR #34 #4587041739): a call that failed with no vm ran nothing in a VM (a refusal: the
+# worker logs its exec line with vm= empty, runner.go:74; or a queue-full call the pool never saw:
+# no exec line). It is failed_no_vm, apart from unknown, which keeps meaning an ok call the join
+# could not place. The chain gate stops on unknown, not on failed_no_vm.
+def test_refused_call_with_no_vm_is_failed_no_vm(tmp_path):
+    log = first() + [exec_line("A", "", req=2, err="memory-budget: committing 1280 MiB would exceed"),
+                     exec_line("A", "vm-1", req=3)]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]),
+             call("A", 2, status="err", cause="exec_error", msg="memory-budget: committing 1280 MiB would exceed"),
+             call("A", 3)]
+    rows, s = WL.join(rung(tmp_path, calls, log))
+    assert tags(rows)[("A", 2)] == ("failed_no_vm", "no-vm")
+    assert tags(rows)[("A", 3)] == (True, None)  # the refusal does not break the warm chain
+    assert s["unknown"] == 0 and s["unknown_by_reason"] == {}
+    assert s["failed_no_vm"] == 1 and s["failed_no_vm_by_reason"] == {"no-vm": 1}
+    assert s["warm"] == 1 and s["valid"] is True and s["countable"] is True
+
+
+def test_queue_full_call_is_failed_no_vm_not_started(tmp_path):
+    log = first() + [exec_line("A", "vm-1", req=3)]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]),
+             call("A", 2, status="err", cause="rpc_error", msg="busy: queue full"),
+             call("A", 3)]
+    rows, s = WL.join(rung(tmp_path, calls, log))
+    assert tags(rows)[("A", 2)] == ("failed_no_vm", "not-started")
+    assert s["unknown"] == 0 and s["failed_no_vm_by_reason"] == {"not-started": 1}
+
+
+def test_ok_call_with_no_vm_stays_unknown(tmp_path):
+    log = first() + [exec_line("A", "", req=2)]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]), call("A", 2)]
+    rows, s = WL.join(rung(tmp_path, calls, log))
+    assert tags(rows)[("A", 2)] == ("unknown", "no-vm")
+    assert s["unknown"] == 1 and s["failed_no_vm"] == 0

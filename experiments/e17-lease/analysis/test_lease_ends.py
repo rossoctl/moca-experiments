@@ -108,7 +108,9 @@ def test_duplicate_notice_flagged(tmp_path):
     r = run(d)
     dup = r["notices"]["duplicate_notices"]
     assert len(dup) == 1 and dup[0]["key"] == "a" and dup[0]["reason"] == "idle"
-    assert not r["criterion4_pass"]
+    # PR #34 nit (E17B-R41e, R14): a duplicate is informational -- the worker re-tells an event until it is
+    # acknowledged, harmlessly (lease_event.go:124) -- so it does not fail criterion 4.
+    assert r["criterion4_pass"] is True
     assert r["notices"]["paired"] == 1  # the duplicate does not cascade into an unmatched notice
 
 
@@ -511,3 +513,64 @@ def test_criterion4_is_false_when_the_rung_is_invalid():
                  calls=[call("a", 1, 0, cause="set_mode_failed", status="err")],
                  tails=[tail("a", "none", {"state": "end", "reason": "idle", "at_unix_ms": 1})]))
     assert not r["valid"] and r["criterion4_pass"] is False
+
+
+# ---- PR #34 review ----
+
+def test_reclaim_skips_a_lease_whose_call_was_sent_in_the_reclaim_second():
+    # E17B-R38, the reviewer's example: K1 is the longest-idle lease, but its next call is sent at T+0.3 and the
+    # reclaim fires at T+0.6 (logged at the whole second T). The worker skips K1 (its gate is held) and correctly
+    # reclaims K2. K1 is possibly_executing: not a candidate, so the pick reads correct.
+    calls = [call("k1", 1, 9), call("k1", 2, 100.3, dur=5), call("k2", 1, 49), call("k3", 1, 79)]
+    r = run(reclaim_calls(calls, victim="k2", keys=("k1", "k2", "k3")))
+    d = r["reclaim"]["details"][0]
+    assert d["verdict"] == "correct" and d["possibly_executing"] == ["k1"] and "k1" not in d["idle_s"]
+    assert r["reclaim"]["wrong"] == 0 and r["criterion3_order_pass"] is True
+
+
+def test_reclaim_call_sent_just_before_the_reclaim_second_is_not_possibly_executing():
+    # A call sent at T-0.2 that ended at T-0.1 is an ordinary Exec end: k1 is idle 0.1 s, k3 is the longest idle.
+    calls = [call("k1", 1, 99.8, dur=0.1), call("k2", 1, 49), call("k3", 1, 9)]
+    d = run(reclaim_calls(calls, victim="k2", keys=("k1", "k2", "k3")))["reclaim"]["details"][0]
+    assert d["verdict"] == "wrong" and d["longest_idle"] == "k3" and d["possibly_executing"] == []
+
+
+def test_reclaim_victim_call_sent_in_the_reclaim_second_is_its_replacement_lease():
+    # The worker reclaims idle leases only, so a call of the VICTIM sent in [T, T+1) came after the reclaim (its
+    # replacement lease): it is not the victim's last Exec end before the reclaim.
+    calls = [call("a", 1, 9), call("a", 2, 100.4, dur=0.3), call("b", 1, 49), call("c", 1, 59)]
+    d = run(reclaim_calls(calls))["reclaim"]["details"][0]
+    assert d["verdict"] == "correct" and d["idle_s"]["a"] == 90.0
+
+
+def test_order_pass_is_null_without_a_reclaim():
+    # E17B-R39: no reclaim at all is vacuous, as criterion 4 is: null, never a pass.
+    r = run(rung(tempdir(), log=[start_line("a", "vm-1", ts=logts(0)), end_line("a", "vm-1", "idle", ts=logts(40))],
+                 calls=[call("a", 1, 0)], tails=[tail("a", "none", {"state": "end", "reason": "idle", "at_unix_ms": 1})]))
+    assert r["reclaim"]["total"] == 0 and r["criterion3_order_pass"] is None
+
+
+def test_guards_are_unavailable_without_mem_events():
+    # E17B-R39: params.json always exists, so it is no evidence that no guard fired: without e15_mem_events in
+    # the samples the reading is unavailable and the check null.
+    s = [{"t": 0, "ts": BASE, "worker": {"refusals": {}}}, {"t": 1, "ts": BASE + 1, "worker": {"refusals": {}}}]
+    r = run(rung(tempdir(), calls=[call("a", 1, 0)], tails=[tail("a")], samples=s,
+                 params={"oom_kills": 0, "memory_abort": None}))
+    assert r["guards"]["available"] is False and r["criterion3_guards_pass"] is None
+    r = run(rung(tempdir(), calls=[call("a", 1, 0)], tails=[tail("a")], params={"oom_kills": 0}))
+    assert r["guards"]["available"] is False and r["criterion3_guards_pass"] is None
+
+
+def test_a_guard_event_in_params_fails_even_without_mem_events():
+    # A recorded event is evidence of an event: a memory abort or an OOM kill in params fails the check.
+    r = run(rung(tempdir(), calls=[call("a", 1, 0)], tails=[tail("a")], params={"oom_kills": 1}))
+    assert r["guards"]["available"] is False and r["guards"]["total"] == 1 and r["criterion3_guards_pass"] is False
+
+
+def test_host_memory_refusals_are_guard_events_whether_or_not_a_lease_was_idle():
+    # E17B-R39: a host-memory refusal is the worker's physical backstop firing: a guard event at any time.
+    s = [host_sample(0, vms=2, executing=2), host_sample(1, host=3, vms=2, executing=2)]
+    r = run(rung(tempdir(), calls=[call("a", 1, 0)], tails=[tail("a")], samples=s))
+    g = r["guards"]
+    assert g["host_memory"] == 3 and g["total"] == 3 and r["criterion3_guards_pass"] is False
+    assert r["criterion3_refusals_pass"] is True  # no idle lease: the refusal check itself passes

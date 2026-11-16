@@ -463,3 +463,18 @@ def test_age_text_and_freed_format_documented(tmp_path):
     assert '"session:call"' in L.__doc__ and "py_shmem" in L.__doc__ and "shmem.json" in L.__doc__
     assert "freed.json" not in L.__doc__ and "max(0, peak - start - dShmem)" in L.__doc__
     assert "lease_start_failed_without_marker_suspected" in L.__doc__
+
+
+def test_replacement_reading_is_null_when_the_vms_first_call_is_unknown():
+    # PR #34 nit (E17B-R41f): vm-2's first call could not be placed (unknown), so whether vm-2 replaced an idle
+    # lease is not known: a null reading, not "not a replacement" taken from its later warm call.
+    def r(call, vm, warm, reason, cls="py_grep", ms=100):
+        return {"session": "A", "call": call, "vm": vm, "warm": warm, "cold_reason": reason, "class": cls,
+                "status": "ok", "in_window": True, "observed_ms": ms}
+    rows = [r(1, "vm-1", False, "first"), r(2, "vm-2", "unknown", "no-live-lease", ms=900),
+            r(3, "vm-2", True, None, ms=800), r(4, "vm-3", False, "idle", ms=300)]
+    rp = L.replacement_reading(rows, 100.0)
+    assert rp["replacement_leases"] == 1 and [x["vm"] for x in rp["leases"]] == ["vm-3"]
+    assert rp["replacement_unknown"] == 1 and rp["unknown_leases"][0]["vm"] == "vm-2"
+    assert rp["unknown_leases"][0]["replacement"] is None
+    assert rp["median_first_py_grep_ms"] == 300  # vm-2's py_grep is not a replacement reading

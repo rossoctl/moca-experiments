@@ -178,7 +178,7 @@ def build(rung_dirs, baseline_arm="sbx", arms=None):
             if why or not summary["valid"] or not summary["countable"]:
                 g.setdefault("excluded", []).append({"dir": d, "reason": ", ".join(why) or "not valid"})
                 continue
-            keys += ("valid", "countable", "disagreements", "set_mode_failed")
+            keys += ("valid", "countable", "disagreements", "set_mode_failed", "failed_no_vm")
         g["rows"].extend(rows)
         g["rungs"].append({"dir": d, "warmcold": {k: summary[k] for k in keys}})
     groups, first_dir = [], {}

@@ -75,7 +75,9 @@ the predictions (Task 13), and this module reports the numbers.
 REPLACEMENT VM (criterion 5, second half). A lease whose first call is cold with reason `idle` (the key's
 previous lease ended by the idle timeout; warmcold_lease.py's cold_reason): its first ok `py_grep`
 observed_ms against the median ok `py_grep` of the `sbx` rung (--sbx) or --sbx-median-ms. Only calls with
-in_window true count, on both sides.
+in_window true count, on both sides. A VM whose first call is unknown (the join could not place it) has a null
+replacement reading: listed under unknown_leases (replacement_unknown counts them), never read as "not a
+replacement" from a later call.
 """
 import argparse
 import bisect
@@ -363,19 +365,24 @@ def replacement_reading(rows, sbx_median):
     for key in sorted(by_sess):
         seen = {}
         for r in sorted(by_sess[key], key=lambda r: r["call"]):
-            if r["vm"] and r["warm"] in (True, False):
+            if r["vm"] and r["warm"] in (True, False, "unknown"):
                 if r["vm"] not in seen:
-                    seen[r["vm"]] = {"session": key, "vm": r["vm"], "replacement": r["cold_reason"] == "idle",
+                    # The VM's FIRST call says whether it replaced an idle lease. When that call is unknown the
+                    # answer is not known: null, never "not a replacement" from a later call (PR #34 nit).
+                    seen[r["vm"]] = {"session": key, "vm": r["vm"],
+                                     "replacement": None if r["warm"] == "unknown" else r["cold_reason"] == "idle",
                                      "first_grep_ms": None}
                     leases.append(seen[r["vm"]])
                 l = seen[r["vm"]]
-                if l["first_grep_ms"] is None and r["class"] == "py_grep" and r["status"] == "ok" \
-                        and r["in_window"]:
+                if r["warm"] in (True, False) and l["first_grep_ms"] is None and r["class"] == "py_grep" \
+                        and r["status"] == "ok" and r["in_window"]:
                     l["first_grep_ms"] = r["observed_ms"]
-    rep = [l for l in leases if l["replacement"]]
+    rep = [l for l in leases if l["replacement"] is True]
+    unknown = [l for l in leases if l["replacement"] is None]
     got = [l for l in rep if l["first_grep_ms"] is not None]
     med = _median([l["first_grep_ms"] for l in got]) if got else None
     return {"replacement_leases": len(rep), "with_first_py_grep": len(got), "leases": rep,
+            "replacement_unknown": len(unknown), "unknown_leases": unknown,
             "median_first_py_grep_ms": med, "sbx_median_py_grep_ms": sbx_median,
             "ratio_to_sbx": (med / sbx_median) if med is not None and sbx_median else None}
 

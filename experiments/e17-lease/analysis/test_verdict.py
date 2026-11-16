@@ -48,10 +48,12 @@ def sbx_lat(root, point, n, short_ms, import_ms):
     return write_rung(root, point, "sbx", "N%d-lat" % n, n, calls, log)
 
 
-def le(c4=True, valid=True, guards=0, with_idle=0, host_idle=0, wrong=0, unknown=0, reclaims=0, after_sweep=0, live=0):
+def le(c4=True, valid=True, guards=0, with_idle=0, host_idle=0, wrong=0, unknown=0, reclaims=0, after_sweep=0, live=0,
+       guards_available=True):
     return {"valid": valid, "invalid_reasons": [] if valid else ["stub"], "criterion4_pass": c4,
-            "criterion3_guards_pass": guards == 0, "criterion3_refusals_pass": with_idle == 0 and host_idle == 0,
-            "criterion3_order_pass": wrong == 0 and unknown == 0,
+            "criterion3_guards_pass": False if guards else (True if guards_available else None),
+            "criterion3_refusals_pass": with_idle == 0 and host_idle == 0,
+            "criterion3_order_pass": (wrong == 0 and unknown == 0) if reclaims else None,
             "guards": {"total": guards}, "refusals": {"with_idle_lease": with_idle, "host_memory_with_idle_lease": host_idle,
                                                      "unclassified": []},
             "reclaim": {"total": reclaims, "wrong": wrong, "unknown": unknown, "victim_executing": 0},
@@ -70,8 +72,9 @@ def vml(share_true=1.0, t=2, f=0, low=1, pinned_share=0.0, ratio=1.1, valid=True
 
 def crit(r, k):
     c = r["criteria"][k]
-    assert c["pass"] is None  # thresholds are sealed in Task 13: never set here
-    assert set(c) >= {"value", "inputs", "pass"}
+    if k == "5":
+        assert c["pass"] is None  # criterion 5's thresholds are sealed in Task 13: never set here
+    assert set(c) >= {"value", "inputs", "pass", "why"}
     return c
 
 
@@ -132,6 +135,7 @@ def test_criterion_3_reads_the_squeeze_climb(tmp_path):
     assert sq["totals"] == {"guards": 0, "refusals_with_idle_lease": 2, "host_memory_with_idle_lease": 0,
                             "reclaims": 12, "wrong": 1, "unknown": 0, "victim_executing": 0}
     assert sq["sbx_rungs"][0]["dir"].endswith("squeeze/sbx/N96-sq")
+    assert c["pass"] is False and any("wrong" in w for w in c["why"]) and any("idle lease" in w for w in c["why"])
     assert b in c["inputs"] or os.path.join(b, "lease_ends.json") in c["inputs"]
     assert c["value"]["squeeze-256"] is None and any("squeeze-256" in m for m in c["missing"])
 
@@ -205,5 +209,99 @@ def test_main_writes_verdict_json(tmp_path, capsys):
     V.main([root, "--moca-commit", PIN, "--out", out])
     r = json.load(open(out))
     assert sorted(r["criteria"]) == ["1", "2", "3", "4", "5"] and r["moca_commit"] == PIN
-    assert all(c["pass"] is None for c in r["criteria"].values())
+    assert r["criteria"]["5"]["pass"] is None
+    assert all(r["criteria"][k]["pass"] is None for k in "1235")  # no inputs: nothing judged
+    assert r["criteria"]["4"]["pass"] is False  # R16: no rung true
     assert "verdict.json" in capsys.readouterr().out
+
+
+# ---- PR #34 review item 9 (E17B-R40): SPEC 7.5's fixed bars for criteria 1-4 ----
+
+def test_criterion_1_pass_is_ship_300_at_least_sbx(tmp_path):
+    for ship, sbx, want in ((128, 96, True), (96, 96, True), (80, 96, False)):
+        root = str(tmp_path / ("c1-%d-%d" % (ship, sbx)))
+        ladder(root, "default", "ship-300", n_max=ship)
+        ladder(root, "default", "sbx", n_max=sbx)
+        c = crit(V.verdict(root), "1")
+        assert c["pass"] is want, (ship, sbx)
+        assert bool(c["why"]) is (want is False)
+    root = str(tmp_path / "c1-missing")
+    ladder(root, "default", "sbx", n_max=96)
+    assert crit(V.verdict(root), "1")["pass"] is None
+
+
+def c2_root(tmp_path, name, short_ms=100, import_ms=600, n128=True):
+    root = str(tmp_path / name)
+    for n in ((1, 128) if n128 else (1,)):
+        sbx_lat(root, "pycache", n, short_ms=400, import_ms=1000)
+        ship_lat(root, "pycache", n, short_ms=short_ms, import_ms=import_ms)
+    return root
+
+
+def test_criterion_2_pass_applies_the_50_and_30_percent_bars(tmp_path):
+    # gains: py_short 1 - 100/400 = 0.75, py_import 1 - 600/1000 = 0.40
+    assert crit(V.verdict(c2_root(tmp_path, "ok")), "2")["pass"] is True
+    # exactly at the bars: 200/400 = 0.50, 700/1000 = 0.30
+    assert crit(V.verdict(c2_root(tmp_path, "edge", short_ms=200, import_ms=700)), "2")["pass"] is True
+    c = crit(V.verdict(c2_root(tmp_path, "imp", import_ms=750)), "2")  # py_import 0.25 < 0.30
+    assert c["pass"] is False and any("py_import" in w and "0.30" in w for w in c["why"])
+    c = crit(V.verdict(c2_root(tmp_path, "short", short_ms=210)), "2")  # py_short 0.475 < 0.50
+    assert c["pass"] is False and any("py_short" in w for w in c["why"])
+    # N=128 missing: not judged (null), unless another value already fails
+    assert crit(V.verdict(c2_root(tmp_path, "n1only", n128=False)), "2")["pass"] is None
+    assert crit(V.verdict(c2_root(tmp_path, "n1fail", import_ms=900, n128=False)), "2")["pass"] is False
+
+
+def c3_root(tmp_path, name, rungs, point="squeeze"):
+    root = str(tmp_path / name)
+    rows = []
+    for i, kw in enumerate(rungs):
+        n = 32 * (i + 1)
+        rows.append({"n": n, "met": False, "dir": write_rung(root, point, "ship-300", "N%d" % n, n, lease_ends_json=le(**kw))})
+    ladder(root, point, "ship-300", squeeze={"stop_n": rows[-1]["n"], "stopped_by": "reclaim_rate", "memmax_mb": 65536,
+                                             "rungs": rows})
+    return root
+
+
+def test_criterion_3_pass_needs_zero_guards_refusals_wrong_picks_and_a_reclaim(tmp_path):
+    assert crit(V.verdict(c3_root(tmp_path, "ok", [dict(reclaims=0), dict(reclaims=4)])), "3")["pass"] is True
+    for name, rungs, why in (
+            ("noreclaim", [dict(reclaims=0), dict(reclaims=0)], "no reclaim happened"),
+            ("guard", [dict(reclaims=4, guards=1)], "guard"),
+            ("idle", [dict(reclaims=4, with_idle=1)], "idle lease"),
+            ("host", [dict(reclaims=4, host_idle=2)], "idle lease"),
+            ("wrong", [dict(reclaims=4, wrong=1)], "wrong"),
+            ("unknown", [dict(reclaims=4, unknown=1)], "unknown")):
+        c = crit(V.verdict(c3_root(tmp_path, name, rungs)), "3")
+        assert c["pass"] is False and any(why in w for w in c["why"]), (name, c["why"])
+    # a rung whose guard reading is unavailable cannot pass it: null
+    c = crit(V.verdict(c3_root(tmp_path, "unavail", [dict(reclaims=4, guards_available=False)])), "3")
+    assert c["pass"] is None
+    # no squeeze climb at all: null
+    root = str(tmp_path / "none")
+    os.makedirs(root)
+    assert crit(V.verdict(root), "3")["pass"] is None
+
+
+def test_criterion_3_judges_squeeze_256_when_it_ran(tmp_path):
+    root = c3_root(tmp_path, "both", [dict(reclaims=4)])
+    rows = [{"n": 32, "met": True, "dir": write_rung(root, "squeeze-256", "ship-300", "N32", 32, lease_ends_json=le(reclaims=0))}]
+    ladder(root, "squeeze-256", "ship-300", squeeze={"stop_n": 32, "stopped_by": "reclaim_rate", "memmax_mb": 9000,
+                                                     "rungs": rows})
+    c = crit(V.verdict(root), "3")
+    assert c["pass"] is False and any("squeeze-256" in w and "no reclaim happened" in w for w in c["why"])
+
+
+def test_criterion_4_pass_is_r16(tmp_path):
+    root = str(tmp_path)
+    write_rung(root, "pycache", "ship-300", "N1-lat", 1, lease_ends_json=le(c4=True))
+    assert crit(V.verdict(root), "4")["pass"] is True
+    write_rung(root, "pycache", "ship-300", "N128-lat", 128, lease_ends_json=le(c4=False))
+    c = crit(V.verdict(root), "4")
+    assert c["pass"] is False and c["why"]
+
+
+def test_criterion_5_pass_stays_null(tmp_path):
+    root = str(tmp_path)
+    write_rung(root, "pycache", "ship-300", "N1-lat", 1, vm_age_lease_json=vml(t=3, f=0))
+    assert crit(V.verdict(root), "5")["pass"] is None

@@ -16,8 +16,13 @@ Per key, in log order (never re-ordered by timestamp):
     start` with no later end for the key). A start is logged before its Exec's own exec line.
   - COLD otherwise: first (the key's first call), the reason of the last end between (idle,
     memory_reclaim, ...), or vm-changed.
-  - UNKNOWN, never guessed: no live lease at its exec line, no vm, or the key's exec-line count differs
-    from its calls' (exec-count), or a timestamp guard failure (warmcold.timestamp_mismatch).
+  - UNKNOWN, never guessed: an ok call with no live lease at its exec line or no vm, or the key's
+    exec-line count differs from its calls' (exec-count), or a timestamp guard failure
+    (warmcold.timestamp_mismatch).
+  - FAILED_NO_VM (E17B-R35): a call whose status is not ok and that ran in no VM: a refusal (the worker
+    logs its exec line with an empty vm=, runner.go:74; reason no-vm) or a call that left no exec line
+    (queue-full, not started; reason not-started). It is not a warm/cold reading and not unknown: the
+    chain gate stops on unknown, and these are judged by lease_ends' criterion-3 refusal check.
 The driver's own events (calls.jsonl `lease_events`) are a SECOND source (E17B-R9): a call with any
 event is cold, one with none is warm. A disagreement with the log is counted and listed, never
 resolved: the log's verdict stands, and `countable` is false unless there are none.
@@ -46,6 +51,7 @@ START_RE = re.compile(r'vmpool: lease start workspace_key="(?P<key>(?:[^"\\]|\\.
 END_RE = re.compile(r'vmpool: lease end workspace_key="(?P<key>(?:[^"\\]|\\.)*)" vm=(?P<vm>\S*) '
                     r'mode=(?P<mode>\S+) reason=(?P<reason>\S+)')
 SET_MODE_FAILED = "set_mode_failed"
+FAILED_NO_VM = "failed_no_vm"
 
 
 def read_events(d):
@@ -119,13 +125,14 @@ def tag_key(calls, seq):
         n = W.call_execs(c)
         mine = seq[i:i + n]
         i += n
+        failed = c.get("status") != "ok"
         if not mine:
-            rows.append(row(c, "unknown", None, prev_vm, "not-started"))
+            rows.append(row(c, FAILED_NO_VM if failed else "unknown", None, prev_vm, "not-started"))
             continue
         between = between + mine[0]["ends"]
         vm, live = mine[0]["vm"], mine[0]["live"]
         if not vm:
-            rows.append(row(c, "unknown", None, prev_vm, "no-vm", live))
+            rows.append(row(c, FAILED_NO_VM if failed else "unknown", None, prev_vm, "no-vm", live))
         elif not live:
             rows.append(row(c, "unknown", vm, prev_vm, "no-live-lease", False))
         elif prev_vm is None:
@@ -176,6 +183,8 @@ def join(rung_dir):
         "reported_only": W.count_by(r["class"] for r in rows if r["class"] in REPORTED_ONLY
                                     and r["warm"] != SET_MODE_FAILED),
         "unknown_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] == "unknown"),
+        "failed_no_vm": sum(r["warm"] == FAILED_NO_VM for r in gated),
+        "failed_no_vm_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] == FAILED_NO_VM),
         "cold_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] is False),
         "unknown_keys": unknown_keys,
         "disagreements": len(dis),
@@ -199,8 +208,9 @@ def main(argv=None):
             f.write(json.dumps(r, sort_keys=True) + "\n")
     with open(os.path.join(d, "warmcold-report.json"), "w") as f:
         json.dump(summary, f, indent=2, sort_keys=True)
-    print("warm %d cold %d unknown %d first_lease %d disagreements %d" % (
-        summary["warm"], summary["cold"], summary["unknown"], summary["first_lease"], summary["disagreements"]))
+    print("warm %d cold %d unknown %d failed_no_vm %d first_lease %d disagreements %d" % (
+        summary["warm"], summary["cold"], summary["unknown"], summary["failed_no_vm"], summary["first_lease"],
+        summary["disagreements"]))
 
 
 if __name__ == "__main__":
