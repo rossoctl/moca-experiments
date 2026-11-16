@@ -104,6 +104,20 @@ out=$(env E17B=0 E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$STUB:$PATH" bas
 check "E17B=0 is not E17B=1" "$?/$(printf '%s' "$out" | grep -c 'E17B=1 is required')" "1/1"
 
 main_rc() { run_in "$1" >"$TMP/main.out" 2>&1 && echo 0 || echo $?; }
+main_rc_to() { # like main_rc, but a hang is a failure: 8 s watchdog
+  (
+    run_in "$1" >"$TMP/main.out" 2>&1 &
+    p=$!
+    (sleep 8; kill -9 "$p" 2>/dev/null) &
+    w=$!
+    wait "$p"
+    r=$?
+    kill "$w" 2>/dev/null
+    echo "$r"
+  )
+}
+check "--ram-mb with no value: fails fast, no hang" "$(main_rc_to 'main --ram-mb')" "1"
+check "--leaf with no value: fails fast, no hang" "$(main_rc_to "main --ram-mb 1024 --leaf")" "1"
 check "unknown argument refused" "$(main_rc 'main --bogus 1')" "1"
 check "missing --leaf refused" "$(main_rc 'main --ram-mb 1024')" "1"
 check "leaf RAM vs --ram-mb mismatch refused by main" "$(main_rc "main --ram-mb 256 --leaf e17b-$P8-1024")" "1"

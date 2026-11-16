@@ -174,24 +174,29 @@ assert_features() {
 }
 
 CLEAN_LEAF=0
+CLEAN_STAGE=0
 cleanup() {
   local rc=$?
   trap - EXIT
   set +e
-  # Only a leaf this run proved new and then started building is ever removed on failure.
+  # Only a leaf this run proved new, re-proved just before it started building, and has not
+  # yet validated is ever removed on failure (a leaf another run published meanwhile is not ours).
   if [ "$rc" != 0 ] && [ "$CLEAN_LEAF" = 1 ]; then
     log "failed (rc $rc): removing the unpublished leaf $E15_SNAPDIR/$LEAF"
     (safe_rm_rf "$E15_SNAPDIR/$LEAF")
   fi
-  if [ "$CLEAN_LEAF" = 1 ]; then (safe_rm_rf "$(stage_dir)"); fi
+  if [ "$CLEAN_STAGE" = 1 ]; then (safe_rm_rf "$(stage_dir)"); fi
   exit "$rc"
 }
 
 main() {
   while [ $# -gt 0 ]; do
     case "$1" in
-    --ram-mb) RAM=${2:-}; shift 2 || true ;;
-    --leaf) LEAF=${2:-}; shift 2 || true ;;
+    --ram-mb | --leaf)
+      [ $# -ge 2 ] || die "$1 needs a value (usage: --ram-mb {1024|256} --leaf e17b-<sha8>-<ram>)"
+      if [ "$1" = --ram-mb ]; then RAM=$2; else LEAF=$2; fi
+      shift 2
+      ;;
     *) die "unknown argument '$1' (usage: --ram-mb {1024|256} --leaf e17b-<sha8>-<ram>)" ;;
     esac
   done
@@ -211,7 +216,7 @@ main() {
   m_init
   m_section Snapshot
   trap cleanup EXIT
-  CLEAN_LEAF=1 # from here the leaf and the stage dir are ours (the guard just proved the leaf did not exist)
+  CLEAN_STAGE=1 # from here the stage dir is ours (the leaf is claimed only right before the build)
   local stage tree out=$E15_SNAPDIR/$LEAF
   stage=$(stage_dir)
   tree=$stage/tree
@@ -219,10 +224,15 @@ main() {
   sudo -n mkdir -p "$stage"
   prepare_kernel
   prepare_tree "$tree"
+  # The leaf only appears at build-snapshot's final publish, minutes from now: prove it is still new
+  # right before the build, so a failure removes only a leaf this run published.
+  leaf_new_ok "$LEAF" "$RAM" || die "leaf '$LEAF' appeared meanwhile; not touching it"
+  CLEAN_LEAF=1
   run_build_snapshot "$tree" "$out"
   sudo -n test -f "$out/manifest.json" || die "build-snapshot.sh left no $out/manifest.json"
   sudo -n cat "$out/manifest.json" >"$E15_LOGS/manifest-$LEAF.json"
   assert_features "$out/manifest.json" || die "manifest $out/manifest.json is not lease-capable (copy: $E15_LOGS/manifest-$LEAF.json); leaf removed"
+  CLEAN_LEAF=0 # valid from here on: a later bookkeeping failure must not delete a good snapshot
   m_purge "built snapshot $out ($(sudo -n python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["hash"], "guest", m["guest_ram_mb"], "MiB", ",".join(m["features"]))' "$out/manifest.json"))" "sudo -n rm -rf $out"
   log "built $out"
 }
