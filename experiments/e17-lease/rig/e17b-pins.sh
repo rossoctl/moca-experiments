@@ -8,4 +8,4 @@
 # the controller must replace it with the chosen upstream/main sha before any rig run (and record it
 # in the build commit message). lib.sh e17b_require_pin refuses to start setup.sh or rung.sh while it
 # is the placeholder or is not a full sha.
-E17B_MOCA_PIN=0000000000000000000000000000000000000000
+E17B_MOCA_PIN=c3adf4909df48aa9d167d366ee95278b3aff87ff
