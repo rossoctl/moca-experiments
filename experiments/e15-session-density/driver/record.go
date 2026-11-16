@@ -38,11 +38,14 @@ type callRecord struct {
 	InWindow     bool    `json:"in_window"`
 	Msg          string  `json:"msg,omitempty"`
 	// Lease mode only (omitted otherwise): every LeaseEvent the call's stream carried that the
-	// session had not recorded yet (failed calls too); the session's first call; and, on every
-	// row of a session whose first call carried no start event, not_lease.
-	LeaseEvents []leaseEvent `json:"lease_events,omitempty"`
-	FirstLease  bool         `json:"first_lease,omitempty"`
-	NotLease    bool         `json:"not_lease,omitempty"`
+	// session had not recorded yet (failed calls too); first_lease, the session's first call that ran
+	// an Exec (the lease's first); first_refused, a call before it that the worker or the relay refused
+	// (E17B-R30: it ran nothing, so it is not the one checked); and, from the first call that ran on,
+	// on every row of a session whose first call that ran carried no start event, not_lease.
+	LeaseEvents  []leaseEvent `json:"lease_events,omitempty"`
+	FirstLease   bool         `json:"first_lease,omitempty"`
+	FirstRefused bool         `json:"first_refused,omitempty"`
+	NotLease     bool         `json:"not_lease,omitempty"`
 	// --record-stdout only (omitted otherwise): for a call of a listed class, the Exec's stdout, its
 	// first stdoutMax bytes cut on a UTF-8 rune boundary ("" when it wrote none), and
 	// stdout_truncated when more was written.

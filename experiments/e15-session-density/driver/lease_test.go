@@ -59,7 +59,7 @@ func TestDefaultPathUnchanged(t *testing.T) {
 			}
 			delete(m, f)
 		}
-		for _, f := range []string{"lease_events", "first_lease", "not_lease", "stdout", "stdout_truncated", "tmpfs"} {
+		for _, f := range []string{"lease_events", "first_lease", "first_refused", "not_lease", "stdout", "stdout_truncated", "tmpfs"} {
 			if _, ok := m[f]; ok {
 				t.Fatalf("opt-in field %s present with the modes off: %s", f, line)
 			}
@@ -107,6 +107,9 @@ type leaseRelay struct {
 	execEvents func(key string, n int) []*pb.LeaseEvent
 	// execFail, when set for (key, n), ends the Exec with a gRPC error after its events.
 	execFail func(key string, n int) error
+	// execError, when non-empty for (key, n), ends the Exec with an in-stream ExecError carrying
+	// that message after its events (the worker's refusal path: no End).
+	execError func(key string, n int) string
 	// statusFor is the answer to a status call; an error fails the call.
 	statusFor func(key string) (*pb.LeaseStatus, error)
 }
@@ -213,6 +216,11 @@ func (lr *leaseRelay) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServe
 	if lr.execFail != nil {
 		if err := lr.execFail(key, n); err != nil {
 			return err
+		}
+	}
+	if lr.execError != nil {
+		if msg := lr.execError(key, n); msg != "" {
+			return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_Error{Error: &pb.ExecError{ReqId: e.GetReqId(), Message: msg}}})
 		}
 	}
 	return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_End{End: &pb.End{ReqId: e.GetReqId(), ExitCode: 0}}})
@@ -426,9 +434,27 @@ func TestStatusSweepWritesStateAndPending(t *testing.T) {
 	}
 	cfg := leaseCfg()
 	cfg.N, cfg.Window = 2, 300*time.Millisecond
+	before := time.Now().UnixMilli()
 	res, tail, _ := leaseRun(t, cfg, []Session{sess("s", "u", 20, "q", "q", "q")}, testLib(nil, "q"), client)
+	after := time.Now().UnixMilli()
 	if res.err != nil {
 		t.Fatal(res.err)
+	}
+	// E17B-R31: each row carries the wall time its status call was sent, after every call ended.
+	var lastEnd int64
+	for _, c := range res.calls {
+		st, err := time.Parse(time.RFC3339Nano, c.Ts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e := st.UnixMilli() + int64(c.ObservedMs); e > lastEnd {
+			lastEnd = e
+		}
+	}
+	for _, row := range tail {
+		if row.SweptAtUnixMs < before || row.SweptAtUnixMs > after || row.SweptAtUnixMs < lastEnd {
+			t.Fatalf("row %+v: swept_at_unix_ms outside [%d, %d] or before the last call's end %d", row, before, after, lastEnd)
+		}
 	}
 	keys := map[string]bool{}
 	for _, c := range res.calls {
@@ -553,6 +579,115 @@ func TestFirstCallWithoutStartIsNotLease(t *testing.T) {
 		if c.NotLease {
 			t.Fatalf("%+v", c)
 		}
+	}
+}
+
+// E17B-R30: a first call the worker refused (memory-budget, host-memory, max-runs, the relay's or the
+// session's busy) ran no Exec and carries no events, so it says nothing about the session's mode. It
+// is recorded as first_refused, and the session's first call that ran is the one checked (and is the
+// lease's first: first_lease). One case per refusal form: an in-stream ExecError or a gRPC status.
+func TestRefusedFirstCallIsNotNotLease(t *testing.T) {
+	cases := []struct {
+		name   string
+		inErr  string // in-stream ExecError message
+		status error  // or the call's gRPC status
+	}{
+		{name: "memory-budget", inErr: "memory-budget: committing 1280 MiB would exceed SH_MAX_COMMITTED_MB 1024"},
+		{name: "host-memory", inErr: "host-memory: host MemAvailable 1000 MiB is below the floor 1536 MiB"},
+		{name: "max-runs", inErr: "max-runs: 1280 runs in flight"},
+		{name: "queue-full", inErr: "busy: queue full"},
+		{name: "relay-busy", status: status.Error(codes.ResourceExhausted, "sandbox busy: 64 execs in flight")},
+		{name: "budget-as-status", status: status.Error(codes.Unavailable, "memory-budget: over the budget")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, lr := newLeaseRelay(t)
+			// Exec 0 is refused (no events); exec 1 starts the lease.
+			lr.execEvents = func(key string, n int) []*pb.LeaseEvent {
+				if n == 1 {
+					return []*pb.LeaseEvent{startEvent(1000)}
+				}
+				return nil
+			}
+			lr.execError = func(key string, n int) string {
+				if n == 0 {
+					return tc.inErr
+				}
+				return ""
+			}
+			lr.execFail = func(key string, n int) error {
+				if n == 0 {
+					return tc.status
+				}
+				return nil
+			}
+			cfg := leaseCfg()
+			cfg.MaxSessions = 1
+			res, _, r := leaseRun(t, cfg, []Session{sess("s", "u", 20, "q", "q", "q")}, testLib(nil, "q"), client)
+			if res.err != nil || len(res.calls) != 3 {
+				t.Fatalf("err %v, %d calls", res.err, len(res.calls))
+			}
+			if r.NotLeaseSessions() != 0 {
+				t.Fatalf("NotLeaseSessions %d: a refused first call made the session not_lease", r.NotLeaseSessions())
+			}
+			c0 := res.calls[0]
+			if c0.Status != "err" || !c0.FirstRefused || c0.FirstLease || c0.NotLease {
+				t.Fatalf("refused first call %+v: want err, first_refused, not first_lease, not not_lease", c0)
+			}
+			if c1 := res.calls[1]; !c1.FirstLease || c1.FirstRefused || c1.NotLease || c1.Status != "ok" {
+				t.Fatalf("first call that ran %+v: want first_lease, ok", c1)
+			}
+			if c2 := res.calls[2]; c2.FirstLease || c2.FirstRefused || c2.NotLease {
+				t.Fatalf("call 2 %+v", c2)
+			}
+		})
+	}
+}
+
+// E17B-R30: refusals until the session's first run; a run with no start is still not_lease, and the
+// mark covers every row from that call on (the refused rows before it are first_refused only).
+func TestRefusedThenRanWithoutStartIsNotLease(t *testing.T) {
+	client, lr := newLeaseRelay(t) // no events at all
+	lr.execError = func(key string, n int) string {
+		if n < 2 {
+			return "memory-budget: over the budget"
+		}
+		return ""
+	}
+	cfg := leaseCfg()
+	cfg.MaxSessions = 1
+	res, _, r := leaseRun(t, cfg, []Session{sess("s", "u", 20, "q", "q", "q", "q")}, testLib(nil, "q"), client)
+	if res.err != nil || len(res.calls) != 4 {
+		t.Fatalf("err %v, %d calls", res.err, len(res.calls))
+	}
+	if r.NotLeaseSessions() != 1 {
+		t.Fatalf("NotLeaseSessions %d, want 1", r.NotLeaseSessions())
+	}
+	for i, c := range res.calls {
+		if c.FirstRefused != (i < 2) || c.FirstLease != (i == 2) || c.NotLease != (i >= 2) {
+			t.Fatalf("call %d %+v", i, c)
+		}
+	}
+}
+
+// E17B-R30: a first call that ran and failed (no End: the stream was cut after it started) with no
+// start event is not a refusal: not_lease, as before.
+func TestFailedFirstCallThatRanWithoutStartIsNotLease(t *testing.T) {
+	client, lr := newLeaseRelay(t)
+	lr.execError = func(key string, n int) string {
+		if n == 0 {
+			return "guest agent: exec failed: broken pipe"
+		}
+		return ""
+	}
+	cfg := leaseCfg()
+	cfg.MaxSessions = 1
+	res, _, r := leaseRun(t, cfg, []Session{sess("s", "u", 20, "q", "q", "q")}, testLib(nil, "q"), client)
+	if res.err != nil || len(res.calls) != 3 {
+		t.Fatalf("err %v, %d calls", res.err, len(res.calls))
+	}
+	if r.NotLeaseSessions() != 1 || !res.calls[0].NotLease || !res.calls[0].FirstLease || res.calls[0].FirstRefused {
+		t.Fatalf("NotLeaseSessions %d, call 0 %+v", r.NotLeaseSessions(), res.calls[0])
 	}
 }
 

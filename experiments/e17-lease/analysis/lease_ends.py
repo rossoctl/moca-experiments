@@ -21,6 +21,13 @@ tolerance. Disagreements and anything unmatched are LISTED, never resolved (E17B
     kept out of the pairing. A key whose lease-tail state is active or expiring is live_at_stop: it has no
     end line in this rung's log (its worker_restart end is written by the NEXT worker's start) and no
     notice, so it takes no part in criterion 4 and is counted.
+    ENDED AFTER THE SWEEP (E17B-R31): the driver's status sweep runs once every session has finished, not
+    at the worker's stop, so a lease live at its status call can still end (idle, memory_reclaim) before the
+    worker stops: that end line has no notice and no tail pending. An unmatched end line of a live_at_stop
+    key whose whole-second time is at or after the floor of that key's lease-tail `swept_at_unix_ms` (the
+    time the status call was sent; the key was live then, so the end came later, even within the same log
+    second) is `ended_after_sweep`: counted, listed, excluded from criterion 4 like live_at_stop. A key not
+    live at the sweep, an end before the sweep second, or a tail row without swept_at_unix_ms stays unmatched.
 (b) Reclaim order. Reference time: for each `memory_reclaim` end, the idle time of every lease alive at
     that log line is T - (that key's last Exec end at or before T+1 s), T being the end line's own
     whole-second timestamp. The ranking does not depend on a common reference, and measuring from the
@@ -112,8 +119,9 @@ def read_jsonl(path):
 
 
 def split_log(log):
-    """(ends per key in order, carry-over ends). A carry-over is a worker_restart end with no earlier start."""
-    ends, carry, started = {}, [], set()
+    """(ends per key in order, carry-over ends, end line times per key in the same order). A carry-over is
+    a worker_restart end with no earlier start."""
+    ends, carry, started, times = {}, [], set(), {}
     for ev in log:
         if ev["kind"] == "start":
             started.add(ev["key"])
@@ -121,7 +129,14 @@ def split_log(log):
             carry.append({"key": ev["key"], "reason": WORKER_RESTART})
         else:
             ends.setdefault(ev["key"], []).append(ev["reason"])
-    return ends, carry
+            times.setdefault(ev["key"], []).append(ev["ts"])
+    return ends, carry, times
+
+
+def sweep_second(tail_row):
+    """The whole second of the key's status call (swept_at_unix_ms), or None when the row has none."""
+    ms = (tail_row or {}).get("swept_at_unix_ms")
+    return None if not isinstance(ms, (int, float)) or isinstance(ms, bool) or ms <= 0 else ms // 1000
 
 
 def key_notices(rows, tail_row):
@@ -150,11 +165,12 @@ def match_notices(log, calls, tails):
     for c in calls:
         by_key.setdefault(c.get("session"), []).append(c)
     tail_by_key = {t.get("key"): t for t in tails}
-    ends, carry = split_log(log)
+    ends, carry, times = split_log(log)
     live = sorted(k for k, t in tail_by_key.items() if t.get("state") in ("active", "expiring"))
     out = {"ends_in_log": sum(len(v) for v in ends.values()), "paired": 0, "notices_seen": 0,
            "unmatched_ends": [], "unmatched_notices": [], "reason_mismatches": [], "duplicate_notices": [],
-           "carryover_ends": carry, "live_at_stop": len(live), "live_at_stop_keys": live}
+           "carryover_ends": carry, "live_at_stop": len(live), "live_at_stop_keys": live,
+           "ended_after_sweep": 0, "ended_after_sweep_ends": []}
     for key in sorted(set(ends) | set(by_key) | set(tail_by_key)):
         notes, dups = key_notices(by_key.get(key, []), tail_by_key.get(key))
         for dd in dups:
@@ -166,8 +182,15 @@ def match_notices(log, calls, tails):
             out["paired"] += 1
             if lines[i] != notes[i]:
                 out["reason_mismatches"].append({"key": key, "n": i + 1, "log": lines[i], "notice": notes[i]})
-        out["unmatched_ends"] += [{"key": key, "n": i + 1, "reason": lines[i]} for i in range(len(notes), len(lines))]
+        swept = sweep_second(tail_by_key.get(key)) if key in live else None
+        for i in range(len(notes), len(lines)):
+            ts = times[key][i]
+            if swept is not None and ts is not None and ts >= swept:
+                out["ended_after_sweep_ends"].append({"key": key, "n": i + 1, "reason": lines[i], "ts": ts})
+            else:
+                out["unmatched_ends"].append({"key": key, "n": i + 1, "reason": lines[i]})
         out["unmatched_notices"] += [{"key": key, "n": i + 1, "reason": notes[i]} for i in range(len(lines), len(notes))]
+    out["ended_after_sweep"] = len(out["ended_after_sweep_ends"])
     return out
 
 
@@ -320,7 +343,7 @@ def analyse(d):
     guards = guard_events(samples, params)
     if why:
         c4 = False
-    elif notices["ends_in_log"] == 0 and notices["notices_seen"] == 0:
+    elif notices["ends_in_log"] - notices["ended_after_sweep"] == 0 and notices["notices_seen"] == 0:
         c4 = None  # vacuous: no lease ended in this rung
     else:
         c4 = not (notices["unmatched_ends"] or notices["unmatched_notices"] or notices["reason_mismatches"]
@@ -346,9 +369,10 @@ def main(argv=None):
     with open(os.path.join(argv[0], "lease_ends.json"), "w") as f:
         json.dump(r, f, indent=2, sort_keys=True)
     n = r["notices"]
-    print("valid %s; ends %d paired %d unmatched %d+%d mismatched %d dup %d live_at_stop %d; reclaim %d wrong %d unknown %d" % (
+    print("valid %s; ends %d paired %d unmatched %d+%d mismatched %d dup %d live_at_stop %d ended_after_sweep %d; "
+          "reclaim %d wrong %d unknown %d" % (
         r["valid"], n["ends_in_log"], n["paired"], len(n["unmatched_ends"]), len(n["unmatched_notices"]),
-        len(n["reason_mismatches"]), len(n["duplicate_notices"]), n["live_at_stop"],
+        len(n["reason_mismatches"]), len(n["duplicate_notices"]), n["live_at_stop"], n["ended_after_sweep"],
         r["reclaim"]["total"], r["reclaim"]["wrong"], r["reclaim"]["unknown"]))
 
 

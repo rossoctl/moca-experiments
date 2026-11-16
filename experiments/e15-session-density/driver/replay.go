@@ -528,14 +528,11 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 		rec.Status, rec.Cause, rec.Msg = "err", causeDeadline, "not started: past the end-of-run grace deadline"
 		return rec, time.Now()
 	}
-	first := false
 	execCtx := ctx
 	if ls != nil {
-		first = !ls.started
-		ls.started = true
-		rec.FirstLease = first
 		var terr error
 		if execCtx, terr = ls.bearer(ctx); terr != nil {
+			// No Exec was sent (execs 0): it is not the session's first call that ran.
 			rec.Status, rec.Cause, rec.Msg = "err", causeExecError, "minting the exec token: "+terr.Error()
 			rec.NotLease = ls.notLease
 			return rec, time.Now()
@@ -556,8 +553,19 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 		// Whatever the call's outcome: a notice acknowledged on the stream is consumed even if the
 		// call then failed.
 		rec.LeaseEvents = ls.fresh(res.events)
-		if first && !hasStart(res.events) {
-			ls.notLease = true // the worker ran this session's first Exec outside a lease
+		if !ls.checked {
+			// E17B-R30: judge the session's first call that RAN an Exec. A refusal (memory-budget,
+			// host-memory, max-runs, busy) is answered before any lease work and carries no start, so
+			// it says nothing about the mode: first_refused, and the next call is the one judged.
+			if res.refused != "" && !hasStart(res.events) {
+				rec.FirstRefused = true
+			} else {
+				ls.checked = true
+				rec.FirstLease = true
+				if !hasStart(res.events) {
+					ls.notLease = true // the worker ran this session's first Exec outside a lease
+				}
+			}
 		}
 		rec.NotLease = ls.notLease
 	}

@@ -35,8 +35,10 @@ def end_ev(reason, at=1):
     return {"state": "end", "reason": reason, "at_unix_ms": at, "mode": "lease"}
 
 
-def tail(key, state="none", pending=None, error=None):
+def tail(key, state="none", pending=None, error=None, swept=None):
     r = {"key": key}
+    if swept is not None:  # seconds after BASE: the driver's swept_at_unix_ms (E17B-R31)
+        r["swept_at_unix_ms"] = int(round((BASE + swept) * 1000))
     if error:
         r["error"] = error
     else:
@@ -140,6 +142,63 @@ def test_live_at_stop_excluded_and_counted(tmp_path):
     r = run(d)
     assert r["notices"]["live_at_stop"] == 1 and r["notices"]["live_at_stop_keys"] == ["a"]
     assert r["notices"]["paired"] == 1 and r["criterion4_pass"] and r["valid"]
+
+
+# ---- E17B-R31: a live lease that ends after the status sweep ----
+
+def after_sweep_rung(tmp_path, end_at, state="active", swept=100.4, name="rung"):
+    """Key a: a lease live at the sweep (state), ending at log second end_at with no notice; key b: one
+    paired end. The sweep (swept s after BASE) is in whole log second 100."""
+    d = tmp_path / name
+    d.mkdir()
+    return rung(d, log=[start_line("a", "vm-1", ts=logts(0)), start_line("b", "vm-2", ts=logts(0)),
+                        end_line("b", "vm-2", "idle", ts=logts(40)), end_line("a", "vm-1", "idle", ts=logts(end_at))],
+                calls=[call("a", 1, 0), call("b", 1, 0)],
+                tails=[tail("a", state, swept=swept),
+                       tail("b", "none", {"state": "end", "reason": "idle", "at_unix_ms": 1}, swept=swept)])
+
+
+def test_live_key_ending_after_the_sweep_is_ended_after_sweep(tmp_path):
+    r = run(after_sweep_rung(tmp_path, end_at=130))
+    n = r["notices"]
+    assert n["ended_after_sweep"] == 1 and n["unmatched_ends"] == []
+    assert n["ended_after_sweep_ends"] == [{"key": "a", "n": 1, "reason": "idle", "ts": BASE + 130}]
+    assert n["live_at_stop"] == 1 and n["paired"] == 1 and n["ends_in_log"] == 2
+    assert r["criterion4_pass"] is True and r["valid"]
+
+
+def test_end_in_the_sweeps_own_second_counts_only_for_a_key_live_at_the_sweep(tmp_path):
+    # whole-second log time 100 is the sweep's own second (sweep at 100.4): the key was live at the
+    # sweep, so its end came after the status call.
+    n = run(after_sweep_rung(tmp_path, end_at=100, name="same-second"))["notices"]
+    assert n["ended_after_sweep"] == 1 and n["unmatched_ends"] == []
+    # a second earlier: the status said active after this end was logged -> unmatched, not explained
+    r = run(after_sweep_rung(tmp_path, end_at=99, name="before"))
+    assert r["notices"]["ended_after_sweep"] == 0
+    assert r["notices"]["unmatched_ends"] == [{"key": "a", "n": 1, "reason": "idle"}]
+    assert r["criterion4_pass"] is False
+    # a key NOT live at the sweep (state none, no pending): an end in or after the sweep second is unmatched
+    for at, name in ((100, "none-same"), (130, "none-after")):
+        r = run(after_sweep_rung(tmp_path, end_at=at, state="none", name=name))
+        assert r["notices"]["ended_after_sweep"] == 0 and len(r["notices"]["unmatched_ends"]) == 1
+        assert r["criterion4_pass"] is False
+    # an expiring lease is live at the sweep too
+    n = run(after_sweep_rung(tmp_path, end_at=130, state="expiring", name="expiring"))["notices"]
+    assert n["ended_after_sweep"] == 1 and n["unmatched_ends"] == []
+
+
+def test_tail_without_swept_at_keeps_the_end_unmatched(tmp_path):
+    # a driver before E17B-R31 wrote no swept_at_unix_ms: nothing to compare with, so it stays unmatched
+    r = run(after_sweep_rung(tmp_path, end_at=130, swept=None))
+    assert r["notices"]["ended_after_sweep"] == 0 and len(r["notices"]["unmatched_ends"]) == 1
+    assert r["criterion4_pass"] is False
+
+
+def test_only_ends_after_the_sweep_is_vacuous(tmp_path):
+    d = rung(tmp_path, log=[start_line("a", "vm-1", ts=logts(0)), end_line("a", "vm-1", "idle", ts=logts(130))],
+             calls=[call("a", 1, 0)], tails=[tail("a", "active", swept=100.4)])
+    r = run(d)
+    assert r["notices"]["ended_after_sweep"] == 1 and r["criterion4_pass"] is None
 
 
 def test_log_with_no_at_unix_ms_and_whole_second_timestamps(tmp_path):

@@ -70,6 +70,35 @@ type execResult struct {
 	// (--record-stdout); stdoutCut is set when more arrived.
 	stdout    []byte
 	stdoutCut bool
+	// refused names a capacity refusal that came before the command ran (refusalOf); "" otherwise.
+	refused string
+}
+
+// refusalOf names a refusal that comes BEFORE the command starts, as moca's sbx client classes them
+// (remote-worker/cmd/sbx/sbx.go refusalClass) plus #644's host backstop: the worker's vmpool refusals
+// (errors.go RefusalError, "<reason>: <detail>"), sent as an ExecError or as the status's message, the
+// session's full queue, and the relay's per-sandbox in-flight cap. "" for every other failure: it may
+// have run part of the command. The lease driver judges not_lease only on a call that ran (E17B-R30).
+func refusalOf(code codes.Code, msg string) string {
+	for _, r := range []string{"memory-budget", "host-memory", "max-runs"} {
+		if strings.HasPrefix(msg, r+":") {
+			return r
+		}
+	}
+	switch {
+	case strings.HasPrefix(msg, "busy: queue full"):
+		return "queue-full"
+	case code == codes.ResourceExhausted && strings.HasPrefix(msg, "sandbox busy"):
+		// Only the relay's "sandbox busy": grpc's own message-size limits are RESOURCE_EXHAUSTED too.
+		return "relay-busy"
+	}
+	return ""
+}
+
+// statusRefusal is refusalOf for a gRPC error.
+func statusRefusal(err error) string {
+	st, _ := status.FromError(err)
+	return refusalOf(st.Code(), st.Message())
 }
 
 // stdoutMax bounds the stdout --record-stdout keeps per call (E17B-R22).
@@ -146,7 +175,7 @@ func execOne(ctx context.Context, client pb.SandboxExecClient, sandboxID string,
 		},
 	})
 	if err != nil {
-		return execResult{cause: rpcCause(err), msg: err.Error()}
+		return execResult{cause: rpcCause(err), msg: err.Error(), refused: statusRefusal(err)}
 	}
 	var res execResult
 	sawErr := false
@@ -156,7 +185,7 @@ func execOne(ctx context.Context, client pb.SandboxExecClient, sandboxID string,
 			break
 		}
 		if err != nil {
-			return execResult{exit: res.exit, cause: rpcCause(err), msg: err.Error(), stderr: res.stderr, events: res.events, stdout: res.stdout, stdoutCut: res.stdoutCut}
+			return execResult{exit: res.exit, cause: rpcCause(err), msg: err.Error(), stderr: res.stderr, events: res.events, stdout: res.stdout, stdoutCut: res.stdoutCut, refused: statusRefusal(err)}
 		}
 		if l := ev.GetLease(); l != nil {
 			res.events = append(res.events, eventOf(l))
@@ -183,6 +212,7 @@ func execOne(ctx context.Context, client pb.SandboxExecClient, sandboxID string,
 	switch {
 	case sawErr:
 		res.cause = causeExecError
+		res.refused = refusalOf(codes.OK, res.msg)
 		if strings.Contains(strings.ToLower(res.msg), "no live worker") {
 			res.cause = causeNoLiveWorker
 		}

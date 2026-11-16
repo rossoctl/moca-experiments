@@ -104,11 +104,14 @@ func eventOf(e *pb.LeaseEvent) leaseEvent {
 // leaseTailRow is one lease-tail.jsonl line: the end-of-run status of one session's workspace.
 // A status call that failed is {key, error}. state is none | active | expiring; pending is the
 // last undelivered event, and a lease still live at the sweep is the matcher's live_at_stop.
+// swept_at_unix_ms is the wall time the row's status call was sent (E17B-R31): a live lease's end
+// line at or after it is the matcher's ended_after_sweep, not an unmatched end.
 type leaseTailRow struct {
-	Key     string      `json:"key"`
-	State   string      `json:"state,omitempty"`
-	Pending *leaseEvent `json:"pending,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	Key           string      `json:"key"`
+	State         string      `json:"state,omitempty"`
+	Pending       *leaseEvent `json:"pending,omitempty"`
+	Error         string      `json:"error,omitempty"`
+	SweptAtUnixMs int64       `json:"swept_at_unix_ms"`
 }
 
 // leaseSession is one session's lease state. Its methods are called from the session's own
@@ -118,8 +121,8 @@ type leaseSession struct {
 	cfg      *LeaseConfig
 	ref      *Refresher
 	seen     map[[2]any]bool // (at_unix_ms, state) of every event already recorded
-	started  bool            // the first call has been handed out
-	notLease bool            // the first call carried no start event
+	checked  bool            // the session's first call that ran an Exec has been judged (E17B-R30)
+	notLease bool            // that call carried no start event
 }
 
 func newLeaseSession(cfg *LeaseConfig, key string) *leaseSession {
@@ -232,8 +235,9 @@ func (r *Replayer) leaseSessionFor(key string) *leaseSession {
 	return ls
 }
 
-// NotLeaseSessions is how many sessions' first call carried no lease start event: each ran per-exec
-// or without a lease, so the rung is not a lease measurement and the driver exits non-zero.
+// NotLeaseSessions is how many sessions' first call that ran an Exec carried no lease start event:
+// each ran per-exec or without a lease, so the rung is not a lease measurement and the driver exits
+// non-zero. A refused call ran nothing and is not the one judged (E17B-R30: first_refused).
 func (r *Replayer) NotLeaseSessions() int {
 	r.leaseMu.Lock()
 	defer r.leaseMu.Unlock()
@@ -288,8 +292,8 @@ func (r *Replayer) sweepLeases(ctx context.Context) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
+			row := leaseTailRow{Key: k, SweptAtUnixMs: time.Now().UnixMilli()}
 			st, err := r.leaseSessionFor(k).status(ctx, r.client)
-			row := leaseTailRow{Key: k}
 			switch {
 			case err != nil:
 				row.Error = err.Error()
