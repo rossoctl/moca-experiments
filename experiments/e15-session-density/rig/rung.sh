@@ -8,7 +8,7 @@
 #   POINT  default | short | long | no-infra | no-chains | smoke | mem512 | lowduty   (points.sh: corpus
 #          /srv/e15/corpora/<its corpus>, library, workspace template, image size)
 #          | pycache | pycache-low | pycache-d64 | pycache-d768   (E17, fresh-metal)
-#          | squeeze   (E17b: E17B=1, fresh-metal; arms ship-300 and sbx)
+#          | squeeze | squeeze-256   (E17b: E17B=1, fresh-metal; arms ship-300 and sbx; 1024 and 256 MiB guests)
 #
 # Environment (defaults are SPEC §10.2's):
 #   E15_WARMUP_S 600 (fresh-metal resident arms 1200; lib.sh e15_default_warmup)   E15_WINDOW_S 900   E15_SPREAD_S 60   E15_GRACE_S 300   E15_SEED 1
@@ -16,7 +16,7 @@
 #   E15_CORPUS_OVERRIDE  a probe corpus.jsonl to replay instead of POINT's (classprobe.sh)
 #   E15_START_ZERO     1: every session starts at its first call (probe runs)
 #   E15_MAX_SESSIONS   start at most this many sessions, then end the run early (probe runs)
-#   E15_SQUEEZE_MEMMAX_MB  POINT squeeze only (E17b): lower e15.slice to MemoryMax=MB MiB, MemoryHigh 1 GiB below,
+#   E15_SQUEEZE_MEMMAX_MB  POINT squeeze or squeeze-256 only (E17b): lower e15.slice to MemoryMax=MB MiB, MemoryHigh 1 GiB below,
 #                      with `systemctl set-property --runtime` before the worker starts; the slice's own values
 #                      (read with `systemctl show` first) are restored at the rung's end and on any error or signal
 #                      (EXIT trap). One manifest line, its UNDO the restore. Recorded in params.json.
@@ -84,12 +84,22 @@ esac
 # E17b squeeze knob (points.sh squeeze): validated here, before any host change.
 SQUEEZE_MB=${E15_SQUEEZE_MEMMAX_MB:-}
 if [ -n "$SQUEEZE_MB" ]; then
-  [ "$POINT" = squeeze ] || {
-    echo "rung.sh: E15_SQUEEZE_MEMMAX_MB is for POINT squeeze only (got POINT $POINT)" >&2
+  e15_is_squeeze "$POINT" || {
+    echo "rung.sh: E15_SQUEEZE_MEMMAX_MB is for POINT squeeze or squeeze-256 only (got POINT $POINT)" >&2
     exit 2
   }
   [[ "$SQUEEZE_MB" =~ ^[1-9][0-9]*$ ]] && [ "$SQUEEZE_MB" -gt 8192 ] || {
     echo "rung.sh: E15_SQUEEZE_MEMMAX_MB must be an integer above 8192 (the committed budget is MemoryMax - 8192 MiB, E17B-R20), got '$SQUEEZE_MB'" >&2
+    exit 2
+  }
+fi
+
+# The squeeze points' D is for one guest RAM (E17B-R21): squeeze 1024 MiB (D=768), squeeze-256 256 MiB (D=192).
+if e15_is_squeeze "$POINT"; then
+  want_ram=1024
+  [ "$POINT" != squeeze-256 ] || want_ram=256
+  [ "$(worker_guest_ram_mb)" = "$want_ram" ] || {
+    echo "rung.sh: POINT $POINT runs at E17B_GUEST_RAM_MB=$want_ram (its D keeps the dataset-to-RAM ratio), got ${E17B_GUEST_RAM_MB:-1024}" >&2
     exit 2
   }
 fi

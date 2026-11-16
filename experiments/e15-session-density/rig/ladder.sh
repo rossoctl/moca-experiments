@@ -34,7 +34,7 @@
 # N<n>-s2-repeat, N<n>-s2-k2, ...), so a second-seed run (E15_SEED=2) never moves the seed-1 rung
 # aside. A tag must be [a-z0-9][a-z0-9-]* (e.g. s2, stag-s2); anything else exits 2. aws-prelim ignores it.
 #
-# E17b squeeze (POINT squeeze, E17B=1, fresh-metal; experiments/e17-lease/PLAN-E17B.md Task 9): a ship arm only, and
+# E17b squeeze (POINT squeeze or squeeze-256, E17B=1, fresh-metal; experiments/e17-lease/PLAN-E17B.md Task 9): a ship arm only, and
 # E15_SQUEEZE_MEMMAX_MB is required (every rung runs under it; rung.sh); the knob is refused at any other point.
 # Every rule above still runs and holds/n_max are still recorded, but the climb stops on the squeeze rule instead
 # of on condition 4: after each counted rung, experiments/e17-lease/analysis/squeeze_rule.py (staged at
@@ -128,7 +128,7 @@ fi
 # E17b squeeze: the climb's own stop rule (see the header).
 SQUEEZE=0
 SQUEEZE_RULE=""
-if [ "$POINT" = squeeze ]; then
+if e15_is_squeeze "$POINT"; then
   SQUEEZE=1
   e17b_lease_arm "$ARM" || {
     echo "ladder.sh: the squeeze climb is for a ship arm (its stop rule reads the worker's lease reclaims); sbx runs one rung.sh at the N the ship-300 climb stopped at" >&2
@@ -141,7 +141,7 @@ if [ "$POINT" = squeeze ]; then
   SQUEEZE_RULE=$E15_ROOT/src/e17/analysis/squeeze_rule.py
   [ -f "$SQUEEZE_RULE" ] || die "no $SQUEEZE_RULE (experiments/e17-lease/rig/sync.sh stages it)"
 elif [ -n "${E15_SQUEEZE_MEMMAX_MB:-}" ]; then
-  echo "ladder.sh: E15_SQUEEZE_MEMMAX_MB is for POINT squeeze only" >&2
+  echo "ladder.sh: E15_SQUEEZE_MEMMAX_MB is for POINT squeeze or squeeze-256 only" >&2
   exit 2
 fi
 

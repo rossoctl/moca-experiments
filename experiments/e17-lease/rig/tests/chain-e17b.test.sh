@@ -70,9 +70,9 @@ rung)
   mkdir -p "\$d"
   printf '{"arm": "%s", "n": %s, "moca_commit": "%s"}\n' "\$1" "\$2" "\${STUB_COMMIT:-$PIN}" >"\$d/params.json" ;;
 ladder)
-  if [ "\$1" = squeeze ]; then
-    mkdir -p "\$E15_ROOT/runs/squeeze/\$2"
-    printf '{"squeeze": {"stop_n": %s, "memmax_mb": %s}}\n' "\${STUB_STOP_N:-64}" "\$E15_SQUEEZE_MEMMAX_MB" >"\$E15_ROOT/runs/squeeze/\$2/ladder.json"
+  if [ "\${1#squeeze}" != "\$1" ]; then
+    mkdir -p "\$E15_ROOT/runs/\$1/\$2"
+    printf '{"squeeze": {"stop_n": %s, "memmax_mb": %s}}\n' "\${STUB_STOP_N:-64}" "\$E15_SQUEEZE_MEMMAX_MB" >"\$E15_ROOT/runs/\$1/\$2/ladder.json"
   fi ;;
 esac
 exit 0
@@ -139,7 +139,7 @@ test_chain_lists_stages() {
   check "list: exit 0, the predictions state in the header" "$(chain -- --list)/$(head -1 "$TMP/c.out" | grep -c 'predictions: missing')" "0/1"
   check "list: the ordered stages (Task 12 bring-up, Task 14 Steps 1-4, optional ladders, the 256 MiB runs last)" \
     "$(sed -n '2,$p' "$TMP/c.out" | awk '{print $1}' | tr '\n' ' ')" \
-    "smoke cal-default-sbx cal-default-ship-300 cal-pycache-sbx cal-pycache-ship-300 base-pycache-low-sbx base-pycache-low-ship-300 base-pycache-ship-30 base-pycache-ship-120 lat-pycache-sbx-n1 lat-pycache-ship-300-n1 lat-pycache-low-sbx-n1 lat-pycache-low-ship-300-n1 lat-pycache-sbx-n128 lat-pycache-ship-300-n128 lat-pycache-low-sbx-n128 lat-pycache-low-ship-300-n128 lat-pycache-ship-30-n128 lat-pycache-ship-120-n128 ladder-default-sbx ladder-default-ship-300 base-squeeze-sbx base-squeeze-ship-300 squeeze-ship-300 squeeze-sbx probe-overhead ownwalk base-default-ship-30 base-default-ship-120 ladder-default-ship-30 ladder-default-ship-120 ram256-pycache-sbx-n1 ram256-pycache-ship-300-n1 ram256-squeeze "
+    "smoke cal-default-sbx cal-default-ship-300 cal-pycache-sbx cal-pycache-ship-300 base-pycache-low-sbx base-pycache-low-ship-300 base-pycache-ship-30 base-pycache-ship-120 lat-pycache-sbx-n1 lat-pycache-ship-300-n1 lat-pycache-low-sbx-n1 lat-pycache-low-ship-300-n1 lat-pycache-sbx-n128 lat-pycache-ship-300-n128 lat-pycache-low-sbx-n128 lat-pycache-low-ship-300-n128 lat-pycache-ship-30-n128 lat-pycache-ship-120-n128 ladder-default-sbx ladder-default-ship-300 base-squeeze-sbx base-squeeze-ship-300 squeeze-ship-300 squeeze-sbx probe-overhead ownwalk base-default-ship-30 base-default-ship-120 ladder-default-ship-30 ladder-default-ship-120 ram256-pycache-sbx-n1 ram256-pycache-ship-300-n1 ram256-base-squeeze-sbx ram256-base-squeeze-ship-300 ram256-squeeze-ship-300 ram256-squeeze-sbx "
   check "list: only the smoke and the four calibration baselines run before the seal; every other stage needs it" \
     "$(sed -n '2,$p' "$TMP/c.out" | awk '$2 == "-" {print $1}' | tr '\n' ' ')/$(sed -n '2,$p' "$TMP/c.out" | awk '$2 != "-" && $2 != "seal" && $2 != "opt"' | wc -l | tr -d ' ')" \
     "smoke cal-default-sbx cal-default-ship-300 cal-pycache-sbx cal-pycache-ship-300 /0"
@@ -257,8 +257,17 @@ test_chain_preflight_and_guards() {
   check "ram256: the pycache N=1 stages run at pycache-d64 (D scaled 256 -> 64 with the RAM) with E17B_GUEST_RAM_MB=256, tag ram256" \
     "$(chain -- --from ram256-pycache-sbx-n1 --to ram256-pycache-ship-300-n1)/$(tr '\n' ';' <"$CLOG")" \
     "0/rung sbx 1 pycache-d64 tag=ram256 memmax=unset e17b=1 ram=256;rung ship-300 1 pycache-d64 tag=ram256 memmax=unset e17b=1 ram=256;"
-  check "blocked: the ownership-walk stage and the 256 MiB squeeze (no D=192 template) fail naming what is missing" \
-    "$(chain -- --from ownwalk --to ownwalk)/$(grep -c 'not wired: the ownership-walk runner' "$T/e17b/ownwalk.log")/$(chain -- --from ram256-squeeze)/$(grep -c 'not wired: .*D=192' "$T/e17b/ram256-squeeze.log")" "1/1/1/1"
+  check "blocked: the ownership-walk stage fails naming what is missing" \
+    "$(chain -- --from ownwalk --to ownwalk)/$(grep -c 'not wired: the ownership-walk runner' "$T/e17b/ownwalk.log")" "1/1"
+  reset
+  check "ram256 squeeze (E17B-R21): squeeze-256 baselines, the ship-300 climb under E17B_SQUEEZE256_MEMMAX_MB, then sbx at its stop N, all at 256 MiB" \
+    "$(chain E17B_SQUEEZE256_MEMMAX_MB=12288 E17B_SQUEEZE_MEMMAX_MB=16384 -- --from ram256-base-squeeze-sbx --to ram256-squeeze-sbx)/$(tr '\n' ';' <"$CLOG")" \
+    "0/baseline squeeze-256 sbx tag=unset memmax=unset e17b=1 ram=256;baseline squeeze-256 ship-300 tag=unset memmax=unset e17b=1 ram=256;ladder squeeze-256 ship-300 tag=unset memmax=12288 e17b=1 ram=256;rung sbx 64 squeeze-256 tag=sq memmax=12288 e17b=1 ram=256;"
+  reset
+  check "ram256 squeeze: the climb without E17B_SQUEEZE256_MEMMAX_MB fails, naming it (the 1024 MiB value is not reused)" \
+    "$(chain E17B_SQUEEZE_MEMMAX_MB=16384 -- --from ram256-squeeze-ship-300 --to ram256-squeeze-ship-300)/$(grep -c 'needs E17B_SQUEEZE256_MEMMAX_MB' "$T/e17b/ram256-squeeze-ship-300.log")/$(grep -c . "$CLOG")" "1/1/0"
+  check "ram256 squeeze: sbx refuses without the squeeze-256 climb's ladder.json (not the 1024 MiB one)" \
+    "$(mkdir -p "$T/runs/squeeze/ship-300"; printf '{"squeeze": {"stop_n": 64, "memmax_mb": 16384}}\n' >"$T/runs/squeeze/ship-300/ladder.json"; chain -- --from ram256-squeeze-sbx --to ram256-squeeze-sbx)/$(grep -c "no $T/runs/squeeze-256/ship-300/ladder.json" "$T/e17b/ram256-squeeze-sbx.log")" "1/1"
   check "probe-overhead: fails while Task 11's probe-overhead.sh is missing" \
     "$(chain -- --from probe-overhead --to probe-overhead)/$(grep -c 'probe-overhead.sh (Task 11 provides it)' "$T/e17b/probe-overhead.log")" "1/1"
   check "optional: the ship-30/ship-120 ladder stages SKIP without E17B_OPTIONAL=1, run with it" \

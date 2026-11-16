@@ -40,8 +40,9 @@
 # stays large).
 # Guest RAM (E17B-R17): every stage runs on the snapshot leaf e17b-<pin8>-1024; the ram256-* stages set
 # E17B_GUEST_RAM_MB=256 (leaf e17b-<pin8>-256) with D scaled to the same dataset-to-RAM ratio: pycache (D=256) runs as
-# pycache-d64. Stages that cannot run yet are "blocked" and fail naming what is missing: the 256 MiB squeeze (D=768
-# scales to 192, which has no template or point) and the ownership-walk runner (Task 11).
+# pycache-d64, and the squeeze as point squeeze-256 (D=768 scales to 192; ruling E17B-R21) under its own
+# E17B_SQUEEZE256_MEMMAX_MB. Stages that cannot run yet are "blocked" and fail naming what is missing: the
+# ownership-walk runner (Task 11).
 #
 # Output: "E17B <stage> START|DONE|FAILED|SKIP ..." lines. Exit 0 when every selected stage is done, 1 on a
 # refusal or a failed stage, 2 on bad usage.
@@ -54,6 +55,7 @@ export E17B=1
 export E15_HOST_PROFILE=fresh-metal
 export E15_MANIFEST=${E15_MANIFEST:-$HOME/e17-manifest.md}
 SQUEEZE_MB=${E17B_SQUEEZE_MEMMAX_MB:-}
+SQUEEZE256_MB=${E17B_SQUEEZE256_MEMMAX_MB:-}
 unset E15_MAX_SESSIONS E15_START_ZERO E15_TAG E15_SEED E15_WARMUP_S E15_WINDOW_S E15_GRACE_S E15_LADDER_RUNGS \
   E15_LADDER_TAG E15_K_MULT E15_CORPUS_OVERRIDE E15_END_SESSION_DEFER E15_SQUEEZE_MEMMAX_MB E17B_GUEST_RAM_MB
 E15_RIG=$HERE/../../e15/rig
@@ -72,7 +74,6 @@ BASELINE=${E17B_BASELINE:-$E15_SRC/rig/baseline.sh}
 SMOKE=${E17B_SMOKE:-$E17_SRC/rig/smoke.sh}
 ANALYSIS=${E17B_ANALYSIS:-$E17_SRC/analysis}
 L=$E15_ROOT/e17b
-SQUEEZE_LADDER=$E15_RUNS/squeeze/ship-300/ladder.json
 
 # name|needs|command: needs is "-" (allowed before the seal), "seal", or "opt" (seal, and E17B_OPTIONAL=1).
 STAGES=(
@@ -105,8 +106,8 @@ STAGES=(
   # budget there is MemoryMax - 8192 (E17B-R20); the host-MemAvailable reclaim trigger is not exercised by the squeeze.
   "base-squeeze-sbx|seal|baseline squeeze sbx"
   "base-squeeze-ship-300|seal|baseline squeeze ship-300"
-  "squeeze-ship-300|seal|squeeze-ladder ship-300 (budget = MemoryMax - 8192; the host-MemAvailable reclaim trigger is not exercised by the squeeze)"
-  "squeeze-sbx|seal|squeeze-rung sbx"
+  "squeeze-ship-300|seal|squeeze-ladder squeeze ship-300 (budget = MemoryMax - 8192; the host-MemAvailable reclaim trigger is not exercised by the squeeze)"
+  "squeeze-sbx|seal|squeeze-rung squeeze sbx"
   # Task 14 Step 4: the §7.4 probes (Task 11)
   "probe-overhead|seal|script probe-overhead.sh"
   "ownwalk|seal|blocked the ownership-walk runner (Task 11: driver subcommand ownwalk at 10000, 100000, 500000 files)"
@@ -118,7 +119,12 @@ STAGES=(
   # Task 14 Steps 1 and 3 at 256 MiB guests (spec §5), D scaled to the same dataset-to-RAM ratio
   "ram256-pycache-sbx-n1|seal|rung256 sbx 1 pycache-d64"
   "ram256-pycache-ship-300-n1|seal|rung256 ship-300 1 pycache-d64"
-  "ram256-squeeze|seal|blocked the 256 MiB squeeze: D=768 scales to D=192, which has no template (bringup.sh builds D=64, 256, 768) or point"
+  # the 256 MiB squeeze (E17B-R21): point squeeze-256 (D = 768 x 256/1024 = 192), its own baselines and its own
+  # MemoryMax (E17B_SQUEEZE256_MEMMAX_MB, from its own short climb), sbx at its climb's stop N
+  "ram256-base-squeeze-sbx|seal|baseline256 squeeze-256 sbx"
+  "ram256-base-squeeze-ship-300|seal|baseline256 squeeze-256 ship-300"
+  "ram256-squeeze-ship-300|seal|squeeze-ladder squeeze-256 ship-300 (budget = MemoryMax - 8192)"
+  "ram256-squeeze-sbx|seal|squeeze-rung squeeze-256 sbx"
 )
 
 usage() {
@@ -314,6 +320,15 @@ latency() {
   fi
 }
 
+# sq_point POINT: the squeeze point's MemoryMax (sq_mb, from the variable sq_var) and guest RAM (sq_ram; empty: 1024).
+sq_point() {
+  case "$1" in
+  squeeze) sq_var=E17B_SQUEEZE_MEMMAX_MB sq_mb=$SQUEEZE_MB sq_ram="" ;;
+  squeeze-256) sq_var=E17B_SQUEEZE256_MEMMAX_MB sq_mb=$SQUEEZE256_MB sq_ram=256 ;;
+  *) die "sq_point: $1 is not a squeeze point" ;;
+  esac
+}
+
 # run_cmd KIND ARGS...: one stage's work (its output goes to the stage log).
 run_cmd() {
   local kind=$1 n mm
@@ -339,21 +354,28 @@ run_cmd() {
     preflight "$1" "$2"
     bash "$LADDER" "$1" "$2"
     ;;
-  squeeze-ladder)
-    [ -n "$SQUEEZE_MB" ] || die "the squeeze climb needs E17B_SQUEEZE_MEMMAX_MB (MiB, from a first short climb: Task 14 Step 3)"
-    preflight squeeze "$1"
-    E15_SQUEEZE_MEMMAX_MB=$SQUEEZE_MB bash "$LADDER" squeeze "$1"
+  baseline256)
+    preflight "$1" "$2"
+    E17B_GUEST_RAM_MB=256 bash "$BASELINE" "$1" "$2"
     ;;
-  squeeze-rung)
-    [ -f "$SQUEEZE_LADDER" ] || die "no $SQUEEZE_LADDER: run squeeze-ship-300 first"
-    read -r n mm < <(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("squeeze") or {}; print(s.get("stop_n") or "null", s.get("memmax_mb") or "null")' "$SQUEEZE_LADDER")
-    [ "$n" != null ] || die "the ship-300 squeeze climb stopped at no N ($SQUEEZE_LADDER): nothing to run $1 at"
-    [ "$mm" != null ] || die "$SQUEEZE_LADDER records no memmax_mb"
-    [ -z "$SQUEEZE_MB" ] || [ "$SQUEEZE_MB" = "$mm" ] ||
-      die "E17B_SQUEEZE_MEMMAX_MB=$SQUEEZE_MB, but the ship-300 climb ran under $mm: $1 runs under the climb's value"
-    preflight squeeze "$1"
-    echo "squeeze: $1 at N=$n (the ship-300 climb's stop), E15_SQUEEZE_MEMMAX_MB=$mm"
-    E15_SQUEEZE_MEMMAX_MB=$mm E15_TAG=sq bash "$RUNG" "$1" "$n" squeeze
+  squeeze-ladder) # POINT ARM
+    sq_point "$1"
+    [ -n "$sq_mb" ] || die "the $1 climb needs $sq_var (MiB, from a first short climb: Task 14 Step 3)"
+    preflight "$1" "$2"
+    env ${sq_ram:+E17B_GUEST_RAM_MB=$sq_ram} E15_SQUEEZE_MEMMAX_MB="$sq_mb" bash "$LADDER" "$1" "$2"
+    ;;
+  squeeze-rung) # POINT ARM
+    sq_point "$1"
+    local lj=$E15_RUNS/$1/ship-300/ladder.json
+    [ -f "$lj" ] || die "no $lj: run the $1 ship-300 climb first"
+    read -r n mm < <(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("squeeze") or {}; print(s.get("stop_n") or "null", s.get("memmax_mb") or "null")' "$lj")
+    [ "$n" != null ] || die "the ship-300 $1 climb stopped at no N ($lj): nothing to run $2 at"
+    [ "$mm" != null ] || die "$lj records no memmax_mb"
+    [ -z "$sq_mb" ] || [ "$sq_mb" = "$mm" ] ||
+      die "$sq_var=$sq_mb, but the ship-300 climb ran under $mm: $2 runs under the climb's value"
+    preflight "$1" "$2"
+    echo "squeeze: $2 at N=$n on $1 (the ship-300 climb's stop), E15_SQUEEZE_MEMMAX_MB=$mm${sq_ram:+, E17B_GUEST_RAM_MB=$sq_ram}"
+    env ${sq_ram:+E17B_GUEST_RAM_MB=$sq_ram} E15_SQUEEZE_MEMMAX_MB="$mm" E15_TAG=sq bash "$RUNG" "$2" "$n" "$1"
     ;;
   script)
     n=$1

@@ -2129,6 +2129,16 @@ SH
     "$(for d in 64 256 768; do cmp -s "$BR17/template-pycache-d$d/BUILD" "$BR17/template-pycache-d$d/workspace.img" && printf y || printf n; done)/$(awk '{print $1}' "$BR17/state/artifacts" | grep -c '^template-pycache-d\(64\|256\|768\)$')/$(awk '{print $1}' "$BR17/state/artifacts" | grep -c '^corpus-pycache\(-low\)\?$')" "yyy/3/2"
   check "E17 bringup: one manifest note per template with its leaf undo line" \
     "$(for d in 64 256 768; do grep -c "E17 built $BR17/template-pycache-d$d/workspace.img (sha256 $(tsha "$d");.* -- undo: sudo -n rm -rf $BR17/template-pycache-d$d; rm -f $BR17/state/template-pycache-d$d $BR17/state/template-pycache-d$d.inputs\$" "$TMP/bu-m.md"; done | tr '\n' ' ')" "1 1 1 "
+  # E17b (ruling E17B-R21): under E17B=1 bringup.sh also builds the D=192 template of point squeeze-256
+  bu_stage
+  printf 'E17B_MOCA_PIN=%s\n' 1111111111111111111111111111111111111111 >"$TMP/bu-e17b-pins.sh"
+  check "E17b bringup: under E17B=1 it also builds d192 (squeeze-256), with the same recipe (1536 MiB, seed 1, the staged wheels)" \
+    "$(bu E17B=1 E15_TEST_PINS="$TMP/bu-e17b-pins.sh")/$(sed 's/ S=.*//' "$TMP/bu.builds" | tr '\n' ' ')/$(grep -c "^build D=192 S=1 M=1536 wheels=$BR17/wheels-pycache rootfs=$BR17/rootfs-ro.mnt.[A-Za-z0-9]* out=$BR17/template-pycache-d192/workspace.img mounted=1\$" "$TMP/bu.builds")" \
+    "0/build D=64 build D=256 build D=768 build D=192 /1"
+  check "E17b bringup: d192 gets its stamp, BUILD and manifest note like the others" \
+    "$([ -s "$BR17/state/template-pycache-d192" ] && [ "$(cat "$BR17/state/template-pycache-d192")" = "$(tsha 192)" ] && echo stamp)/$(cmp -s "$BR17/template-pycache-d192/BUILD" "$BR17/template-pycache-d192/workspace.img" && echo build)/$(grep -c "E17 built $BR17/template-pycache-d192/workspace.img" "$TMP/bu-m.md")" "stamp/build/1"
+  bu_stage
+  bu >/dev/null
   # the stamp skip
   cp "$TMP/bu-m.md" "$TMP/bu-m.1"
   check "E17 bringup: a second run builds nothing and mounts nothing (inputs stamps match)" \
@@ -2228,6 +2238,8 @@ SH
   check "E17 path guard: the snapshot directory is refused" "$(ctg "$BR17/snapshots/e15" 256)" "refused"
   check "E17 path guard: another D's image is refused" "$(ctg "$BR17/template-pycache-d64/workspace.img" 256)" "refused"
   check "E17 path guard: a D that is not a template is refused" "$(ctg "$BR17/template-pycache-d512/workspace.img" 512)" "refused"
+  check "E17 path guard: D=192 (E17b squeeze-256) only under E17B=1" \
+    "$(ctg "$BR17/template-pycache-d192/workspace.img" 192)/$(E17B=1 ctg "$BR17/template-pycache-d192/workspace.img" 192)" "refused/pass"
   check "E17 path guard: a .. spelling is refused" "$(ctg "$BR17/template-pycache-d256/../template-pycache-d256/workspace.img" 256)" "refused"
   check "E17 path guard: a // spelling is refused" "$(ctg "$BR17//template-pycache-d256/workspace.img" 256)" "refused"
   check "E17 path guard: E15's own template is refused" "$(ctg "$BR17/template/workspace.img" 256)" "refused"
@@ -2995,6 +3007,8 @@ test_ship_rung_harness() {
   printf '{"table": {"mean_span_min": 30}}\n' >"$RS/corpora/pycache/corpus-report.json"
   echo '{}' >"$RS/src/e17/workload/library.json"
   head -c 4096 /dev/zero >"$RS/template-pycache-d768/workspace.img"
+  mkdir -p "$RS/template-pycache-d192"
+  head -c 4096 /dev/zero >"$RS/template-pycache-d192/workspace.img"
   # the E17b snapshot leaves (snapshot-e17b.sh; E17B-R17): e17b-<pin8>-<RAM>
   for r in 1024 256; do
     mkdir -p "$RS/snapshots/e17b-${E17B_FIXPIN:0:8}-$r"
@@ -3409,6 +3423,9 @@ SH
   check "squeeze ladder: refused without E15_SQUEEZE_MEMMAX_MB (exit 2, no rung)" "$?/$(grep -c . "$TMP/sq.log")/$(grep -c 'E15_SQUEEZE_MEMMAX_MB' "$TMP/sq.out")" "2/0/1"
   sql sbx E15_SQUEEZE_MEMMAX_MB=16384
   check "squeeze ladder: refused for sbx (exit 2, no rung): sbx runs one rung at the N the ship-300 climb stopped at" "$?/$(grep -c . "$TMP/sq.log")" "2/0"
+  sql ship-300 squeeze-256 E15_SQUEEZE_MEMMAX_MB=16384
+  check "squeeze ladder: squeeze-256 climbs by the same stop rule (stops at 64, squeeze record in its ladder.json)" \
+    "$?/$(tail -1 "$TMP/sq.log" | cut -d' ' -f3)/$(sqj 'd["squeeze"]["stop_n"]' squeeze-256)/$(sqj 'd["squeeze"]["stopped_by"]' squeeze-256)" '0/64/64/"reclaim_rate"'
   sql ship-300 pycache-d768
   check "squeeze ladder: any other point keeps the E15 stop rule (both verdicts broken at 16), no squeeze record" \
     "$?/$(cut -d' ' -f3 "$TMP/sq.log" | tr '\n' ' ')/$(sqj '"squeeze" in d' pycache-d768)" "0/1 8 16 /false"
@@ -3458,6 +3475,27 @@ test_squeeze_budget_follows_memmax() {
 }
 test_e17b_snapshot_leaf_selected
 test_squeeze_budget_follows_memmax
+test_squeeze_256_point() {
+  local f='e15_point squeeze-256 && echo "$E15_P_ARMS|$E15_P_CORPUS|$E15_P_DATASET_MIB|$E15_P_IMAGE_MB|$E15_P_TEMPLATE_STAMP|${E15_P_LIBRARY#"$E15_ROOT"/}|$E15_P_FALLBACK|$E15_P_PROBE_CAP_MS"'
+  check "squeeze-256: squeeze with D scaled to 192 (768 x 256/1024; its own template), the same corpus, library and arms" \
+    "$(t17m fresh-metal 1 "$f")" "ship-300 sbx|pycache|192|1536|template-pycache-d192|src/e17/workload/library.json|0|120000"
+  check "squeeze-256: unknown with E17B unset, and on aws-prelim" \
+    "$(t17m fresh-metal unset 'e15_point squeeze-256; echo $?')/$(t17m aws-prelim 1 'e15_point squeeze-256; echo $?')" "1/1"
+  check "squeeze-256: its own point signature" "$(t17m fresh-metal 1 '[ "$(e15_point_sig squeeze-256)" != "$(e15_point_sig squeeze)" ] && echo own')" "own"
+  check "squeeze-256: e15_is_squeeze names both squeeze points and nothing else" \
+    "$(t17m fresh-metal 1 'for p in squeeze squeeze-256 pycache-d768 default; do e15_is_squeeze $p && printf "%s " $p; done')" "squeeze squeeze-256 "
+  SRUNG_POINT=squeeze-256 srung ship-300 E17B_GUEST_RAM_MB=256 E15_SQUEEZE_MEMMAX_MB=16384
+  check "squeeze-256: a 256 MiB rung with the knob runs (exit 0): D=192, the 256 leaf, the slice squeezed and restored" \
+    "$?/$(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(p["dataset_mib"], p["guest_ram_mb"], p["snapshot_image"], p["squeeze_memmax_mb"], p["committed_mb"])' "$RS/runs/squeeze-256/ship-300/N1/params.json")/$(grep -c '^set-property' "$SORD")" \
+    "0/192 256 e17b-11111111-256 16384 8192/2"
+  SRUNG_POINT=squeeze-256 srung ship-300
+  check "squeeze-256: refused (exit 2, nothing started) without E17B_GUEST_RAM_MB=256" \
+    "$?/$(grep -c . "$SSYS")/$(grep -c 'POINT squeeze-256 runs at E17B_GUEST_RAM_MB=256' "$TMP/ship-rung.out")" "2/0/1"
+  qrung ship-300 E17B_GUEST_RAM_MB=256
+  check "squeeze: refused (exit 2) at 256 MiB (its D=768 is for 1024 MiB guests; squeeze-256 is the 256 MiB point)" \
+    "$?/$(grep -c . "$SSYS")/$(grep -c 'POINT squeeze runs at E17B_GUEST_RAM_MB=1024' "$TMP/ship-rung.out")" "2/0/1"
+}
+test_squeeze_256_point
 test_squeeze_point_defined
 test_memmax_set_and_restored_on_error
 test_rung_removes_token_keys

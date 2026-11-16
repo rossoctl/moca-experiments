@@ -21,7 +21,8 @@
 #   3. the pycache corpora: each corpus.jsonl's sha256 against its report's corpus_sha256 (as setup.sh
 #      step 8c), recorded in state/artifacts
 #   4. the wheels: every wheel in wheels.lock is in /srv/e15/wheels-pycache with the locked sha256
-#   5. the templates (points.sh pycache-d64, pycache, pycache-d768): for D = 64, 256, 768, refused
+#   5. the templates (points.sh pycache-d64, pycache, pycache-d768; under E17B=1 also squeeze-256's D=192,
+#      ruling E17B-R21: the 256 MiB squeeze keeps the dataset-to-RAM ratio): for D = 64, 256, 768 (192), refused
 #      while a rung's worker (e15-worker.service) runs, before any template is removed or rebuilt,
 #      /srv/e15/template-pycache-d<D>/workspace.img by build_pycache_workspace.sh --image-mb 1536
 #      --dataset-mib D --dataset-seed 1 --wheels /srv/e15/wheels-pycache --rootfs-tree <the rootfs,
@@ -38,7 +39,8 @@
 # Rig safety: no rm -rf is run; it appears only in the manifest's undo text, always of a leaf (one
 # template directory, one corpus directory, the wheels directory). The only removal run is `rm -f` of
 # a template image whose path is exactly $E15_ROOT/template-pycache-d<D>/workspace.img for D in 64
-# 256 768 (e17_check_target, checked again just before), and of the BUILD file and stamps beside it.
+# 256 768 (and 192 under E17B=1) (e17_check_target, checked again just before), and of the BUILD file and stamps
+# beside it.
 # The rootfs mount point is a fresh mktemp directory, removed with rmdir (empty only).
 set -euo pipefail
 E15_PROG=bringup.sh
@@ -54,6 +56,8 @@ E15_RIG=$HERE/../../e15/rig
 . "$E15_RIG/points.sh"
 
 E17_DS=(64 256 768)
+# E17b (E17B=1, ruling E17B-R21): squeeze-256's template, D = 768 x 256/1024. With E17B unset the list is E17's.
+[ "${E17B:-}" != 1 ] || E17_DS+=(192)
 
 # e17_point_of D: the points.sh point whose template has dataset D.
 e17_point_of() {
@@ -61,17 +65,22 @@ e17_point_of() {
   64) echo pycache-d64 ;;
   256) echo pycache ;;
   768) echo pycache-d768 ;;
+  192) echo squeeze-256 ;;
   *) return 1 ;;
   esac
 }
 
 # e17_check_target PATH D: exit 3 unless PATH is exactly $E15_ROOT/template-pycache-d<D>/workspace.img
-# for D in 64 256 768, spelled that way (no //, ., .., trailing /), with neither the image nor its
+# for D in 64 256 768 (192 under E17B=1), spelled that way (no //, ., .., trailing /), with neither the image nor its
 # directory a symlink, the image not a directory, and the whole path under $E15_ROOT physically.
 e17_check_target() {
   local p=$1 d=$2 want
-  case "$d" in 64 | 256 | 768) ;; *)
-    printf 'e17_check_target: D=%s is not a pycache template (64 256 768)\n' "$d" >&2
+  case "$d" in 64 | 256 | 768) ;; 192) [ "${E17B:-}" = 1 ] || {
+    printf 'e17_check_target: D=192 is the E17b squeeze-256 template: E17B=1 only\n' >&2
+    exit 3
+  } ;;
+  *)
+    printf 'e17_check_target: D=%s is not a pycache template (64 256 768; 192 under E17B=1)\n' "$d" >&2
     exit 3
     ;;
   esac
