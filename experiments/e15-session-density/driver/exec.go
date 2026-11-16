@@ -70,19 +70,28 @@ type execResult struct {
 	// (--record-stdout); stdoutCut is set when more arrived.
 	stdout    []byte
 	stdoutCut bool
-	// refused names a capacity refusal that came before the command ran (refusalOf); "" otherwise.
+	// refused names a refusal that came before the command ran (refusalOf); "" otherwise.
 	refused string
 }
 
 // refusalOf names a refusal that comes BEFORE the command starts, as moca's sbx client classes them
 // (remote-worker/cmd/sbx/sbx.go refusalClass) plus #644's host backstop: the worker's vmpool refusals
 // (errors.go RefusalError, "<reason>: <detail>"), sent as an ExecError or as the status's message, the
-// session's full queue, and the relay's per-sandbox in-flight cap. "" for every other failure: it may
+// session's full queue, and the relay's per-sandbox in-flight cap. It also names the refusals of the
+// mode or of the call itself (PR #34, E17B-R41a), which run nothing either: the worker's stale mode
+// epoch and lease-unsupported (vmpool spells them "stale-mode:"/"lease-unsupported:", exec/runner.go
+// and session/lease.go "lease_unsupported:"), the relay's PERMISSION_DENIED ("exec not permitted",
+// sandbox-caller.ts) and its req_id_in_flight (ALREADY_EXISTS). "" for every other failure: it may
 // have run part of the command. The lease driver judges not_lease only on a call that ran (E17B-R30).
 func refusalOf(code codes.Code, msg string) string {
-	for _, r := range []string{"memory-budget", "host-memory", "max-runs"} {
+	for _, r := range []string{"memory-budget", "host-memory", "max-runs", "stale-mode", "lease-unsupported"} {
 		if strings.HasPrefix(msg, r+":") {
 			return r
+		}
+	}
+	for _, r := range []string{"stale_mode", "lease_unsupported"} {
+		if strings.HasPrefix(msg, r+":") {
+			return strings.ReplaceAll(r, "_", "-")
 		}
 	}
 	switch {
@@ -91,6 +100,10 @@ func refusalOf(code codes.Code, msg string) string {
 	case code == codes.ResourceExhausted && strings.HasPrefix(msg, "sandbox busy"):
 		// Only the relay's "sandbox busy": grpc's own message-size limits are RESOURCE_EXHAUSTED too.
 		return "relay-busy"
+	case code == codes.PermissionDenied:
+		return "permission-denied"
+	case code == codes.AlreadyExists && strings.Contains(msg, "already in flight"):
+		return "req-id-in-flight"
 	}
 	return ""
 }

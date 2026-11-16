@@ -531,7 +531,7 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 	execCtx := ctx
 	if ls != nil {
 		var terr error
-		if execCtx, terr = ls.bearer(ctx); terr != nil {
+		if execCtx, terr = ls.bearerFor(ctx, timeoutS); terr != nil {
 			// No Exec was sent (execs 0): it is not the session's first call that ran.
 			rec.Status, rec.Cause, rec.Msg = "err", causeExecError, "minting the exec token: "+terr.Error()
 			rec.NotLease = ls.notLease
@@ -555,8 +555,10 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 		rec.LeaseEvents = ls.fresh(res.events)
 		if !ls.checked {
 			// E17B-R30: judge the session's first call that RAN an Exec. A refusal (memory-budget,
-			// host-memory, max-runs, busy) is answered before any lease work and carries no start, so
-			// it says nothing about the mode: first_refused, and the next call is the one judged.
+			// host-memory, max-runs, busy; stale mode, lease-unsupported, the relay's permission and
+			// req_id_in_flight refusals, E17B-R41a) is answered before any lease work and carries no
+			// start, so it says nothing about the mode: first_refused (its row keeps its own cause and
+			// message), and the next call is the one judged.
 			if res.refused != "" && !hasStart(res.events) {
 				rec.FirstRefused = true
 			} else {

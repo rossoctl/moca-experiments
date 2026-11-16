@@ -24,6 +24,17 @@ const (
 	sandboxTokenAud     = "moca-sandbox"
 	setModeTokenMaxTTL  = 300 * time.Second // SANDBOX_MODE_TOKEN_TTL_S
 	refreshRemainingPct = 30                // re-mint when less than this share of the TTL remains
+
+	// E17B-R34: an Exec token always outlives the call it carries. The relay cuts an Exec at its
+	// token's exp + SANDBOX_CLOCK_LEEWAY_S (moca packages/sandbox-relay/src/sandbox-caller.ts,
+	// armDeadline((claims.exp + leewayS) * 1000)) and fails it DEADLINE_EXCEEDED, which the driver
+	// would record as the backend's deadline. So a call is sent only on a token whose exp is at least
+	// send + timeout_s + execTokenOutlive (the relay's cut then falls after the driver's own deadline,
+	// timeout_s + callDeadlineSlackS); otherwise one is minted with TTL max(base, timeout_s +
+	// execTokenLongPad).
+	relayCutLeeway   = 30 * time.Second
+	execTokenOutlive = 60 * time.Second
+	execTokenLongPad = 120 * time.Second
 )
 
 // TokenKey is the Ed25519 key whose public half the relay lists in SH_SANDBOX_TOKEN_PUBLIC_KEYS.
@@ -158,13 +169,15 @@ func (k TokenKey) MintSetMode(c SetModeClaims) (string, error) {
 }
 
 // Refresher hands out an Exec token and re-mints it once less than 30% of its TTL remains, so a
-// session longer than one TTL never presents an expired token. Not safe for concurrent use.
+// session longer than one TTL never presents an expired token; TokenFor also re-mints when the held
+// token would expire during the call it is for (E17B-R34). Not safe for concurrent use.
 type Refresher struct {
 	key    TokenKey
 	claims SandboxClaims
 	now    func() time.Time
 	tok    string
-	minted time.Time
+	minted time.Time     // the held token's iat
+	ttl    time.Duration // the held token's TTL: claims.TTL, or longer for a long call
 }
 
 // NewRefresher takes the claims to mint with (their Now is ignored) and a clock (nil = time.Now).
@@ -175,18 +188,14 @@ func NewRefresher(k TokenKey, c SandboxClaims, now func() time.Time) *Refresher 
 	return &Refresher{key: k, claims: c, now: now}
 }
 
-// Token returns the current token, minting a new one when none exists or less than 30% of the TTL
-// remains.
-func (r *Refresher) Token() (string, error) {
-	t := r.now()
-	if r.tok != "" {
-		remaining := r.minted.Add(r.claims.TTL).Sub(t)
-		if remaining*100 >= r.claims.TTL*refreshRemainingPct {
-			return r.tok, nil
-		}
-	}
+// fresh is the 30% rule: at least 30% of the held token's TTL remains at t.
+func (r *Refresher) fresh(t time.Time) bool {
+	return r.tok != "" && r.minted.Add(r.ttl).Sub(t)*100 >= r.ttl*refreshRemainingPct
+}
+
+func (r *Refresher) mint(t time.Time, ttl time.Duration) (string, error) {
 	c := r.claims
-	c.Now = t
+	c.Now, c.TTL = t, ttl
 	tok, err := r.key.MintSandbox(c)
 	if err != nil {
 		return "", err
@@ -194,6 +203,27 @@ func (r *Refresher) Token() (string, error) {
 	// The token's exp is iat (whole seconds, floored) + TTL, so the clock the 30% is measured on
 	// starts at the floored second: on a short TTL the unfloored mint time would let a token be
 	// reused up to a second after its exp.
-	r.tok, r.minted = tok, t.Truncate(time.Second)
+	r.tok, r.minted, r.ttl = tok, t.Truncate(time.Second), ttl
 	return tok, nil
+}
+
+// Token returns the current token, minting a new one when none exists or less than 30% of the TTL
+// remains.
+func (r *Refresher) Token() (string, error) {
+	t := r.now()
+	if r.fresh(t) {
+		return r.tok, nil
+	}
+	return r.mint(t, r.claims.TTL)
+}
+
+// TokenFor returns a token for an Exec of the given timeout_s: the held one while the 30% rule
+// keeps it and its exp is at least now + timeout + execTokenOutlive, else a new one with TTL
+// max(base TTL, timeout + execTokenLongPad) (E17B-R34). exp is exactly minted + ttl.
+func (r *Refresher) TokenFor(timeout time.Duration) (string, error) {
+	t := r.now()
+	if r.fresh(t) && !r.minted.Add(r.ttl).Before(t.Add(timeout+execTokenOutlive)) {
+		return r.tok, nil
+	}
+	return r.mint(t, max(r.claims.TTL, timeout+execTokenLongPad))
 }

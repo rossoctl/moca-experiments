@@ -222,3 +222,123 @@ console.log('OK');
 		t.Fatalf("moca verifiers refused the Go tokens: %v\n%s", err, out)
 	}
 }
+
+func tokenExp(t *testing.T, tok string) time.Time {
+	t.Helper()
+	_, c := decodeJWS(t, tok)
+	exp, ok := c["exp"].(float64)
+	if !ok {
+		t.Fatalf("token has no exp: %v", c)
+	}
+	return time.Unix(int64(exp), 0)
+}
+
+// E17B-R34: an Exec token always outlives the call it carries. TokenFor(timeout) hands out the held
+// token only while its exp is at least now + timeout + 60 s (the relay cuts at exp + 30 s, past the
+// driver's own deadline of timeout + 30 s); otherwise it mints one with TTL max(base, timeout + 120 s).
+func TestRefresherTokenForOutlivesTheCall(t *testing.T) {
+	k := testTokenKey()
+	now := time.Unix(1_800_000_000, 400_000_000)
+	clock := func() time.Time { return now }
+	c := testSandboxClaims(time.Time{})
+	c.TTL = 300 * time.Second
+	r := NewRefresher(k, c, clock)
+
+	// A short call (timeout 121 s) on a fresh base token: the base TTL covers it.
+	short := 121 * time.Second
+	tok, err := r.TokenFor(short)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tokenExp(t, tok), time.Unix(now.Unix()+300, 0); !got.Equal(want) {
+		t.Fatalf("short call: exp %v, want the base TTL's %v", got, want)
+	}
+	if again, _ := r.TokenFor(short); again != tok {
+		t.Fatal("a token that covers the call was re-minted")
+	}
+
+	// A call longer than the base TTL (the metal default corpus's longest, 1,034,568 ms, + 120 s).
+	long := (1035 + 120) * time.Second
+	ltok, err := r.TokenFor(long)
+	if err != nil || ltok == tok {
+		t.Fatalf("a call longer than the base TTL reused the base token: %v", err)
+	}
+	lexp := tokenExp(t, ltok)
+	if lexp.Before(now.Add(long + 60*time.Second)) {
+		t.Fatalf("long call: exp %v is before send + timeout + 60 s = %v", lexp, now.Add(long+60*time.Second))
+	}
+	if _, cl := decodeJWS(t, ltok); cl["exp"].(float64)-cl["iat"].(float64) != (long + 120*time.Second).Seconds() {
+		t.Fatalf("long call: TTL %v s, want timeout + 120 s", cl["exp"].(float64)-cl["iat"].(float64))
+	}
+
+	// The long token still covers a later short call: reused.
+	now = now.Add(600 * time.Second)
+	if again, _ := r.TokenFor(short); again != ltok {
+		t.Fatal("the long token, which still covers the call, was re-minted")
+	}
+	// The boundary, on a call whose need (timeout + 60 s = 660 s) is above 30% of the held TTL
+	// (382 s), so the 30% rule does not decide it: exp exactly now + timeout + 60 s is enough; one
+	// second less is not.
+	mid := 600 * time.Second
+	now = lexp.Add(-mid - 60*time.Second)
+	if again, _ := r.TokenFor(mid); again != ltok {
+		t.Fatal("re-minted with exp exactly send + timeout + 60 s")
+	}
+	now = now.Add(time.Second)
+	next, err := r.TokenFor(mid)
+	if err != nil || next == ltok {
+		t.Fatalf("a token with exp < send + timeout + 60 s was handed out: %v", err)
+	}
+	if got := tokenExp(t, next); got.Before(now.Add(mid + 60*time.Second)) {
+		t.Fatalf("re-minted exp %v does not cover the call", got)
+	}
+	// And the 30% rule still re-mints a token that would cover the call: the held one (TTL 720 s)
+	// with 200 s left covers a 121 s call (181 s needed) but is under 30%.
+	now = tokenExp(t, next).Add(-200 * time.Second)
+	if again, _ := r.TokenFor(short); again == next {
+		t.Fatal("the 30% rule no longer applies to TokenFor")
+	}
+	next, _ = r.TokenFor(short)
+
+	// The 30% rule stays: Token() (status, set_mode, reset) on a held long token is unchanged.
+	if tk, _ := r.Token(); tk != next {
+		t.Fatal("Token() re-minted a fresh token")
+	}
+}
+
+// relay-cut arithmetic: the relay's cut (exp + 30 s) must come after the driver's own client
+// deadline (timeout + callDeadlineSlackS), so the backend never cuts a call the driver still waits on.
+func TestExecTokenOutlivesTheClientDeadline(t *testing.T) {
+	if relayCutLeeway != 30*time.Second {
+		t.Fatalf("relayCutLeeway %v, want the relay's SANDBOX_CLOCK_LEEWAY_S 30 s", relayCutLeeway)
+	}
+	if execTokenOutlive+relayCutLeeway <= callDeadlineSlackS*time.Second {
+		t.Fatalf("exp + %v leeway with exp >= send + timeout + %v does not outlast the driver's timeout + %d s",
+			relayCutLeeway, execTokenOutlive, callDeadlineSlackS)
+	}
+	if execTokenLongPad < execTokenOutlive {
+		t.Fatalf("a token minted for a long call (timeout + %v) would not itself cover it (timeout + %v)", execTokenLongPad, execTokenOutlive)
+	}
+}
+
+// The relay rule TokenFor is built on, pinned against the moca source: an Exec is cut at
+// (claims.exp + leewayS) * 1000, leewayS defaults to SANDBOX_CLOCK_LEEWAY_S, which is 30.
+func TestRelayCutRuleMatchesMoca(t *testing.T) {
+	moca := os.Getenv("E15_MOCA")
+	if moca == "" {
+		t.Skip("E15_MOCA is not set: point it at a moca checkout to pin the relay's token-expiry cut")
+	}
+	for file, want := range map[string]string{
+		"packages/sandbox-relay/src/sandbox-caller.ts": "(claims.exp + leewayS) * 1000",
+		"packages/sandbox-relay/src/main.ts":           "leewayS: auth.sandboxLeewayS ?? SANDBOX_CLOCK_LEEWAY_S",
+		"packages/control-plane/src/sandbox-token.ts":  "export const SANDBOX_CLOCK_LEEWAY_S = 30;",
+	} {
+		b, err := os.ReadFile(filepath.Join(moca, file))
+		if err != nil {
+			t.Fatalf("E15_MOCA=%s: %v", moca, err)
+		}
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("%s no longer contains %q: re-check the Exec token rule (E17B-R34)", file, want)
+		}
+	}
+}

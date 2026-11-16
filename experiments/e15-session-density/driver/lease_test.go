@@ -120,6 +120,7 @@ type leaseSeen struct {
 	bearer     map[string]any // the bearer token's claims
 	setMode    map[string]any // the set-mode token's claims, for a set_mode
 	cmd        string
+	timeoutS   uint32 // the Exec's timeout_s
 }
 
 func newLeaseRelay(t *testing.T) (pb.SandboxExecClient, *leaseRelay) {
@@ -198,7 +199,7 @@ func (lr *leaseRelay) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServe
 			n++
 		}
 	}
-	lr.execs = append(lr.execs, leaseSeen{key: key, recv: recv, bearer: c, cmd: e.GetCommand()})
+	lr.execs = append(lr.execs, leaseSeen{key: key, recv: recv, bearer: c, cmd: e.GetCommand(), timeoutS: e.GetTimeoutS()})
 	idx := len(lr.execs) - 1
 	lr.mu.Unlock()
 	defer func() {
@@ -598,6 +599,17 @@ func TestRefusedFirstCallIsNotNotLease(t *testing.T) {
 		{name: "queue-full", inErr: "busy: queue full"},
 		{name: "relay-busy", status: status.Error(codes.ResourceExhausted, "sandbox busy: 64 execs in flight")},
 		{name: "budget-as-status", status: status.Error(codes.Unavailable, "memory-budget: over the budget")},
+		// PR #34 nit (E17B-R41a): refusals of the mode or of the call itself ran nothing either. The worker's
+		// vmpool spells its reasons with a hyphen (errors.go RefuseStaleMode "stale-mode",
+		// RefuseLeaseUnsupported "lease-unsupported"); exec/runner.go and session/lease.go write
+		// "lease_unsupported:"; the relay refuses PERMISSION_DENIED ("exec not permitted") and
+		// ALREADY_EXISTS ("req_id N already in flight", sandbox-caller.ts req_id_in_flight).
+		{name: "stale-mode", inErr: "stale-mode: workspace_key \"k\": Exec mode_epoch 0 is below the stored 1"},
+		{name: "stale_mode", inErr: "stale_mode: refused"},
+		{name: "lease-unsupported", inErr: "lease-unsupported: lease Exec for \"k\": no lease-v1 snapshot"},
+		{name: "lease_unsupported", inErr: "lease_unsupported: this worker has no lease mode"},
+		{name: "permission-denied", status: status.Error(codes.PermissionDenied, "exec not permitted: workspace_key is not this token's workspace")},
+		{name: "req-id-in-flight", status: status.Error(codes.AlreadyExists, "req_id 7 already in flight for this sandbox")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -718,6 +730,19 @@ func TestExecTokenCarriesTheSetModeEpoch(t *testing.T) {
 	}
 }
 
+// coversItsCall fails t unless the Exec's bearer exp is at least its receipt + timeout_s + 60 s
+// (E17B-R34: the relay cuts at exp + 30 s, past the driver's own deadline of timeout_s + 30 s).
+func coversItsCall(t *testing.T, i int, e leaseSeen) {
+	t.Helper()
+	exp, _ := e.bearer["exp"].(float64)
+	need := e.recv.Add(time.Duration(e.timeoutS)*time.Second + 60*time.Second)
+	if time.Unix(int64(exp), 0).Before(need) {
+		t.Fatalf("exec %d: token exp %v is before send + timeout_s (%d) + 60 s = %v", i, time.Unix(int64(exp), 0), e.timeoutS, need)
+	}
+}
+
+// A session longer than the base TTL (2 s here) never presents an expired token, and every Exec's
+// token covers the whole call it carries.
 func TestRefreshesTokenBeforeExp(t *testing.T) {
 	client, lr := newLeaseRelay(t)
 	lr.execEvents = startsOnFirst
@@ -729,21 +754,50 @@ func TestRefreshesTokenBeforeExp(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		calls = append(calls, "q")
 	}
-	res, _, _ := leaseRun(t, cfg, []Session{sess("s", "u", 200, calls...)}, testLib(nil, "q"), client)
+	res, tail, _ := leaseRun(t, cfg, []Session{sess("s", "u", 200, calls...)}, testLib(nil, "q"), client)
 	if res.err != nil || len(res.calls) < 20 {
 		t.Fatalf("err %v, %d calls", res.err, len(res.calls))
 	}
-	jtis := map[any]bool{}
 	for _, c := range res.calls {
 		if c.Status != "ok" {
 			t.Fatalf("call %d failed across the token's expiry: %+v", c.Call, c)
 		}
 	}
-	for _, e := range lr.execsOf("e15-t-0-0") {
-		jtis[e.bearer["jti"]] = true
+	for i, e := range lr.execsOf("e15-t-0-0") {
+		coversItsCall(t, i, e)
 	}
-	if len(jtis) < 2 {
-		t.Fatalf("one token served a 5 s session on a 2 s TTL")
+	if len(tail) != 1 || tail[0].Error != "" {
+		t.Fatalf("the sweep's status call after the session: %+v", tail)
+	}
+}
+
+// E17B-R34 (PR #34 must-fix): a call longer than the base Exec token TTL gets a token that outlives
+// it, so the relay does not cut it at exp + 30 s. The call is the metal default corpus's longest
+// (1,034,568 ms; analysis/testdata/metal-sbx-N8-corpus.jsonl.gz), against the 300 s base TTL; the
+// session's short calls before and after it keep working.
+func TestLongCallTokenOutlivesTheCall(t *testing.T) {
+	client, lr := newLeaseRelay(t)
+	lr.execEvents = startsOnFirst
+	cfg := leaseCfg()
+	cfg.MaxSessions = 1
+	s := sess("s", "u", 20, "q", "q", "q")
+	s.Calls[1].DurMs = 1_034_568
+	res, _, _ := leaseRun(t, cfg, []Session{s}, testLib(nil, "q"), client)
+	if res.err != nil || len(res.calls) != 3 {
+		t.Fatalf("err %v, %d calls", res.err, len(res.calls))
+	}
+	execs := lr.execsOf("e15-t-0-0")
+	if len(execs) != 3 {
+		t.Fatalf("%d execs", len(execs))
+	}
+	if execs[1].timeoutS != 1035+120 {
+		t.Fatalf("the long call's timeout_s %d, want 1155", execs[1].timeoutS)
+	}
+	for i, e := range execs {
+		coversItsCall(t, i, e)
+	}
+	if execs[1].bearer["jti"] == execs[0].bearer["jti"] {
+		t.Fatal("the long call reused the short call's base-TTL token")
 	}
 }
 
@@ -769,6 +823,9 @@ func TestFailsWhenSetModeRefused(t *testing.T) {
 	c := res.calls[0]
 	if c.Status != "err" || c.Cause != causeSetMode || c.Execs != 0 || !strings.Contains(c.Msg, "stale_mode") {
 		t.Fatalf("row %+v", c)
+	}
+	if c.FirstLease {
+		t.Fatalf("a set_mode_failed row ran no Exec and is not the lease's first call (first_lease): %+v", c)
 	}
 	if len(tail) != 1 {
 		t.Fatalf("the failed session is still swept: %+v", tail)

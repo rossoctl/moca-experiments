@@ -31,7 +31,7 @@ const (
 	leaseModeName     = "lease" // the JWT mode claim
 	leaseSub          = "e15-driver"
 	leaseTenant       = "e15"
-	leaseDefaultTTL   = 300 * time.Second // Exec token TTL, refreshed before it runs out
+	leaseDefaultTTL   = 300 * time.Second // base Exec token TTL, refreshed before it runs out; a longer call gets a longer one (E17B-R34)
 	setModeCallLimit  = 120 * time.Second // client-side bound on one set_mode
 	statusCallLimit   = 30 * time.Second  // client-side bound on one status call of the sweep
 	resetCallLimit    = 120 * time.Second // client-side bound on one reset (ownwalk; the lease is idle)
@@ -138,6 +138,15 @@ func newLeaseSession(cfg *LeaseConfig, key string) *leaseSession {
 // bearer returns ctx carrying a current Exec token of this session.
 func (l *leaseSession) bearer(ctx context.Context) (context.Context, error) {
 	tok, err := l.ref.Token()
+	if err != nil {
+		return ctx, err
+	}
+	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok), nil
+}
+
+// bearerFor is bearer for an Exec of the given timeout_s: its token outlives the call (E17B-R34).
+func (l *leaseSession) bearerFor(ctx context.Context, timeoutS uint32) (context.Context, error) {
+	tok, err := l.ref.TokenFor(time.Duration(timeoutS) * time.Second)
 	if err != nil {
 		return ctx, err
 	}
@@ -261,14 +270,15 @@ func (r *Replayer) beginLeaseSession(ctx context.Context, key string) (*leaseSes
 }
 
 // setModeFailedRow is the calls.jsonl row of a session whose set_mode failed: its first call,
-// never sent (execs 0).
+// never sent (execs 0). It is not first_lease: no lease ran (PR #34 nit; a count of first_lease rows,
+// the Task 11 walk cost, must not include it).
 func (r *Replayer) setModeFailedRow(key string, s Session, c Call, send time.Time, err error) callRecord {
 	return callRecord{
 		Ts: send.UTC().Format(time.RFC3339Nano), TMs: ms(send.Sub(r.t0)),
 		Session: key, Trace: s.ID, Provider: s.Provider, Call: c.I, Class: c.Class,
 		PlannedDurMs: c.DurMs, PlannedGapMs: c.GapMs,
 		Status: "err", Cause: causeSetMode, Msg: "set_mode: " + err.Error(),
-		InWindow: !send.Before(r.warmEnd) && send.Before(r.end), FirstLease: true, Tmpfs: s.Tmpfs,
+		InWindow: !send.Before(r.warmEnd) && send.Before(r.end), Tmpfs: s.Tmpfs,
 	}
 }
 
