@@ -248,6 +248,9 @@ k=$(src_key driver)
 # E16 (fresh-metal): once e15-driver exists, a changed driver source (E16's opt-in
 # --end-session-defer) is built as e15-driver-defer instead, so the binary every sealed rung and
 # baseline ran (and whose sha256 they record) is never replaced. E16_REBUILD_DRIVER=1 overrides.
+# PR #34 (ruling E17B-R37): with E17B unset, an EXISTING e15-driver or e15-driver-defer whose stamp records another
+# source key is not rebuilt (refuse_driver_rebuild dies naming both keys) unless E15_ACK_DRIVER_REBUILD=1; a fresh rig
+# has no stamp and builds as before.
 if [ "${E17B:-}" = 1 ]; then
   # E17b (ruling E17B-R4): the driver and its defer variant go to their own -e17b binaries and stamp; the sealed
   # e15-driver, e15-driver-defer and their stamps are never written, whatever their state.
@@ -260,12 +263,14 @@ if [ "${E17B:-}" = 1 ]; then
   fi
 elif [ "$METAL" = 1 ] && [ -x "$E15_BIN/e15-driver" ] && ! stamp_ok go-driver "$k" && [ "${E16_REBUILD_DRIVER:-0}" != 1 ]; then
   if ! stamp_ok go-driver-defer "$k"; then
+    refuse_driver_rebuild go-driver-defer "$E15_BIN/e15-driver-defer" "$k"
     (cd "$E15_SRC/driver" && env "${GOENV_USER[@]}" go build -o "$E15_BIN/e15-driver-defer" .) >"$E15_LOGS/go-driver-defer.log" 2>&1 ||
       die "driver (defer) build failed; see $E15_LOGS/go-driver-defer.log"
     stamp_set go-driver-defer "$k"
     m_note "built $E15_BIN/e15-driver-defer (src $k; E16 supplementary; e15-driver kept, sha256 $(sha256_of "$E15_BIN/e15-driver")). PURGE: rm -f $E15_BIN/e15-driver-defer"
   fi
 elif ! stamp_ok go-driver "$k"; then
+  refuse_driver_rebuild go-driver "$E15_BIN/e15-driver" "$k"
   (cd "$E15_SRC/driver" && env "${GOENV_USER[@]}" go build -o "$E15_BIN/e15-driver" .) >"$E15_LOGS/go-driver.log" 2>&1 ||
     die "driver build failed; see $E15_LOGS/go-driver.log"
   stamp_set go-driver "$k"

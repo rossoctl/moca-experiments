@@ -214,8 +214,19 @@ unset _e15_env_committed _e15_env_runs _e15_v
 
 # Points (SPEC §10.3): points.sh (sourced after this file).
 
+# e15_e17a_arm_refused ARM: under E17B=1 (the E17b profile) the E17a arms resident-* and lease-* are refused, naming
+# why, on stderr (PR #34): E17B=1 only adds ship-* to E15_ARMS / points.sh, but those arms' worker is
+# microvm-worker-resident, the old-pin build, which would run against the E17b relay and guest agent and be recorded at
+# E17B_MOCA_PIN. Returns 1 (not refused) otherwise; with E17B unset nothing changes.
+e15_e17a_arm_refused() {
+  [ "${E17B:-}" = 1 ] || return 1
+  case "$1" in resident-* | lease-*) ;; *) return 1 ;; esac
+  printf '%s: %s is an E17a arm: its worker is microvm-worker-resident, the old-pin build; under E17B=1 it would run against the E17b relay and guest agent and be recorded at E17B_MOCA_PIN. Run it with E17B unset\n' "${E15_PROG:-e15}" "$1" >&2
+}
+
 e15_is_arm() {
   local a
+  ! e15_e17a_arm_refused "$1" || return 1
   for a in "${E15_ARMS[@]}"; do [ "$a" = "$1" ] && return 0; done
   return 1
 }
@@ -719,6 +730,21 @@ E15_VMCG=$E15_CG/e15-vms.slice
 
 # stamp_ok NAME KEY / stamp_set NAME KEY: a build step is skipped when its stamp holds KEY.
 stamp_ok() { [ -f "$E15_STATE/$1" ] && [ "$(cat "$E15_STATE/$1")" = "$2" ]; }
+stamp_get() { cat "$E15_STATE/$1" 2>/dev/null; }
+# refuse_driver_rebuild STAMP BIN KEY (setup.sh with E17B unset; ruling E17B-R37): die rather than overwrite an EXISTING
+# sealed driver binary whose stamp records another driver source key, unless E15_ACK_DRIVER_REBUILD=1. A fresh rig (no
+# binary, or no stamp) builds as before.
+refuse_driver_rebuild() {
+  local stamp=$1 bin=$2 key=$3 old
+  [ -e "$bin" ] || return 0
+  old=$(stamp_get "$stamp") || old=""
+  if [ -z "$old" ] || [ "$old" = "$key" ]; then return 0; fi
+  if [ "${E15_ACK_DRIVER_REBUILD:-0}" = 1 ]; then
+    log "E15_ACK_DRIVER_REBUILD=1: rebuilding $bin (stamp $stamp $old -> $key)"
+    return 0
+  fi
+  die "refusing to rebuild the existing $bin: its stamp $stamp is $old, the driver source is now $key. The sealed rungs that ran it record its sha256. This checkout's driver changes are opt-in flags and the default path is golden-tested unchanged (driver TestDefaultPathUnchanged), but a rebuild still replaces the binary: keep it (E17B=1 builds its own -e17b drivers), or set E15_ACK_DRIVER_REBUILD=1 to rebuild it knowingly"
+}
 stamp_set() {
   mkdir -p "$E15_STATE"
   printf '%s\n' "$2" >"$E15_STATE/$1"
@@ -1025,6 +1051,7 @@ e17b_token_dir_remove() {
 }
 
 worker_bin() {
+  ! e15_e17a_arm_refused "$1" || exit 1
   case "$1" in
   sbx | ship-30 | ship-120 | ship-300)
     # ship-* exist only in the E17b profile

@@ -36,7 +36,8 @@ so that is sum(dur_ms) / (sum(dur_ms) + sum(gap_ms)). offset_ms is the time from
 call's emit (the previous call's dur_ms + gap_ms), 0 on the first call; the driver and timeline()
 add the offsets up.
 
-E17b (PLAN-E17B Task 10, spec §7.3): --tmpfs-share X (default 0.5) flags round(X * sessions)
+E17b (PLAN-E17B Task 10, spec §7.3): --tmpfs-share X (default 0, E17a's; the E17b corpora use 0.5,
+which rig/gen_corpora.sh passes under E17B=1) flags round(X * sessions)
 sessions, drawn with their own seeded generator (so the sessions themselves do not move), with
 "tmpfs": true (every other session "tmpfs": false). The driver runs a flagged session's py_analyze
 and py_test with PYC_CACHE_DIR=/tmp/pycache-<workspace key> (library.json "tmpfs"), so their
@@ -51,7 +52,7 @@ busy time in it; the gap fit does not see them (SHMEM_MS per turn, about 0.1% of
 
 Usage: python3 pycache_corpus.py --gaps-from CORPUS.jsonl --duty 0.095 --sessions 400 --seed 1
                                  --out DIR [--min-turns 4] [--durations-from CAL.json]
-                                 [--tmpfs-share 0.5]
+                                 [--tmpfs-share 0.5]   (E17b; the default 0 is E17a's corpus)
 """
 
 import argparse
@@ -87,7 +88,7 @@ SKELETON = {"py_analyze": "python analyze.py", "py_test": "python -m pytest -x -
             "py_grep": "grep -rc def venv"}
 TURN_HEAD = ("py_analyze", "py_test", "py_import", "py_grep")
 SHORT_SKELETONS = ("grep", "read", "edit")
-TMPFS_SHARE = 0.5
+TMPFS_SHARE = 0  # E17a's: the E17b corpora are written with 0.5 by gen_corpora.sh under E17B=1 (PR #34 nit)
 SHMEM_MS = 100          # py_shmem's planned duration: the library's nominal_ms, one invocation
 SHMEM_SKELETON = "awk Shmem /proc/meminfo"
 

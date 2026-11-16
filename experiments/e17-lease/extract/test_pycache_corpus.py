@@ -33,8 +33,12 @@ E17A_REPORTS = {0.095: os.path.join(HERE, "..", "results", "corpus", "pycache-re
                 0.015: os.path.join(HERE, "..", "results", "corpus", "pycache-low-report.json")}
 
 
-def gen(tmp_path, duty=0.095, sessions=40, seed=1, name="out", extra=()):
+def gen(tmp_path, duty=0.095, sessions=40, seed=1, name="out", extra=(), share="0.5"):
+    """The E17b corpus (--tmpfs-share 0.5, as gen_corpora.sh passes under E17B=1) unless extra names a share;
+    share=None runs the generator with its own default."""
     out = tmp_path / name
+    if share is not None and "--tmpfs-share" not in extra:
+        extra = ("--tmpfs-share", share) + tuple(extra)
     pycache_corpus.main(["--gaps-from", GAPS, "--duty", str(duty), "--sessions", str(sessions),
                          "--seed", str(seed), "--out", str(out), *extra])
     corpus = [json.loads(l) for l in (out / "corpus.jsonl").read_text().splitlines()]
@@ -69,7 +73,7 @@ def share0(tmp_path, name="e17a", **kw):
 
 def test_turn_order(tmp_path):
     # Spec v0.4 §4.3: py_analyze, py_test, py_import, py_grep, py_short x k (2 <= k <= 5), py_analyze.
-    # E17b (the default --tmpfs-share 0.5) closes every turn with py_shmem; --tmpfs-share 0 never.
+    # E17b (--tmpfs-share 0.5) closes every turn with py_shmem; --tmpfs-share 0 never.
     for shmem, (_, corpus, report) in ((True, gen(tmp_path, duty=0.015)),
                                        (False, share0(tmp_path, duty=0.015))):
         for s in corpus:
@@ -179,7 +183,7 @@ def test_unmeetable_duty_fails(tmp_path, capsys):
 
 def test_schema_loads_in_e15_driver(tmp_path):
     # The committed driver fixtures are exactly what the generator writes for these arguments: the
-    # E17a one at --tmpfs-share 0, the E17b one at the default.
+    # E17a one at --tmpfs-share 0, the E17b one at 0.5.
     out, _, _ = share0(tmp_path, sessions=3)
     with open(DRIVER_FIXTURE, "rb") as f:
         assert f.read() == (out / "corpus.jsonl").read_bytes()
@@ -286,7 +290,7 @@ def test_tmpfs_share_fraction(tmp_path):
     assert [s["tmpfs"] for s in a] == [s["tmpfs"] for s in b]
     assert abs(n - 200) <= 0.05 * 200
     assert (ra["tmpfs_share"], ra["tmpfs_sessions"]) == (0.5, n) == (rb["tmpfs_share"], rb["tmpfs_sessions"])
-    # The default is 0.5; the share is a parameter; a different seed flags different sessions.
+    # The E17b share (0.5) is the parameter gen() passes; a different seed flags different sessions.
     _, d, rd = gen(tmp_path, sessions=400, name="d")
     assert [s["tmpfs"] for s in d] == [s["tmpfs"] for s in a] and rd["tmpfs_share"] == 0.5
     _, q, _ = gen(tmp_path, sessions=400, name="q", extra=("--tmpfs-share", "0.25"))
@@ -369,3 +373,13 @@ def test_py_shmem_in_every_turn(tmp_path):
         assert (b["session"], b["user"], b["provider"]) == (a["session"], a["user"], a["provider"])
     # the readings add their own busy time only: the duty stays within the fit's tolerance
     assert abs(report["duty_achieved"]["mean"] - 0.095) <= 0.2 * 0.095
+
+
+def test_default_tmpfs_share_is_e17a(tmp_path):
+    # PR #34 nit (E17B-R41g): the generator's own default is E17a's (0), so PLAN.md's E17a command as written still
+    # writes the E17a corpus byte for byte; gen_corpora.sh passes 0.5 under E17B=1.
+    assert pycache_corpus.TMPFS_SHARE == 0
+    out, corpus, report = gen(tmp_path, name="default", share=None)
+    e17a, _, _ = share0(tmp_path)
+    assert (out / "corpus.jsonl").read_bytes() == (e17a / "corpus.jsonl").read_bytes()
+    assert report["tmpfs_share"] == 0.0 and all("tmpfs" not in s for s in corpus)

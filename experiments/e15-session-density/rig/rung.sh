@@ -548,6 +548,10 @@ fi
 # --- 6. params + record ----------------------------------------------------------------------
 
 commit_file=$E15_ROOT/src/COMMIT
+# The ship-* entries of params.json's worker map (PR #34): resolved only under E17B=1, so a sealed rung (E17B unset)
+# never calls worker_bin for an arm it does not have (no stderr lines; its params.json is unchanged).
+ship_wbin=""
+[ "${E17B:-}" != 1 ] || ship_wbin="\"ship-30\": \"$(worker_bin ship-30)\", \"ship-120\": \"$(worker_bin ship-120)\", \"ship-300\": \"$(worker_bin ship-300)\","
 E15_LEASE_BANNER=$(grep -m1 'microvm-worker: relay=' "$DIR/worker.log" 2>/dev/null || true) python3 - "$DIR" <<PY
 import hashlib, json, os, sys
 d = sys.argv[1]
@@ -592,10 +596,11 @@ try:
 except (OSError, ValueError):
     pass
 arm = "$ARM"
+# PR #34: the ship-* arms' worker paths come from the shell (ship_wbin), resolved only under E17B=1.
 wbin = {"sbx": "$(worker_bin sbx)", "resident-inf": "$E15_BIN/microvm-worker-resident",
         "resident-300": "$E15_BIN/microvm-worker-resident",
         "lease-30": "$E15_BIN/microvm-worker-resident", "lease-120": "$E15_BIN/microvm-worker-resident",
-        "ship-30": "$(worker_bin ship-30)", "ship-120": "$(worker_bin ship-120)", "ship-300": "$(worker_bin ship-300)"}.get(arm)
+        $ship_wbin}.get(arm)
 baseline_path = json.loads('$baseline_path')
 p = {
     "arm": arm, "n": $N, "point": "$POINT", "seed": $SEED, "run_id": run,

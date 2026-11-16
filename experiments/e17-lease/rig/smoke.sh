@@ -46,8 +46,9 @@ E17_SRC=$E15_ROOT/src/e17
 case "$HERE" in "$E17_SRC"/rig) ;; *) die "run the staged copy: $E17_SRC/rig/smoke.sh (not $HERE)" ;; esac
 POINT=pycache
 ARMS=(sbx resident-300 lease-30 lease-120)
-# E17b (E17B=1): sbx and the shipped-lease arms only (E15_ARMS / points.sh list those only under E17B=1); the
-# resident and E17a lease arms need microvm-worker-resident, which setup.sh does not build under E17B=1.
+# E17b (E17B=1): sbx and the shipped-lease arms only. E17B=1 adds ship-* to E15_ARMS / points.sh and keeps the E17a
+# arms listed, but e15_is_arm and worker_bin refuse resident-* and lease-* under E17B=1: their worker,
+# microvm-worker-resident, is the old-pin build (setup.sh does not build it under E17B=1).
 [ "${E17B:-}" != 1 ] || ARMS=(sbx ship-30 ship-120 ship-300)
 RUNG=${E15_RUNG:-$E15_SRC/rig/rung.sh}
 START_ZERO=${E15_START_ZERO:-1}

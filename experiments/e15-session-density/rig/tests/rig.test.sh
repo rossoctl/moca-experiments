@@ -2291,7 +2291,7 @@ print(" ".join(sorted(s)))' "$GC/$1/corpus.jsonl"
     "$(gcr pycache '(r["duty_target"], r["sessions"], r["seed"], r["min_turns"])')/$(gcr pycache-low '(r["duty_target"], r["sessions"], r["seed"], r["min_turns"])')" \
     "(0.095, 400, 1, 4)/(0.015, 400, 1, 4)"
   check "E17 gen_corpora: same as pycache_corpus.py run directly (byte-identical)" \
-    "$(python3 "$E17D/extract/pycache_corpus.py" --gaps-from "$E17D/extract/testdata/gaps-20.jsonl" --duty 0.015 --sessions 400 --seed 1 --min-turns 4 --out "$TMP/gc-direct" >/dev/null 2>&1; cmp -s "$TMP/gc-direct/corpus.jsonl" "$GC/pycache-low/corpus.jsonl" && echo same)" "same"
+    "$(python3 "$E17D/extract/pycache_corpus.py" --gaps-from "$E17D/extract/testdata/gaps-20.jsonl" --duty 0.015 --sessions 400 --seed 1 --min-turns 4 --tmpfs-share 0.5 --out "$TMP/gc-direct" >/dev/null 2>&1; cmp -s "$TMP/gc-direct/corpus.jsonl" "$GC/pycache-low/corpus.jsonl" && echo same)" "same"
   cp "$GC/pycache/corpus.jsonl" "$TMP/gc-placeholder.jsonl"
   printf '{"py_analyze": 18250.6, "py_test": 57100, "py_import": 1980.6, "py_grep": 2150, "py_short": 412}\n' >"$TMP/cal.json"
   check "E17 gen_corpora --durations-from: every call carries the measured durations, both corpora" \
@@ -2407,7 +2407,7 @@ SH
   check "E17 smoke (stubbed): under E17B=1 the arms are sbx and the ship arms only, in that order" \
     "$(smoke E17B=1 E15_TEST_PINS="$TMP/sm-e17b-pins.sh")/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx ship-30 ship-120 ship-300 "
   check "E17b smoke (stubbed, M2): ship rungs are read by warmcold_lease.py (first_lease in the counts), sbx by warmcold.py" \
-    "$(smoke E17B=1 E15_TEST_PINS="$TMP/sm-e17b-pins.sh")/$(grep -c '^smoke pycache/ship-[0-9]*/N1-smoke: warm [0-9]* cold [0-9]* unknown [0-9]* first_lease [0-9]* disagreements [0-9]* (holds=True)$' "$TMP/sm.out")/$(grep -c '^smoke pycache/sbx/N1-smoke: warm [0-9]* cold [0-9]* unknown [0-9]* (holds=True)$' "$TMP/sm.out")/$([ -f "$SM/runs/pycache/ship-300/N1-smoke/warmcold-report.json" ] && grep -c '"first_lease"' "$SM/runs/pycache/ship-300/N1-smoke/warmcold-report.json")" \
+    "$(smoke E17B=1 E15_TEST_PINS="$TMP/sm-e17b-pins.sh")/$(grep -c '^smoke pycache/ship-[0-9]*/N1-smoke: warm [0-9]* cold [0-9]* unknown [0-9]* failed_no_vm [0-9]* first_lease [0-9]* disagreements [0-9]* (holds=True)$' "$TMP/sm.out")/$(grep -c '^smoke pycache/sbx/N1-smoke: warm [0-9]* cold [0-9]* unknown [0-9]* (holds=True)$' "$TMP/sm.out")/$([ -f "$SM/runs/pycache/ship-300/N1-smoke/warmcold-report.json" ] && grep -c '"first_lease"' "$SM/runs/pycache/ship-300/N1-smoke/warmcold-report.json")" \
     "0/3/1/1"
   check "E17 smoke (stubbed): E17B=0 keeps the E17 arms" "$(smoke E17B=0)/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx resident-300 lease-30 lease-120 "
   rm -f "$SM/bin/microvm-worker-e17b"
@@ -3184,8 +3184,8 @@ test_ship_rung_passes_lease_flags() {
     "$(grep -E '^(driver|worker-stop)$' "$SORD" | tr '\n' ' ')" "driver worker-stop "
   check "ship rung: the key was minted by the -e17b driver before the relay started" \
     "$(head -1 "$SARGS" | cut -d' ' -f1)/$(awk '/^relay-start/{r=NR} END{print (r > 0) ? "relay" : "none"}' "$SORD")" "mint-key/relay"
-  check "ship rung: the wbin map in params knows the ship arms (worker_bin_sha256 set from the -e17b worker)" \
-    "$(grep -c '"ship-30": "\$(worker_bin ship-30)", "ship-120": "\$(worker_bin ship-120)", "ship-300": "\$(worker_bin ship-300)"' "$RIG/rung.sh")" "1"
+  check "ship rung: the wbin map in params knows the ship arms under E17B=1 only (worker_bin_sha256 set from the -e17b worker)" \
+    "$(grep -c 'ship_wbin="\\"ship-30\\": \\"\$(worker_bin ship-30)\\", \\"ship-120\\": \\"\$(worker_bin ship-120)\\", \\"ship-300\\": \\"\$(worker_bin ship-300)\\","' "$RIG/rung.sh")" "1"
   check "ship rung: params.json records arm, idle_timeout_s, moca_commit, the worker banner" \
     "$(sparams ship-30 arm)/$(sparams ship-30 idle_timeout_s)/$(sparams ship-30 moca_commit)/$(sparams ship-30 lease_banner | grep -c 'microvm-worker: relay=.*lease_start=192MiB')" "ship-30/30/$E17B_FIXPIN/1"
   check "ship rung: params.json worker_env carries the admission settings" \
@@ -3268,8 +3268,8 @@ test_squeeze_point_defined() {
     "$(t17m fresh-metal unset 'e15_point squeeze; echo $?')/$(t17m aws-prelim 1 'e15_point squeeze; echo $?')" "1/1"
   check "squeeze: no other point's arms or settings change (pycache-d768 still runs the E17 arms and the ship arms)" \
     "$(t17m fresh-metal 1 'e15_point pycache-d768; echo $E15_P_ARMS')" "sbx resident-300 lease-30 lease-120 ship-30 ship-120 ship-300"
-  qrung resident-300
-  check "squeeze: rung.sh refuses an arm the point does not run (exit 2)" "$?/$(grep -c 'POINT squeeze does not run ARM resident-300' "$TMP/ship-rung.out")" "2/1"
+  qrung ship-30 # (resident-300 is no longer an arm under E17B=1 at all: PR #34)
+  check "squeeze: rung.sh refuses an arm the point does not run (exit 2)" "$?/$(grep -c 'POINT squeeze does not run ARM ship-30' "$TMP/ship-rung.out")" "2/1"
   qrung ship-300
   check "squeeze: a ship-300 rung at the point runs (exit 0) with the D=768 template" "$?/$(qparam ship-300 point)/$(qparam ship-300 dataset_mib)" '0/"squeeze"/768'
 }
@@ -3567,6 +3567,91 @@ test_memmax_set_and_restored_on_error
 test_rung_removes_token_keys
 test_ship_rung_checks_lease_banner
 test_squeeze_stop_rule
+
+# --- PR #34 review: sealed rungs never resolve ship-* workers; E17a arms refused under E17B=1; driver rebuild guard ---
+test_pr34_sealed_rung_has_no_worker_bin_errors() {
+  srung sbx E17B=
+  check "sealed rung (E17B unset): stderr has no worker_bin: line (the ship-* wbin keys exist only under E17B=1)" \
+    "$(grep -c 'worker_bin:' "$TMP/ship-rung.out")/$(sparams sbx arm)" "0/sbx"
+  check "sealed rung (E17B unset): worker_bin_sha256 is still the stock worker's" \
+    "$(sparams sbx worker_bin_sha256)" "$(sha_f "$RS/bin/microvm-worker")"
+  srung ship-30
+  check "E17B=1 ship rung: worker_bin_sha256 is the -e17b worker's (the ship-* keys are there)" \
+    "$(grep -c 'worker_bin:' "$TMP/ship-rung.out")/$(sparams ship-30 worker_bin_sha256)" "0/$(sha_f "$RS/bin/microvm-worker-e17b")"
+}
+test_pr34_e17a_arms_refused_under_e17b() {
+  local isarm='for a in resident-inf resident-300 lease-30 lease-120; do e15_is_arm $a 2>/dev/null && printf "yes " || printf "no "; done'
+  check "E17B=1: e15_is_arm refuses the E17a arms resident-* and lease-*" "$(t17m fresh-metal 1 "$isarm")" "no no no no "
+  check "E17B unset: the E17a arms are arms as before" "$(t17m fresh-metal unset "$isarm")" "yes yes yes yes "
+  check "E17B=1: the refusal says why (an E17a arm, the old-pin resident worker, run it with E17B unset)" \
+    "$(t17m fresh-metal 1 'e15_is_arm lease-30' | grep -c 'lease-30 is an E17a arm.*old-pin.*E17B unset')" "1"
+  check "E17B=1: worker_bin refuses resident-* and lease-* (exit 1, the same reason)" \
+    "$(t17m fresh-metal 1 'for a in resident-inf resident-300 lease-30 lease-120; do (worker_bin $a) 2>&1 | grep -c "is an E17a arm"; (worker_bin $a) >/dev/null 2>&1; echo $?; done' | tr '\n' ' ')" "1 1 1 1 1 1 1 1 "
+  check "E17B=1: rung.sh resident-300 is refused before anything runs (exit 2, the reason named)" \
+    "$(mkdir -p "$TROOT/state"; printf '%s\n' "$E17B_FIXPIN" >"$TROOT/state/go-stock-e17b"; env E17B=1 E15_HOST_PROFILE=fresh-metal E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash "$RIG/rung.sh" resident-300 1 pycache >"$TMP/pr34-rung.out" 2>&1; echo $?; rm -rf "$TROOT/state")/$(grep -c 'is an E17a arm' "$TMP/pr34-rung.out")" "2/1"
+  check "E17B=1: reprobe.sh lease-30 is refused (usage, the reason named)" \
+    "$(env E17B=1 E15_HOST_PROFILE=fresh-metal E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash "$RIG/../../e17-lease/rig/reprobe.sh" lease-30 >"$TMP/pr34-rp.out" 2>&1; echo $?)/$(grep -c 'is an E17a arm' "$TMP/pr34-rp.out")/$(grep -c 'with E17B=1: sbx ship-30 ship-120 ship-300 only' "$TMP/pr34-rp.out")" "2/1/1"
+  check "smoke.sh: the comment no longer says E15_ARMS lists sbx and ship-* only under E17B=1" \
+    "$(grep -c 'list those only under E17B=1' "$RIG/../../e17-lease/rig/smoke.sh")" "0"
+}
+test_pr34_sealed_driver_rebuild_guard() {
+  local blk="$TMP/pr34-driver-build.sh" rec="$TMP/pr34-driver-calls.log"
+  awk '/^k=\$\(src_key driver\)$/{p=1} /^# E17b \(E17B=1\): the shipped worker runs/{exit} p{print}' "$RIG/setup.sh" >"$blk"
+  mkdir -p "$TROOT/bin" "$TROOT/logs" "$TMP/driver"
+  dblk() { # METAL [VAR=val ...]: the block with E17B unset; go builds simulated; stamps in $E15_BIN/.stamp-*; rc echoed
+    local metal=$1
+    shift
+    : >"$rec"
+    env -u E17B "$@" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" REC="$rec" METAL="$metal" TMP_SRC="$TMP" bash -c '
+      source "$1"
+      GOENV_USER=()
+      E15_SRC=$TMP_SRC
+      src_key() { echo newkey; }
+      env() { while [ $# -gt 0 ]; do [ "$1" = -o ] && { echo built >"$2"; echo "build $2" >>"$REC"; }; shift; done; }
+      stamp_ok() { [ -e "$E15_BIN/.stamp-$1" ] && [ "$(cat "$E15_BIN/.stamp-$1")" = "$2" ]; }
+      stamp_get() { cat "$E15_BIN/.stamp-$1" 2>/dev/null; }
+      stamp_set() { echo "stamp $1 $2" >>"$REC"; printf "%s" "$2" >"$E15_BIN/.stamp-$1"; }
+      sha256_of() { echo x; }
+      m_note() { :; }
+      source "$2"' _ "$RIG/lib.sh" "$blk" >"$TMP/pr34-dbuild.out" 2>&1
+    echo $?
+  }
+  seal_bins() { # the E16 rig: both sealed drivers built from older sources
+    rm -f "$TROOT"/bin/.stamp-* "$TROOT"/bin/e15-driver*
+    printf 'sealed-driver' >"$TROOT/bin/e15-driver"
+    chmod +x "$TROOT/bin/e15-driver"
+    printf 'e15key' >"$TROOT/bin/.stamp-go-driver"
+    printf 'sealed-defer' >"$TROOT/bin/e15-driver-defer"
+    printf 'e16key' >"$TROOT/bin/.stamp-go-driver-defer"
+  }
+  seal_bins
+  check "driver guard: sealed setup on metal refuses to rebuild an existing e15-driver-defer of another source key (nothing built)" \
+    "$(dblk 1)/$(grep -c . "$rec")/$(cat "$TROOT/bin/e15-driver-defer")" "1/0/sealed-defer"
+  check "driver guard: the refusal names the old and new keys, E15_ACK_DRIVER_REBUILD and the golden-tested default path" \
+    "$(grep -c 'e15-driver-defer.*e16key.*newkey.*E15_ACK_DRIVER_REBUILD=1' "$TMP/pr34-dbuild.out")/$(grep -c 'golden-tested' "$TMP/pr34-dbuild.out")" "1/1"
+  check "driver guard: E15_ACK_DRIVER_REBUILD=1 rebuilds it (stamped with the new key)" \
+    "$(dblk 1 E15_ACK_DRIVER_REBUILD=1)/$(grep '^build' "$rec" | sed "s#$TROOT/##")/$(cat "$TROOT/bin/.stamp-go-driver-defer")" "0/build bin/e15-driver-defer/newkey"
+  seal_bins
+  check "driver guard: off metal, an existing e15-driver of another key is refused too; ACK rebuilds it" \
+    "$(dblk 0)/$(grep -c 'e15-driver: its stamp go-driver is e15key' "$TMP/pr34-dbuild.out")/$(cat "$TROOT/bin/e15-driver")/$(dblk 0 E15_ACK_DRIVER_REBUILD=1)/$(cat "$TROOT/bin/e15-driver")" "1/1/sealed-driver/0/built"
+  seal_bins
+  check "driver guard: E16_REBUILD_DRIVER=1 alone does not rebuild the sealed e15-driver (the ACK is needed)" \
+    "$(dblk 1 E16_REBUILD_DRIVER=1)/$(cat "$TROOT/bin/e15-driver")" "1/sealed-driver"
+  rm -f "$TROOT"/bin/.stamp-* "$TROOT"/bin/e15-driver*
+  check "driver guard: a fresh rig (no binary, no stamp) builds e15-driver as before" \
+    "$(dblk 1)/$(grep '^build' "$rec" | sed "s#$TROOT/##")" "0/build bin/e15-driver"
+  rm -f "$TROOT"/bin/.stamp-go-driver-defer "$TROOT"/bin/e15-driver-defer
+  chmod +x "$TROOT/bin/e15-driver"
+  printf 'e15key' >"$TROOT/bin/.stamp-go-driver"
+  check "driver guard: E16's first defer build (no e15-driver-defer yet) is unchanged" \
+    "$(dblk 1)/$(grep '^build' "$rec" | sed "s#$TROOT/##")" "0/build bin/e15-driver-defer"
+  rm -rf "${TROOT:?}/bin" "${TROOT:?}/logs"
+  check "driver guard: the rig README bring-up step names E15_ACK_DRIVER_REBUILD" \
+    "$(grep -c 'E15_ACK_DRIVER_REBUILD' "$RIG/../../e17-lease/rig/README.md")" "1"
+}
+test_pr34_sealed_rung_has_no_worker_bin_errors
+test_pr34_e17a_arms_refused_under_e17b
+test_pr34_sealed_driver_rebuild_guard
 rm -rf "$RS" "$RSS"
 echo
 if [ "$fails" -eq 0 ]; then
