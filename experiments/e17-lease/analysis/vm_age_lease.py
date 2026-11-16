@@ -91,7 +91,11 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(HERE, "..", "..", "e16-low-duty", "analysis"))
+# E16's analysis, in this repo (experiments/e16-low-duty/analysis) or in the rig's staged layout (/srv/e15/src/e16).
+for _e16 in (os.path.join(HERE, "..", "..", "e16-low-duty", "analysis"), os.path.join(HERE, "..", "..", "e16", "analysis")):
+    if os.path.isfile(os.path.join(_e16, "vm_age.py")):
+        sys.path.insert(0, _e16)
+        break
 
 import vm_age as V  # noqa: E402  (E16's reader and helpers, unchanged)
 import warmcold as W  # noqa: E402

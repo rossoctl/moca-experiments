@@ -478,3 +478,16 @@ def test_replacement_reading_is_null_when_the_vms_first_call_is_unknown():
     assert rp["replacement_unknown"] == 1 and rp["unknown_leases"][0]["vm"] == "vm-2"
     assert rp["unknown_leases"][0]["replacement"] is None
     assert rp["median_first_py_grep_ms"] == 300  # vm-2's py_grep is not a replacement reading
+
+def test_imports_from_the_rig_staged_layout(tmp_path):
+    """On the rig the experiments are staged as /srv/e15/src/{e15,e16,e17}: the script finds E16's vm_age there."""
+    import shutil
+    import subprocess
+    repo = os.path.abspath(os.path.join(HERE, "..", ".."))
+    src = tmp_path / "src"
+    shutil.copytree(os.path.join(repo, "e15-session-density"), src / "e15", ignore=shutil.ignore_patterns("driver", "results"))
+    shutil.copytree(os.path.join(repo, "e16-low-duty"), src / "e16", ignore=shutil.ignore_patterns("results"))
+    shutil.copytree(os.path.join(repo, "e17-lease"), src / "e17", ignore=shutil.ignore_patterns("results"))
+    out = subprocess.run([sys.executable, str(src / "e17" / "analysis" / "vm_age_lease.py"), "--help"],
+                         capture_output=True, text=True, env={"PATH": os.environ.get("PATH", "")})
+    assert out.returncode == 0, out.stderr
