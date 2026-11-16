@@ -2738,7 +2738,7 @@ test_e17b_pin_is_a_full_sha() {
   check "e17b: a short or non-hex pin is refused" \
     "$(printf 'E17B_MOCA_PIN=abc123\n' >"$TMP/e17b-bad1.sh"; t17 1 '(e17b_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17b-bad1.sh")/$(printf 'E17B_MOCA_PIN=ZZZ%s\n' "${E17B_FIXPIN:3}" >"$TMP/e17b-bad2.sh"; t17 1 '(e17b_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17b-bad2.sh")" "1/1"
   check "e17b: setup.sh and rung.sh call e17b_require_pin when E17B=1, before any host change" \
-    "$(grep -c '^\[ "\${E17B:-}" != 1 \] || e17b_require_pin$' "$RIG/setup.sh")/$(grep -c '^\[ "\${E17B:-}" != 1 \] || e17b_require_pin$' "$RIG/rung.sh")" "1/1"
+    "$(grep -c '^\[ "\${E17B:-}" != 1 \] || e17b_require_pin$' "$RIG/setup.sh")/$(grep -c '^\[ "\${E17B:-}" != 1 \] || { e17b_require_pin && e17b_require_build; }$' "$RIG/rung.sh")" "1/1"
   check "e17b: a rung with E17B=1 and the placeholder pin refuses to start (exit 1, names the pin)" \
     "$(env E17B=1 E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash "$RIG/rung.sh" sbx 1 default >"$TMP/e17b-rung.out" 2>&1; echo $?)/$(grep -c 'E17B_MOCA_PIN.*placeholder' "$TMP/e17b-rung.out")" "1/1"
 }
@@ -2765,13 +2765,87 @@ test_e17b_profile_on() {
     "$([ "$(t17 unset 'for n in "${E15_PINS[@]}"; do echo "$n=${!n}"; done' | sha256sum)" = "$(t17 1 'for n in "${E15_PINS[@]}"; do echo "$n=${!n}"; done' E15_TEST_PINS="$TMP/e17b-test-pins.sh" | sha256sum)" ] && echo same || echo differ)" "same"
   check "e17b on: the snapshot key in setup.sh is built from E15_MOCA_PIN on both profiles (so it follows the pin)" "$(grep -c 'snap_key="\$E15_MOCA_PIN-\$wheels_key-' "$RIG/setup.sh")" "2"
   check "e17b on: setup.sh's clone, node and stock-go stamps use E15_MOCA and E15_MOCA_PIN" \
-    "$(grep -c 'stamp_ok node "\$E15_MOCA_PIN"' "$RIG/setup.sh")/$(grep -c 'stamp_ok go-stock "\$E15_MOCA_PIN"' "$RIG/setup.sh")" "1/1"
+    "$(grep -c 'stamp_ok node "\$E15_MOCA_PIN"' "$RIG/setup.sh")/$(grep -c 'stamp_ok "\$(stock_stamp)" "\$E15_MOCA_PIN"' "$RIG/setup.sh")" "1/1"
   check "e17b on: setup.sh skips the resident build (apply.sh) when E17B=1, runs it otherwise" \
     "$(grep -B1 'k=\$(src_key resident)' "$RIG/setup.sh" | grep -c 'E17B')/$(awk '/^if \[ "\$\{E17B:-\}" != 1 \]; then$/{g=1} g&&/^k=\$\(src_key resident\)$/{k=1} k&&/resident\/apply\.sh/{a=1} a&&/^fi$/{print "guarded"; exit}' "$RIG/setup.sh")" "1/guarded"
 }
 test_e17b_pin_is_a_full_sha
 test_e17b_profile_off_is_unchanged
 test_e17b_profile_on
+
+test_e17b_setup_never_deletes_the_sealed_snapshot() {
+  local snip="$TMP/e17b-snapstep.sh" rm_line
+  # The snapshot step's opening line and the guard that must follow it, run with sudo/rm stubbed.
+  awk '/^if ! stamp_ok snapshot "\$snap_key"/{p=1} p{print} p&&/E17B/{exit}' "$RIG/setup.sh" >"$snip"
+  printf 'fi\n' >>"$snip"
+  check "e17b snapshot: the guard is the first thing in the snapshot step" "$(grep -c 'E17B' "$snip")/$(grep -c 'E17b snapshots are built by experiments/e17-lease/rig/snapshot-e17b.sh into a new leaf, never over' "$snip")" "1/1"
+  local rmlog="$TMP/e17b-snap-calls.log"
+  : >"$rmlog"
+  run_step() {
+    env "$@" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" RMLOG="$rmlog" bash -c '
+      source "$1"
+      sudo() { echo "sudo $*" >>"$RMLOG"; }
+      rm() { echo "rm $*" >>"$RMLOG"; }
+      stamp_ok() { return 1; }
+      snap_key=k
+      source "$2"; echo reached-end' _ "$RIG/lib.sh" "$snip" 2>&1
+  }
+  local out rc
+  out=$(run_step E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh"); rc=$?
+  check "e17b snapshot: under E17B=1 the step dies naming snapshot-e17b.sh (non-zero, no fall-through)" "$([ "$rc" != 0 ] && echo nonzero)/$(printf '%s' "$out" | grep -c 'snapshot-e17b.sh into a new leaf, never over e15')/$(printf '%s' "$out" | grep -c reached-end)" "nonzero/1/0"
+  check "e17b snapshot: no rm and no sudo call was made" "$(grep -c . "$rmlog")" "0"
+  check "e17b snapshot: with E17B unset the guard does not fire (step falls through)" "$(run_step E17B= | grep -c reached-end)" "1"
+  check "e17b snapshot: setup.sh's first snapshot rm -rf comes after the guard" \
+    "$(awk '/^if ! stamp_ok snapshot "\$snap_key"/{a=NR} /E17b snapshots are built by/{g=NR} /rm -rf "\$\{E15_SNAPDIR:\?\}/{r=NR} END{print (a&&g&&r&&a<g&&g<r)?"after":"bad"}' "$RIG/setup.sh")" "after"
+  check "e17b snapshot: the rootfs-build rm -rf is behind the guard too" \
+    "$(awk '/^if ! stamp_ok snapshot "\$snap_key"/{a=NR} /E17b snapshots are built by/{g=NR} /sudo -n rm -rf "\$E15_ROOT\/rootfs-build"/{r=NR} END{print (a&&g&&r&&g<r)?"after":"bad"}' "$RIG/setup.sh")" "after"
+}
+test_e17b_builds_to_separate_binaries() {
+  check "e17b build: stock worker, null-responder and stamp names follow the profile" \
+    "$(t17 1 'echo $(stock_worker_bin) $(null_bin) $(stock_stamp)' E15_TEST_PINS="$TMP/e17b-test-pins.sh")" \
+    "$TROOT/bin/microvm-worker-e17b $TROOT/bin/null-responder-e17b go-stock-e17b"
+  check "e17b build: unchanged with E17B unset" "$(t17 unset 'echo $(stock_worker_bin) $(null_bin) $(stock_stamp)')" "$TROOT/bin/microvm-worker $TROOT/bin/null-responder go-stock"
+  check "e17b build: start_null uses null_bin" "$(grep -c '"\$(null_bin)" --listen' "$RIG/lib.sh")/$(grep -c '"\$E15_BIN/null-responder" --listen' "$RIG/lib.sh")" "1/0"
+  check "e17b build: rung.sh refuses E17B=1 when the build stamp is not for E15_MOCA_PIN (exit 1, names go-stock-e17b)" \
+    "$(env E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash "$RIG/rung.sh" sbx 1 default >"$TMP/e17b-rung2.out" 2>&1; echo $?)/$(grep -c 'go-stock-e17b' "$TMP/e17b-rung2.out")" "1/1"
+  check "e17b build: rung.sh passes the stamp check when it matches (the stamp refusal is gone)" \
+    "$(mkdir -p "$TROOT/state"; printf '%s\n' "$E17B_FIXPIN" >"$TROOT/state/go-stock-e17b"; env E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash "$RIG/rung.sh" sbx 1 default >"$TMP/e17b-rung3.out" 2>&1; grep -c 'go-stock-e17b' "$TMP/e17b-rung3.out"; rm -rf "$TROOT/state")" "0"
+}
+test_worker_bin_follows_profile() {
+  check "worker_bin: E17B=1 -> sbx and ship-* use the -e17b worker" \
+    "$(t17 1 'for a in sbx ship-30 ship-120 ship-300; do worker_bin $a; done' E15_TEST_PINS="$TMP/e17b-test-pins.sh" | sort -u | tr '\n' ' ')" "$TROOT/bin/microvm-worker-e17b "
+  check "worker_bin: E17B unset -> sbx unchanged, resident/lease arms unchanged" \
+    "$(t17 unset 'for a in sbx resident-inf resident-300 lease-30 lease-120; do worker_bin $a; done' | tr '\n' ' ')" \
+    "$TROOT/bin/microvm-worker $TROOT/bin/microvm-worker-resident $TROOT/bin/microvm-worker-resident $TROOT/bin/microvm-worker-resident $TROOT/bin/microvm-worker-resident "
+  check "worker_bin: a ship-* arm is refused when E17B is unset" "$(t17 unset '(worker_bin ship-30) >/dev/null 2>&1; echo $?')" "1"
+}
+test_sealed_binaries_untouched_when_e17b_set() {
+  local blk="$TMP/e17b-stock-build.sh" rec="$TMP/e17b-build-calls.log"
+  awk '/^if ! stamp_ok "\$\(stock_stamp\)"/{p=1} p{print} p&&/^fi$/{exit}' "$RIG/setup.sh" >"$blk"
+  check "e17b build: setup.sh has a stock-build block keyed by stock_stamp" "$(grep -c 'go build' "$blk")" "2"
+  : >"$rec"
+  mkdir -p "$TROOT/moca-e17b/remote-worker" "$TROOT/logs" "$TROOT/bin"
+  env E17B=1 E15_TEST_PINS="$TMP/e17b-test-pins.sh" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" REC="$rec" bash -c '
+    source "$1"
+    GOENV_USER=()
+    env() { shift 0; echo "build $*" >>"$REC"; }
+    stamp_ok() { return 1; }
+    stamp_set() { echo "stamp $*" >>"$REC"; }
+    sha256_of() { echo x; }
+    m_note() { :; }
+    log() { :; }
+    source "$2"' _ "$RIG/lib.sh" "$blk" >"$TMP/e17b-build.out" 2>&1
+  check "e17b build: under E17B=1 the go builds write only the -e17b binaries" \
+    "$(grep -c 'go build -o '"$TROOT"'/bin/microvm-worker-e17b ' "$rec")/$(grep -c 'go build -o '"$TROOT"'/bin/null-responder-e17b ' "$rec")/$(grep -cE 'go build -o '"$TROOT"'/bin/(microvm-worker|null-responder) ' "$rec")" "1/1/0"
+  check "e17b build: under E17B=1 the stamp written is go-stock-e17b, never go-stock" "$(grep -c "^stamp go-stock-e17b $E17B_FIXPIN\$" "$rec")/$(grep -c '^stamp go-stock ' "$rec")" "1/0"
+  rm -rf "$TROOT/moca-e17b" "$TROOT/logs" "$TROOT/bin"
+}
+check "e17b: the pin-file-not-found error names both candidate paths" \
+  "$(grep -c "but no e17b-pins.sh at.*e17-lease/rig/e17b-pins.sh.*e17/rig/e17b-pins.sh" "$RIG/lib.sh")" "1"
+test_e17b_setup_never_deletes_the_sealed_snapshot
+test_e17b_builds_to_separate_binaries
+test_worker_bin_follows_profile
+test_sealed_binaries_untouched_when_e17b_set
 echo
 if [ "$fails" -eq 0 ]; then
   echo "rig.test.sh: all checks passed"

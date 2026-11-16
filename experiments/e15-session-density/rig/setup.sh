@@ -230,13 +230,15 @@ fi
 
 # --- 6. Go builds ----------------------------------------------------------------------------
 src_key() { (cd "$E15_SRC" && find "$@" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16); }
-if ! stamp_ok go-stock "$E15_MOCA_PIN"; then
+# E17b (E17B=1): stock_worker_bin / null_bin / stock_stamp name the -e17b binaries and stamp (lib.sh), so the
+# sealed microvm-worker and null-responder are never overwritten; with E17B unset they are the old names.
+if ! stamp_ok "$(stock_stamp)" "$E15_MOCA_PIN"; then
   log "building stock microvm-worker and null-responder at $E15_MOCA_PIN"
-  (cd "$E15_MOCA/remote-worker" && env "${GOENV_USER[@]}" go build -o "$E15_BIN/microvm-worker" ./cmd/microvm-worker &&
-    env "${GOENV_USER[@]}" go build -o "$E15_BIN/null-responder" ./cmd/null-responder) >"$E15_LOGS/go-stock.log" 2>&1 ||
+  (cd "$E15_MOCA/remote-worker" && env "${GOENV_USER[@]}" go build -o "$(stock_worker_bin)" ./cmd/microvm-worker &&
+    env "${GOENV_USER[@]}" go build -o "$(null_bin)" ./cmd/null-responder) >"$E15_LOGS/go-stock.log" 2>&1 ||
     die "stock build failed; see $E15_LOGS/go-stock.log"
-  stamp_set go-stock "$E15_MOCA_PIN"
-  m_note "built $E15_BIN/microvm-worker (sha256 $(sha256_of "$E15_BIN/microvm-worker"))"
+  stamp_set "$(stock_stamp)" "$E15_MOCA_PIN"
+  m_note "built $(stock_worker_bin) (sha256 $(sha256_of "$(stock_worker_bin)"))"
 fi
 k=$(src_key driver)
 # E16 (fresh-metal): once e15-driver exists, a changed driver source (E16's opt-in
@@ -290,6 +292,8 @@ else
   snap_key="$E15_MOCA_PIN-$wheels_key-$(sha256_of "$E15_BASE_SNAPSHOT/rootfs" | cut -c1-16)"
 fi
 if ! stamp_ok snapshot "$snap_key" || [ ! -f "$E15_SNAPDIR/$E15_SNAPIMG/manifest.json" ]; then
+  # E17b profile (ruling R3): never delete or rebuild the sealed snapshot leaf; E17b snapshots get a new leaf.
+  [ "${E17B:-}" != 1 ] || die "E17b snapshots are built by experiments/e17-lease/rig/snapshot-e17b.sh into a new leaf, never over $E15_SNAPIMG"
   tree=$E15_ROOT/rootfs-build/tree
   if [ "$METAL" = 1 ]; then
   log "rootfs: moca v0.9.0 build-rootfs.sh over $E15_SANDBOX_IMAGE + pytest wheels (log $E15_LOGS/build-rootfs.log)"

@@ -47,7 +47,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=points.sh
 . "$HERE/points.sh"
 # E17b profile: refuse the placeholder or a malformed E17B_MOCA_PIN before any host change.
-[ "${E17B:-}" != 1 ] || e17b_require_pin
+[ "${E17B:-}" != 1 ] || { e17b_require_pin && e17b_require_build; }
 
 usage() {
   echo "usage: rung.sh ARM N POINT   (ARM: ${E15_ARMS[*]})" >&2
@@ -455,7 +455,7 @@ try:
 except (OSError, ValueError):
     pass
 arm = "$ARM"
-wbin = {"sbx": "$E15_BIN/microvm-worker", "resident-inf": "$E15_BIN/microvm-worker-resident",
+wbin = {"sbx": "$(worker_bin sbx)", "resident-inf": "$E15_BIN/microvm-worker-resident",
         "resident-300": "$E15_BIN/microvm-worker-resident",
         "lease-30": "$E15_BIN/microvm-worker-resident", "lease-120": "$E15_BIN/microvm-worker-resident"}.get(arm)
 baseline_path = json.loads('$baseline_path')

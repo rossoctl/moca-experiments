@@ -89,7 +89,7 @@ if [ "${E17B:-}" = 1 ]; then
     [ -f "$_e17b_f" ] && break
   done
   [ -f "$_e17b_f" ] || {
-    printf 'lib.sh: E17B=1 but no e17b-pins.sh (experiments/e17-lease/rig/e17b-pins.sh)\n' >&2
+    printf 'lib.sh: E17B=1 but no e17b-pins.sh at %s or %s\n' "$_e17b_here/../../e17-lease/rig/e17b-pins.sh" "$_e17b_here/../../e17/rig/e17b-pins.sh" >&2
     exit 3
   }
   # shellcheck disable=SC1090
@@ -834,9 +834,29 @@ worker_env() {
   } >"$out"
 }
 
+# E17b (E17B=1, ruling E17B-R3): the stock worker and null-responder are built to their own binaries
+# and stamp, so the sealed E15/E16/E17a binaries are never overwritten. Unchanged with E17B unset.
+stock_worker_bin() { if [ "${E17B:-}" = 1 ]; then echo "$E15_BIN/microvm-worker-e17b"; else echo "$E15_BIN/microvm-worker"; fi; }
+null_bin() { if [ "${E17B:-}" = 1 ]; then echo "$E15_BIN/null-responder-e17b"; else echo "$E15_BIN/null-responder"; fi; }
+stock_stamp() { if [ "${E17B:-}" = 1 ]; then echo go-stock-e17b; else echo go-stock; fi; }
+# e17b_require_build: under E17B=1 the stock binaries must have been built at E15_MOCA_PIN (rung.sh).
+e17b_require_build() {
+  stamp_ok go-stock-e17b "$E15_MOCA_PIN" ||
+    die "E17B=1 but the go-stock-e17b build stamp in $E15_STATE is not for $E15_MOCA_PIN; run setup.sh with E17B=1"
+}
+
 worker_bin() {
   case "$1" in
-  sbx) echo "$E15_BIN/microvm-worker" ;;
+  sbx | ship-30 | ship-120 | ship-300)
+    # ship-* exist only in the E17b profile
+    if [ "${E17B:-}" = 1 ]; then
+      stock_worker_bin
+    elif [ "$1" = sbx ]; then
+      echo "$E15_BIN/microvm-worker"
+    else
+      die "worker_bin: no worker for arm $1"
+    fi
+    ;;
   resident-inf | resident-300) echo "$E15_BIN/microvm-worker-resident" ;;
   lease-30 | lease-120) echo "$E15_BIN/microvm-worker-resident" ;; # E17
   *) die "worker_bin: no worker for arm $1" ;;
@@ -874,7 +894,7 @@ start_null() {
   refuse_ports "$E15_PORT_NULL"
   sudo -n systemd-run --quiet --unit="$E15_UNIT_NULL" --slice="$E15_SLICE" \
     -p User="$(id -un)" -p StandardOutput="file:$dir/null.log" \
-    "$E15_BIN/null-responder" --listen "127.0.0.1:$E15_PORT_NULL" >/dev/null ||
+    "$(null_bin)" --listen "127.0.0.1:$E15_PORT_NULL" >/dev/null ||
     die "systemd-run $E15_UNIT_NULL failed"
   wait_for 30 port_listening "$E15_PORT_NULL" || die "null-responder did not listen on $E15_PORT_NULL"
 }
