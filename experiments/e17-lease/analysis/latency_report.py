@@ -40,6 +40,7 @@ if not os.path.isdir(_E15):
 sys.path.insert(0, _E15)
 import holds as H  # noqa: E402
 import warmcold as W  # noqa: E402
+import warmcold_lease as WL  # noqa: E402
 
 
 def stats(ms):
@@ -59,7 +60,17 @@ def read_params(d):
         return json.load(f)
 
 
+def join_rung(d, arm):
+    """The arm map: the shipped-lease arms (ship-*) are joined on the shipped worker's lease log
+    (warmcold_lease); every other arm, E17a's included, on warmcold.join, unchanged."""
+    return (WL if str(arm).startswith("ship-") else W).join(d)
+
+
 def summarize(rows):
+    # Calls tagged first_lease (the first-lease ownership walk, Review Focus 6) are reported on their
+    # own and kept out of the counts and the warm/cold classes. Rows of other arms never carry the tag.
+    firsts = [r for r in rows if r.get("first_lease") and r["warm"] != "set_mode_failed"]
+    rows = [r for r in rows if r not in firsts]
     counts = {"calls": len(rows), "used": 0, "unknown": 0, "not_in_window": 0, "not_ok": 0}
     by_class, after = {}, []
     for r in rows:
@@ -77,7 +88,7 @@ def summarize(rows):
             continue
         counts["used"] += 1
         c["warm" if r["warm"] else "cold"].append(r["observed_ms"])
-        if r["cold_reason"] == "idle-destroy":
+        if r["cold_reason"] in ("idle-destroy", "idle"):
             after.append(r)
     classes = {k: {"warm": stats(v["warm"]), "cold": stats(v["cold"]), "all": stats(v["all"]),
                    "unknown": v["unknown"]} for k, v in sorted(by_class.items())}
@@ -85,7 +96,14 @@ def summarize(rows):
     after_by = {}
     for r in after:
         after_by.setdefault(r["class"], []).append(r["observed_ms"])
+    fl = [r["observed_ms"] for r in firsts if r["in_window"] and r["status"] == "ok"]
+    fl_by = {}
+    for r in firsts:
+        if r["in_window"] and r["status"] == "ok":
+            fl_by.setdefault(r["class"], []).append(r["observed_ms"])
     return {
+        "first_lease": {"calls": len(firsts), "all": stats(fl),
+                        "by_class": {k: stats(v) for k, v in sorted(fl_by.items())}},
         "counts": counts,
         "classes": classes,
         "warm_share": (n_warm / float(counts["used"])) if counts["used"] else None,
@@ -94,17 +112,19 @@ def summarize(rows):
     }
 
 
-def build(rung_dirs, baseline_arm="sbx"):
+def build(rung_dirs, baseline_arm="sbx", arms=None):
     pooled = {}
     for d in rung_dirs:
         p = read_params(d)
+        if arms and p.get("arm") not in arms and p.get("arm") != baseline_arm:
+            continue
         gk = (p.get("point"), p.get("n"), p.get("arm"))
         g = pooled.setdefault(gk, {"rows": [], "rungs": [], "params": p, "dir": d})
         for f in MUST_MATCH:
             if p.get(f) != g["params"].get(f):
                 raise SystemExit("latency_report.py: will not pool point %s N %s arm %s: %s %r in %s, %r in %s"
                                  % (gk + (f, g["params"].get(f), g["dir"], p.get(f), d)))
-        rows, summary = W.join(d)
+        rows, summary = join_rung(d, p.get("arm"))
         g["rows"].extend(rows)
         g["rungs"].append({"dir": d, "warmcold": {k: summary[k] for k in (
             "warm", "cold", "unknown", "unknown_keys", "dropped_end_session_execs")}})
@@ -170,9 +190,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("rungs", nargs="+")
     ap.add_argument("--baseline-arm", default="sbx")
+    ap.add_argument("--arms", help="comma-separated arms to report besides the baseline (default: all)")
     ap.add_argument("--out", default=".", help="directory for latency.json and latency.md")
     a = ap.parse_args(argv)
-    rep = build(a.rungs, baseline_arm=a.baseline_arm)
+    rep = build(a.rungs, baseline_arm=a.baseline_arm, arms=a.arms.split(",") if a.arms else None)
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "latency.json"), "w") as f:
         json.dump(rep, f, indent=2, sort_keys=True)

@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""E17b warm/cold join on the SHIPPED lease worker's log (PLAN-E17B Task 6).
+
+  python3 experiments/e17-lease/analysis/warmcold_lease.py RUNG_DIR -> RUNG_DIR/warmcold.jsonl, RUNG_DIR/warmcold-report.json
+
+warmcold.py (E17a) cannot read the shipped worker: its exec line carries `kind=` and it has no
+`e15 resident` lines. Lines read (moca remote-worker/internal/vmpool/runner.go, lease.go, lease_event.go):
+  vmpool: exec req=<n> workspace_key="<k>" kind=<kind> vm=<vm> cold="<c>" exit=<n> err=<...>
+  vmpool: lease start workspace_key="<k>" vm=<vm> mode=<mode>
+  vmpool: lease end workspace_key="<k>" vm=<vm> mode=<mode> reason=<r> age=<d>[ processes=[...]]
+(the `worker_restart` end has the same form). Everything else is ignored.
+
+Per key, in log order (never re-ordered by timestamp):
+  - a call is WARM when its first Exec ran on the same vm as the previous call's last Exec and no
+    `lease end` for the key lies between the two exec lines, and it ran in a live lease (a `lease
+    start` with no later end for the key). A start is logged before its Exec's own exec line.
+  - COLD otherwise: first (the key's first call), the reason of the last end between (idle,
+    memory_reclaim, ...), or vm-changed.
+  - UNKNOWN, never guessed: no live lease at its exec line, no vm, or the key's exec-line count differs
+    from its calls' (exec-count), or a timestamp guard failure (warmcold.timestamp_mismatch).
+The driver's own events (calls.jsonl `lease_events`) are a SECOND source (E17B-R9): a call with any
+event is cold, one with none is warm. A disagreement with the log is counted and listed, never
+resolved: the log's verdict stands, and `countable` is false unless there are none.
+Calls tagged `first_lease` (they include the first-lease ownership walk, Review Focus 6) are
+reported separately and kept out of the warm/cold counts. A `set_mode_failed` row is reported as
+such, never classified, and makes `valid` false.
+"""
+import calendar
+import json
+import os
+import re
+import sys
+import time
+
+import warmcold as W
+
+EXEC_RE = re.compile(r'vmpool: exec req=(?P<req>\d+) workspace_key="(?P<key>(?:[^"\\]|\\.)*)" '
+                     r'kind=(?P<kind>\S*) vm=(?P<vm>\S*) cold="(?P<cold>(?:[^"\\]|\\.)*)" '
+                     r'exit=(?P<exit>-?\d+) err=(?P<err>.*)$')
+START_RE = re.compile(r'vmpool: lease start workspace_key="(?P<key>(?:[^"\\]|\\.)*)" vm=(?P<vm>\S*) mode=(?P<mode>\S+)')
+END_RE = re.compile(r'vmpool: lease end workspace_key="(?P<key>(?:[^"\\]|\\.)*)" vm=(?P<vm>\S*) '
+                    r'mode=(?P<mode>\S+) reason=(?P<reason>\S+)')
+SET_MODE_FAILED = "set_mode_failed"
+
+
+def read_events(d):
+    """Per key, its exec / start / end events in log order."""
+    events = {}
+    with W.open_rung_file(d, "worker.log") as f:
+        for line in f:
+            m = EXEC_RE.search(line)
+            if m:
+                if m.group("key") == W.PROBE_KEY:
+                    continue
+                t = W.LOG_TS_RE.match(line)
+                events.setdefault(m.group("key"), []).append(
+                    {"kind": "exec", "req": int(m.group("req")), "vm": m.group("vm"),
+                     "err": m.group("err").strip(),
+                     "ts": calendar.timegm(time.strptime(t.group(1), "%Y-%m-%dT%H:%M:%S")) if t else None})
+                continue
+            m = START_RE.search(line)
+            if m:
+                events.setdefault(m.group("key"), []).append({"kind": "start", "vm": m.group("vm")})
+                continue
+            m = END_RE.search(line)
+            if m:
+                events.setdefault(m.group("key"), []).append(
+                    {"kind": "end", "vm": m.group("vm"), "reason": m.group("reason")})
+    return events
+
+
+def exec_sequence(evs):
+    """The key's Execs in log order, each with `ends` (end reasons since the previous Exec's line)
+    and `live` (a start with no later end, as of its exec line)."""
+    seq, ends, live = [], [], False
+    for ev in evs:
+        if ev["kind"] == "start":
+            live = True
+        elif ev["kind"] == "end":
+            live = False
+            ends.append(ev["reason"])
+        else:
+            seq.append(dict(ev, ends=ends, live=live))
+            ends = []
+    return seq
+
+
+def driver_verdict(c):
+    return "cold" if c.get("lease_events") else "warm"
+
+
+def row(c, warm, vm, prev_vm, reason, in_lease=None):
+    return {"session": c.get("session"), "call": c.get("call"), "class": c.get("class"),
+            "observed_ms": c.get("observed_ms"), "status": c.get("status"),
+            "in_window": bool(c.get("in_window")), "warm": warm, "vm": vm, "prev_vm": prev_vm,
+            "cold_reason": reason, "in_lease": in_lease, "first_lease": bool(c.get("first_lease")),
+            "driver": driver_verdict(c)}
+
+
+def tag_key(calls, seq):
+    """Rows for one key's calls (call order). set_mode_failed calls ran no Exec and are set aside."""
+    rows = [row(c, SET_MODE_FAILED, None, None, SET_MODE_FAILED) for c in calls if c.get("cause") == SET_MODE_FAILED]
+    calls = [c for c in calls if c.get("cause") != SET_MODE_FAILED]
+    want = sum(W.call_execs(c) for c in calls)
+    if want != len(seq):
+        rows += [row(c, "unknown", None, None, "exec-count") for c in calls]
+        return rows, "calls want %d exec lines, the log has %d" % (want, len(seq))
+    why = W.timestamp_mismatch(calls, seq)
+    if why:
+        rows += [row(c, "unknown", None, None, "timestamp_mismatch") for c in calls]
+        return rows, "timestamp_mismatch: " + why
+    i, prev_vm, between = 0, None, []
+    for c in calls:
+        n = W.call_execs(c)
+        mine = seq[i:i + n]
+        i += n
+        if not mine:
+            rows.append(row(c, "unknown", None, prev_vm, "not-started"))
+            continue
+        between = between + mine[0]["ends"]
+        vm, live = mine[0]["vm"], mine[0]["live"]
+        if not vm:
+            rows.append(row(c, "unknown", None, prev_vm, "no-vm", live))
+        elif not live:
+            rows.append(row(c, "unknown", vm, prev_vm, "no-live-lease", False))
+        elif prev_vm is None:
+            rows.append(row(c, False, vm, None, "first", True))
+        elif between:
+            rows.append(row(c, False, vm, prev_vm, between[-1], True))
+        elif vm != prev_vm:
+            rows.append(row(c, False, vm, prev_vm, "vm-changed", True))
+        else:
+            rows.append(row(c, True, vm, prev_vm, None, True))
+        between = (between if not vm else []) + [r for e in mine[1:] for r in e["ends"]]
+        last_vm = next((e["vm"] for e in reversed(mine) if e["vm"]), None)
+        if last_vm:
+            prev_vm = last_vm
+    return rows, None
+
+
+def join(rung_dir):
+    """Returns (rows sorted by session then call, summary)."""
+    calls = W.read_calls(rung_dir)
+    events = read_events(rung_dir)
+    by_key = {}
+    for c in calls:
+        by_key.setdefault(c.get("session"), []).append(c)
+    rows, unknown_keys = [], {}
+    for key in sorted(by_key):
+        kc = sorted(by_key[key], key=lambda c: c.get("call"))
+        kr, why = tag_key(kc, exec_sequence(events.get(key, [])))
+        rows.extend(sorted(kr, key=lambda r: r["call"]))
+        if why:
+            unknown_keys[key] = why
+    gated = [r for r in rows if not r["first_lease"] and r["warm"] != SET_MODE_FAILED]
+    dis = [{"session": r["session"], "call": r["call"],
+            "log": "warm" if r["warm"] is True else "cold", "driver": r["driver"]}
+           for r in rows if r["warm"] in (True, False) and r["driver"] != ("warm" if r["warm"] else "cold")]
+    n_smf = sum(r["warm"] == SET_MODE_FAILED for r in rows)
+    summary = {
+        "calls": len(rows),
+        "warm": sum(r["warm"] is True for r in gated),
+        "cold": sum(r["warm"] is False for r in gated),
+        "unknown": sum(r["warm"] == "unknown" for r in gated),
+        "first_lease": sum(r["first_lease"] for r in rows if r["warm"] != SET_MODE_FAILED),
+        "set_mode_failed": n_smf,
+        "unknown_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] == "unknown"),
+        "cold_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] is False),
+        "unknown_keys": unknown_keys,
+        "disagreements": len(dis),
+        "disagreement_calls": dis,
+        "dropped_end_session_execs": [],
+        "log_keys_without_calls": sorted(k for k in events if k not in by_key),
+        "valid": n_smf == 0,
+        "countable": n_smf == 0 and not dis,
+    }
+    return rows, summary
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if len(argv) != 1:
+        raise SystemExit("usage: warmcold_lease.py RUNG_DIR")
+    d = argv[0]
+    rows, summary = join(d)
+    with open(os.path.join(d, "warmcold.jsonl"), "w") as f:
+        for r in rows:
+            f.write(json.dumps(r, sort_keys=True) + "\n")
+    with open(os.path.join(d, "warmcold-report.json"), "w") as f:
+        json.dump(summary, f, indent=2, sort_keys=True)
+    print("warm %d cold %d unknown %d first_lease %d disagreements %d" % (
+        summary["warm"], summary["cold"], summary["unknown"], summary["first_lease"], summary["disagreements"]))
+
+
+if __name__ == "__main__":
+    main()
