@@ -26,7 +26,9 @@
 #
 # Before a stage, its run directories ($E15_RUNS/POINT/ARM) must hold no params.json from another moca commit than
 # E17B_MOCA_PIN (a result that mixes commits is not one arm; under E17B=1 nothing sealed is overwritten, E17B-R3).
-# After a stage, every rung it wrote for a ship-* arm is analysed (Task 14 Step 5): warmcold_lease.py, lease_ends.py,
+# After a stage, every rung it wrote (every arm) is checked for its own failure: params.json rung_failed, record.json
+# aborted, or a non-zero driver exit without a record.json (a memory-watchdog abort is a host verdict, not a failure);
+# any stops the chain. Then every rung it wrote for a ship-* arm is analysed (Task 14 Step 5): warmcold_lease.py, lease_ends.py,
 # freed_from_shmem.py (its shmem.json, E17B-R22) and vm_age_lease.py. The chain stops there for the user on: an unknown call, a source disagreement, warmcold
 # valid false, an unmatched lease end, lease_ends valid false or criterion4_pass false (null, no lease ended, does not
 # stop), vm_age_lease mapping_valid false, or an analysis failure. After a measured stage (not "-"),
@@ -44,6 +46,8 @@
 # E17B_SQUEEZE256_MEMMAX_MB. The §7.4 probes (Task 11): probe-overhead runs probe-overhead.sh (baseline.sh default
 # ship-300, then the comparison with the resident patch), ownwalk runs ownwalk.sh once per workspace size, each with its
 # own worker. The probe-overhead stage runs the same commit preflight as a baseline stage (default ship-300) first.
+# The last stage, verdict (needs the seal), runs analysis/verdict.py over $E15_RUNS at the pin to $L/verdict.json: each
+# criterion's value and inputs, computed by code (pass null: the thresholds are sealed in Task 13).
 # A stage kind "blocked" fails naming what is missing (none is left).
 #
 # Output: "E17B <stage> START|DONE|FAILED|SKIP ..." lines. Exit 0 when every selected stage is done, 1 on a
@@ -129,6 +133,8 @@ STAGES=(
   "ram256-base-squeeze-ship-300|seal|baseline256 squeeze-256 ship-300"
   "ram256-squeeze-ship-300|seal|squeeze-ladder squeeze-256 ship-300|budget = MemoryMax - 8192 (its own E17B_SQUEEZE256_MEMMAX_MB)"
   "ram256-squeeze-sbx|seal|squeeze-rung squeeze-256 sbx"
+  # the criteria's inputs, computed by code from every rung (final review M1): $L/verdict.json, pass null per criterion
+  "verdict|seal|verdict|analysis/verdict.py over the runs: criteria 1-5 values and inputs; the thresholds are sealed (Task 13)"
 )
 
 usage() {
@@ -269,16 +275,51 @@ PY
   [ -z "$bad" ] || die "$bad is not from E17B_MOCA_PIN $E15_MOCA_PIN: a result that mixes commits is not one arm; move that arm's runs aside first"
 }
 
-# gate MARKER: analyse every ship-* rung written since MARKER (Task 14 Step 5); 1 when the chain must stop.
+# rung_flags DIR: why the rung itself failed, "" when it did not (I3; every arm). rung.sh exits 0 after record.py even
+# when the driver failed, so the flags are read here: params.json rung_failed (a driver exit or set_mode_failed rows on
+# a lease arm), record.json aborted (driver_exit != 0 without a memory-watchdog abort: a rig error, never a host
+# verdict), and, when there is no record.json, the driver exit itself. A memory-watchdog abort is a host verdict
+# (holds false, binding memory_floor), not a failure. Unreadable flags exit non-zero: the caller stops.
+rung_flags() {
+  python3 - "$1" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+p = json.load(open(os.path.join(d, "params.json")))
+rp = os.path.join(d, "record.json")
+r = json.load(open(rp)) if os.path.exists(rp) else None
+why = []
+if p.get("rung_failed") is not None:
+    why.append("rung_failed %s" % p["rung_failed"])
+de = p.get("driver_exit") or 0
+if r is not None and r.get("aborted") is True:
+    why.append("record.json aborted (driver_exit %s)" % de)
+elif r is None and de != 0 and not p.get("memory_abort"):
+    why.append("driver_exit %s (no memory abort)" % de)
+print("; ".join(why))
+PY
+}
+
+# gate MARKER: check every rung written since MARKER for its own failure flags (every arm), then analyse each ship-*
+# rung (Task 14 Step 5); 1 when the chain must stop.
 gate() {
-  local marker=$1 rc=0 d arm f out
+  local marker=$1 rc=0 d arm f out sbxd extra
   while IFS= read -r f; do
     d=$(dirname "$f")
+    out=$(rung_flags "$d" 2>/dev/null) || out="the rung flags are unreadable ($f)"
+    if [ -n "$out" ]; then
+      echo "E17B $STAGE STOP ${d#"$E15_RUNS"/}: $out (the rung failed; Task 14 Step 5: goes to the user)"
+      rc=1
+      continue
+    fi
     arm=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("arm", ""))' "$f" 2>/dev/null)
     case "$arm" in ship-*) ;; *) continue ;; esac
-    # freed_from_shmem.py writes the shmem.json vm_age_lease.py reads (E17B-R22), so it runs first.
+    # freed_from_shmem.py writes the shmem.json vm_age_lease.py reads (E17B-R22), so it runs first. vm_age_lease.py gets
+    # --sbx when the same-named sbx rung exists (RUNS/POINT/sbx/<rung>): criterion 5's second half (M1).
+    sbxd=$(dirname "$(dirname "$d")")/sbx/$(basename "$d")
     for a in warmcold_lease.py lease_ends.py freed_from_shmem.py vm_age_lease.py; do
-      out=$(python3 "$ANALYSIS/$a" "$d" 2>&1) || {
+      extra=()
+      [ "$a" != vm_age_lease.py ] || [ ! -f "$sbxd/params.json" ] || extra=(--sbx "$sbxd")
+      out=$(python3 "$ANALYSIS/$a" "$d" ${extra[@]+"${extra[@]}"} 2>&1) || {
         echo "E17B $STAGE ANALYSIS $a failed on $d: $(printf '%s' "$out" | tail -1)"
         rc=1
         continue 2
@@ -403,6 +444,9 @@ run_cmd() {
     for n in "$@"; do
       bash "$OWNWALK" "$n" || die "ownwalk.sh $n failed (its ownwalk.json and driver.log: $E15_RUNS/ownwalk/ship-300/F$n)"
     done
+    ;;
+  verdict) # the criteria's inputs from every rung at the pin (final review M1); pass stays null (Task 13 seals it)
+    python3 "$ANALYSIS/verdict.py" "$E15_RUNS" --moca-commit "$E15_MOCA_PIN" --out "$L/verdict.json"
     ;;
   blocked) die "not wired: $*" ;;
   *) die "unknown stage kind $kind" ;;

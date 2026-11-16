@@ -56,7 +56,9 @@ printf '#!/usr/bin/env bash\ncase "$*" in *e15-worker.service*) [ -e "%s/worker-
 printf '#!/usr/bin/env bash\n[ "$1" = -n ] && shift\nexec "$@"\n' >"$TMP/stub/sudo"
 chmod +x "$TMP/stub/systemctl" "$TMP/stub/sudo"
 # a stage stub KIND: logs "KIND ARGS tag=<E15_TAG> memmax=<E15_SQUEEZE_MEMMAX_MB> e17b=<E17B>"; fails when the
-# logged call starts with $FAIL_ON. rung writes the rung's params.json (arm, moca_commit), ladder at the squeeze
+# logged call starts with $FAIL_ON. rung writes the rung's params.json (arm, moca_commit, driver_exit, rung_failed,
+# memory_abort from STUB_DRIVER_EXIT, STUB_RUNG_FAILED, STUB_MEMORY_ABORT) and record.json (aborted: STUB_ABORTED;
+# none with STUB_NO_RECORD=1), ladder at the squeeze
 # point a ladder.json with squeeze.stop_n 64 and the memmax it ran under.
 mkstub() {
   cat >"$TMP/stub-$1.sh" <<SH
@@ -68,7 +70,10 @@ case "$1" in
 rung)
   d=\$E15_ROOT/runs/\$3/\$1/N\$2\${E15_TAG:+-\$E15_TAG}
   mkdir -p "\$d"
-  printf '{"arm": "%s", "n": %s, "moca_commit": "%s"}\n' "\$1" "\$2" "\${STUB_COMMIT:-$PIN}" >"\$d/params.json" ;;
+  printf '{"arm": "%s", "n": %s, "moca_commit": "%s", "driver_exit": %s, "rung_failed": %s, "memory_abort": %s}\n' "\$1" "\$2" \
+    "\${STUB_COMMIT:-$PIN}" "\${STUB_DRIVER_EXIT:-0}" "\${STUB_RUNG_FAILED:-null}" "\${STUB_MEMORY_ABORT:-null}" >"\$d/params.json"
+  rm -f "\$d/record.json"
+  [ "\${STUB_NO_RECORD:-0}" = 1 ] || printf '{"aborted": %s}\n' "\${STUB_ABORTED:-false}" >"\$d/record.json" ;;
 baseline)
   mkdir -p "\$E15_ROOT/runs/\$1/\$2/N1"
   printf '{"class_medians": {"build": 1.0}}\n' >"\$E15_ROOT/runs/\$1/\$2/N1/baseline.json" ;;
@@ -109,8 +114,18 @@ PY
 cat >"$TMP/an/vm_age_lease.py" <<'PY'
 import json, os, sys
 json.dump({"mapping_valid": os.environ.get("STUB_MAP_VALID", "1") == "1", "mapping_reasons": ["stub mapping"]}, open(sys.argv[1] + "/vm_age_lease.json", "w"))
-open(os.environ["ALOG"], "a").write("vm_age_lease %s\n" % sys.argv[1])
+open(os.environ["ALOG"], "a").write("vm_age_lease %s\n" % " ".join(sys.argv[1:]))
 print("mapping_valid")
+PY
+# verdict.py stub: logs its arguments, writes --out (fails with STUB_VERDICT_FAIL=1)
+cat >"$TMP/an/verdict.py" <<'PY'
+import os, sys
+a = sys.argv[1:]
+open(os.environ["ALOG"], "a").write("verdict %s\n" % " ".join(a))
+if os.environ.get("STUB_VERDICT_FAIL") == "1":
+    sys.exit("stub verdict failure")
+open(a[a.index("--out") + 1], "w").write("{}")
+print("verdict written")
 PY
 # latency_report.py stub: logs its rung dirs and --out
 cat >"$TMP/an/latency_report.py" <<'PY'
@@ -148,7 +163,7 @@ test_chain_lists_stages() {
   check "list: exit 0, the predictions state in the header" "$(chain -- --list)/$(head -1 "$TMP/c.out" | grep -c 'predictions: missing')" "0/1"
   check "list: the ordered stages (Task 12 bring-up, Task 14 Steps 1-4, optional ladders, the 256 MiB runs last)" \
     "$(sed -n '2,$p' "$TMP/c.out" | awk '{print $1}' | tr '\n' ' ')" \
-    "smoke cal-default-sbx cal-default-ship-300 cal-pycache-sbx cal-pycache-ship-300 base-pycache-low-sbx base-pycache-low-ship-300 base-pycache-ship-30 base-pycache-ship-120 lat-pycache-sbx-n1 lat-pycache-ship-300-n1 lat-pycache-low-sbx-n1 lat-pycache-low-ship-300-n1 lat-pycache-sbx-n128 lat-pycache-ship-300-n128 lat-pycache-low-sbx-n128 lat-pycache-low-ship-300-n128 lat-pycache-ship-30-n128 lat-pycache-ship-120-n128 ladder-default-sbx ladder-default-ship-300 base-squeeze-sbx base-squeeze-ship-300 squeeze-ship-300 squeeze-sbx probe-overhead ownwalk base-default-ship-30 base-default-ship-120 ladder-default-ship-30 ladder-default-ship-120 ram256-pycache-sbx-n1 ram256-pycache-ship-300-n1 ram256-base-squeeze-sbx ram256-base-squeeze-ship-300 ram256-squeeze-ship-300 ram256-squeeze-sbx "
+    "smoke cal-default-sbx cal-default-ship-300 cal-pycache-sbx cal-pycache-ship-300 base-pycache-low-sbx base-pycache-low-ship-300 base-pycache-ship-30 base-pycache-ship-120 lat-pycache-sbx-n1 lat-pycache-ship-300-n1 lat-pycache-low-sbx-n1 lat-pycache-low-ship-300-n1 lat-pycache-sbx-n128 lat-pycache-ship-300-n128 lat-pycache-low-sbx-n128 lat-pycache-low-ship-300-n128 lat-pycache-ship-30-n128 lat-pycache-ship-120-n128 ladder-default-sbx ladder-default-ship-300 base-squeeze-sbx base-squeeze-ship-300 squeeze-ship-300 squeeze-sbx probe-overhead ownwalk base-default-ship-30 base-default-ship-120 ladder-default-ship-30 ladder-default-ship-120 ram256-pycache-sbx-n1 ram256-pycache-ship-300-n1 ram256-base-squeeze-sbx ram256-base-squeeze-ship-300 ram256-squeeze-ship-300 ram256-squeeze-sbx verdict "
   check "list: only the smoke and the four calibration baselines run before the seal; every other stage needs it" \
     "$(sed -n '2,$p' "$TMP/c.out" | awk '$2 == "-" {print $1}' | tr '\n' ' ')/$(sed -n '2,$p' "$TMP/c.out" | awk '$2 != "-" && $2 != "seal" && $2 != "opt"' | wc -l | tr -d ' ')" \
     "smoke cal-default-sbx cal-default-ship-300 cal-pycache-sbx cal-pycache-ship-300 /0"
@@ -225,9 +240,12 @@ test_chain_squeeze_stages() {
 test_chain_analysis_gate() {
   reset
   seal true
-  check "gate: each ship-* rung the stage wrote is analysed (warmcold_lease, lease_ends, freed_from_shmem before vm_age_lease); sbx rungs are not" \
-    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-ship-300-n1)/$(grep -v '^latency_report' "$TMP/alog" | sed "s#$T/runs/##" | tr '\n' ';')" \
-    "0/warmcold_lease pycache/ship-300/N1-lat;lease_ends pycache/ship-300/N1-lat;freed_from_shmem pycache/ship-300/N1-lat;vm_age_lease pycache/ship-300/N1-lat;"
+  check "gate: each ship-* rung the stage wrote is analysed (warmcold_lease, lease_ends, freed_from_shmem before vm_age_lease, with --sbx the same-named sbx rung); sbx rungs are not" \
+    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-ship-300-n1)/$(grep -v '^latency_report' "$TMP/alog" | sed "s#$T/runs/##g" | tr '\n' ';')" \
+    "0/warmcold_lease pycache/ship-300/N1-lat;lease_ends pycache/ship-300/N1-lat;freed_from_shmem pycache/ship-300/N1-lat;vm_age_lease pycache/ship-300/N1-lat --sbx pycache/sbx/N1-lat;"
+  check "gate: without a same-named sbx rung vm_age_lease runs without --sbx" \
+    "$(chain -- --from lat-pycache-ship-30-n128 --to lat-pycache-ship-30-n128)/$(grep '^vm_age_lease' "$TMP/alog" | sed "s#$T/runs/##g")" \
+    "0/vm_age_lease pycache/ship-30/N128-lat"
   check "gate: an unknown call stops the chain at that stage, which stays not done" \
     "$(chain STUB_UNKNOWN=2 -- --from lat-pycache-ship-300-n1 --to lat-pycache-low-sbx-n1)/$(grep -c 'STOP pycache/ship-300/N1-lat: 2 unknown call(s)' "$TMP/c.out")/$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open)/$(grep -c . "$CLOG")" \
     "1/1/open/1"
@@ -251,6 +269,45 @@ test_chain_analysis_gate() {
   check "gate: no latency_report after a bring-up stage (not a measured stage)" \
     "$(chain -- --to cal-default-sbx)/$(grep -c '^latency_report' "$TMP/alog")" "0/0"
   seal true
+}
+# M1: the final verdict stage (needs the seal) computes every criterion's inputs from the runs.
+test_chain_verdict_stage() {
+  reset
+  rm -f "$PRED"
+  check "verdict: refused before the seal (nothing run)" "$(chain -- --from verdict)/$(grep -c . "$TMP/alog")" "1/0"
+  seal true
+  check "verdict: the last stage runs verdict.py over the runs, at the pin, to \$L/verdict.json" \
+    "$(chain -- --from verdict)/$(sed "s#$T/##g" "$TMP/alog")/$([ -f "$T/e17b/verdict.json" ] && echo written)/$([ -f "$T/e17b/verdict.done" ] && echo "done")" \
+    "0/verdict runs --moca-commit $PIN --out e17b/verdict.json/written/done"
+  check "verdict: a verdict.py failure fails the stage" "$(chain STUB_VERDICT_FAIL=1 -- --from verdict)/$([ -f "$T/e17b/verdict.done" ] && echo "done" || echo open)" "1/open"
+}
+# I3: the gate reads every rung's own failure flags (ship and sbx), whatever its analyses say.
+test_chain_gate_reads_rung_failure_flags() {
+  reset
+  seal true
+  local v arm stage
+  for arm in sbx ship-300; do
+    stage=lat-pycache-$arm-n1
+    for v in 'STUB_RUNG_FAILED="driver_exit=1" STUB_DRIVER_EXIT=1:rung_failed driver_exit=1' \
+      'STUB_RUNG_FAILED="set_mode_failed=2" STUB_DRIVER_EXIT=1:rung_failed set_mode_failed=2' \
+      'STUB_ABORTED=true STUB_DRIVER_EXIT=1:record.json aborted (driver_exit 1)' \
+      'STUB_NO_RECORD=1 STUB_DRIVER_EXIT=3:driver_exit 3 (no memory abort)'; do
+      read -r -a envs <<<"${v%%:*}"
+      printf '%s|%s=%s:%s:%s ' "$arm" "${v%%:*}" "$(chain "${envs[@]}" -- --from "$stage" --to "$stage")" \
+        "$(grep -cF "STOP pycache/$arm/N1-lat: ${v#*:}" "$TMP/c.out")" "$([ -f "$T/e17b/$stage.done" ] && echo "done" || echo open)"
+    done
+  done >"$TMP/flags.out"
+  check "gate: a rung's rung_failed, record.json aborted or a non-zero driver exit stops the stage, sbx and ship alike" \
+    "$(cat "$TMP/flags.out")" \
+    "sbx|STUB_RUNG_FAILED=\"driver_exit=1\" STUB_DRIVER_EXIT=1=1:1:open sbx|STUB_RUNG_FAILED=\"set_mode_failed=2\" STUB_DRIVER_EXIT=1=1:1:open sbx|STUB_ABORTED=true STUB_DRIVER_EXIT=1=1:1:open sbx|STUB_NO_RECORD=1 STUB_DRIVER_EXIT=3=1:1:open ship-300|STUB_RUNG_FAILED=\"driver_exit=1\" STUB_DRIVER_EXIT=1=1:1:open ship-300|STUB_RUNG_FAILED=\"set_mode_failed=2\" STUB_DRIVER_EXIT=1=1:1:open ship-300|STUB_ABORTED=true STUB_DRIVER_EXIT=1=1:1:open ship-300|STUB_NO_RECORD=1 STUB_DRIVER_EXIT=3=1:1:open "
+  check "gate: a failed ship rung is not analysed (its outputs would be partial)" \
+    "$(chain STUB_ABORTED=true STUB_DRIVER_EXIT=1 -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c '^warmcold_lease' "$TMP/alog")" "1/0"
+  check "gate: a memory-watchdog abort (driver killed, not aborted: a host verdict) does not stop the stage" \
+    "$(chain STUB_DRIVER_EXIT=143 STUB_MEMORY_ABORT='{"reason":"floor"}' -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(chain STUB_NO_RECORD=1 STUB_DRIVER_EXIT=143 STUB_MEMORY_ABORT='{"reason":"floor"}' -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)" "0/0"
+  check "gate: a clean sbx rung passes the flag check (driver_exit 0, rung_failed null, aborted false)" \
+    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$([ -f "$T/e17b/lat-pycache-sbx-n1.done" ] && echo "done")" "0/done"
+  check "gate: an unreadable params.json stops the stage (never passes)" \
+    "$(chain STUB_RUNG_FAILED='{broken' -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(grep -c 'STOP pycache/sbx/N1-lat: the rung flags are unreadable' "$TMP/c.out")" "1/1"
 }
 test_chain_preflight_and_guards() {
   reset
@@ -308,6 +365,8 @@ test_chain_runs_bringup_unsealed
 test_chain_resumes_at_stage
 test_chain_squeeze_stages
 test_chain_analysis_gate
+test_chain_gate_reads_rung_failure_flags
+test_chain_verdict_stage
 test_chain_preflight_and_guards
 
 echo
