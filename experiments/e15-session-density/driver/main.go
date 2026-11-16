@@ -54,6 +54,7 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 		tokenWrk  = fs.String("token-wrk", "e15", "with --lease-mode: the worker's SANDBOX_ID (token claim wrk); must equal --sandbox-id")
 		tokenIss  = fs.String("token-iss", "", "with --lease-mode: the token issuer, equal to the relay's SH_SANDBOX_TOKEN_ISSUER (required, no default)")
 		scanCls   = fs.String("scan-classes", "", "mem512: comma-separated classes whose calls carry --scan-cmd")
+		recStdout = fs.String("record-stdout", "", "E17b: comma-separated classes whose calls record the Exec's stdout in calls.jsonl (first 1024 bytes; default off)")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -89,6 +90,10 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 		return fail(2, "--corpus, --library, --run-id, --out and --n >= 1 are required")
 	}
 	scan, err := ParseScan(*scanCmd, *scanCls)
+	if err != nil {
+		return fail(2, "%v", err)
+	}
+	recordStdout, err := ParseRecordStdout(*recStdout)
 	if err != nil {
 		return fail(2, "%v", err)
 	}
@@ -147,7 +152,7 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 	r, err := NewReplayer(Config{
 		N: *n, Seed: *seed, UserCap: *userCap,
 		Warmup: time.Duration(*warmupS) * time.Second, Window: time.Duration(*windowS) * time.Second,
-		Spread: time.Duration(*spreadS) * time.Second, Grace: time.Duration(*graceS) * time.Second, EndSessionExec: *endSess, EndSessionDefer: *endDefer, EndSessionRate: *endRate, StartAtZero: *startZero, MaxSessions: *maxSess, Scan: scan, SandboxID: *sandboxID, RunID: *runID, Token: token, Lease: lease,
+		Spread: time.Duration(*spreadS) * time.Second, Grace: time.Duration(*graceS) * time.Second, EndSessionExec: *endSess, EndSessionDefer: *endDefer, EndSessionRate: *endRate, StartAtZero: *startZero, MaxSessions: *maxSess, Scan: scan, SandboxID: *sandboxID, RunID: *runID, Token: token, Lease: lease, RecordStdout: recordStdout,
 	}, ss, lib, pb.NewSandboxExecClient(cc), rec)
 	if err != nil {
 		_ = closeAll()

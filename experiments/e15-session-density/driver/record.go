@@ -42,6 +42,11 @@ type callRecord struct {
 	LeaseEvents []leaseEvent `json:"lease_events,omitempty"`
 	FirstLease  bool         `json:"first_lease,omitempty"`
 	NotLease    bool         `json:"not_lease,omitempty"`
+	// --record-stdout only (omitted otherwise): for a call of a listed class, the Exec's stdout, its
+	// first stdoutMax bytes cut on a UTF-8 rune boundary ("" when it wrote none), and
+	// stdout_truncated when more was written.
+	Stdout          *string `json:"stdout,omitempty"`
+	StdoutTruncated bool    `json:"stdout_truncated,omitempty"`
 }
 
 // sessionRecord is one sessions.jsonl line, over the session's in-window calls only.
@@ -191,4 +196,21 @@ func parseProcStat(line string) (utimeMs, stimeMs int64, err error) {
 		return 0, 0, fmt.Errorf("proc stat stime: %w", err)
 	}
 	return u * 1000 / clkTck, s * 1000 / clkTck, nil
+}
+
+// ParseRecordStdout parses --record-stdout: comma-separated class names, nil when empty (off). A
+// name is not checked against the library: a class a point's library does not have simply never
+// matches (rung.sh passes py_shmem on every E17b rung, whose E15 points have no such class).
+func ParseRecordStdout(classes string) (map[string]bool, error) {
+	if classes == "" {
+		return nil, nil
+	}
+	out := map[string]bool{}
+	for _, c := range strings.Split(classes, ",") {
+		if c == "" || strings.TrimSpace(c) != c {
+			return nil, fmt.Errorf("--record-stdout %q: want comma-separated class names, no empty or padded name", classes)
+		}
+		out[c] = true
+	}
+	return out, nil
 }

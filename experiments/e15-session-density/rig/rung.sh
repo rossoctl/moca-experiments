@@ -420,6 +420,12 @@ if e17b_lease_arm "$ARM"; then
   IDLE_S=$(e17b_idle_timeout_s "$ARM")
   lease_flag=(--lease-mode --token-key "$TOKEN_DIR/token.key" --idle-timeout-s "$IDLE_S" --token-wrk e15 --token-iss "$(e17b_token_iss)")
 fi
+# E17b (E17B-R22): every E17b rung (ship-* and sbx) records py_shmem's stdout, the guest's Shmem in kB, for
+# freed_from_shmem.py; a point whose library has no py_shmem simply records nothing. The sealed driver never gets it.
+stdout_flag=()
+if [ "${E17B:-}" = 1 ]; then
+  stdout_flag=(--record-stdout py_shmem)
+fi
 launch_ts=$(date +%s.%N)
 # The sampler starts with the driver, its origin the epoch just before the driver is exec'd
 # (rung_start_ts as first taken). See "time origin" below for the re-base onto the driver's t0.
@@ -430,7 +436,7 @@ sampler_pid=$!
 MOCA_RELAY_EXEC_TOKEN=$(cat "$E15_SECRETS/exec.token") "$DRIVER" \
   --corpus "$CORPUS" --library "$LIBRARY" --seed "$SEED" --n "$N" \
   --warmup-s "$WARMUP" --window-s "$WINDOW" --spread-s "$SPREAD" --grace-s "$GRACE" \
-  --target "$TARGET" --sandbox-id e15 --run-id "$RUN_ID" --out "$DIR" "${end_flag[@]}" "${start_flag[@]}" "${scan_flag[@]}" "${lease_flag[@]}" \
+  --target "$TARGET" --sandbox-id e15 --run-id "$RUN_ID" --out "$DIR" "${end_flag[@]}" "${start_flag[@]}" "${scan_flag[@]}" "${lease_flag[@]}" "${stdout_flag[@]}" \
   >"$DIR/driver.log" 2>&1 &
 driver_pid=$!
 # Memory watchdog (Task 8 mem512 OOM incident): host MemAvailable below E15_MEMAVAIL_FLOOR_MIB

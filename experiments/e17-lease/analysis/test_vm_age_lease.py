@@ -3,6 +3,8 @@ import json
 import os
 import sys
 
+import pytest
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "..", "..", "e16-low-duty", "analysis"))
@@ -93,9 +95,10 @@ def test_retired_cgroups_end_to_end(tmp_path):
                                                         "vm-5": "pool-2"}
 
 
-def heavy_fixture(tmp_path, after_mib, freed=True, next_send=None):
-    """A lease VM (pool-0, ages 0-90 s) with one py_analyze from t=10 to t=30: peak 900 MiB, then
-    `after_mib` from t=31 on."""
+def heavy_fixture(tmp_path, after_mib, delta_mib=0, next_send=None, name="rung"):
+    """A lease VM (pool-0, ages 0-90 s) with one py_analyze from t=10 to t=30: 100 MiB at its start,
+    peak 900 MiB, then `after_mib` from t=31 on. shmem.json gives its dShmem (None: no shmem.json;
+    "null": the key is there with null)."""
     log = [restore(0, "vm-1"), lstart(0, "A", "vm-1"), execl(30, "A", "vm-1")]
 
     def mem(t):
@@ -108,16 +111,17 @@ def heavy_fixture(tmp_path, after_mib, freed=True, next_send=None):
     if next_send is not None:
         log.append(execl(next_send + 1, "A", "vm-1"))
         calls.append(call("A", 2, "py_short", next_send, 500))
-    d = rung(tmp_path, log, mem, calls)
-    if freed:
-        with open(os.path.join(d, "freed.json"), "w") as f:
-            json.dump({"A:1": 500 * MIB}, f)
+    d = rung(tmp_path, log, mem, calls, name=name)
+    if delta_mib is not None:
+        with open(os.path.join(d, "shmem.json"), "w") as f:
+            json.dump({"A:1": None if delta_mib == "null" else delta_mib * MIB}, f)
     return d
 
 
 def run_fpr(d):
-    freed = json.load(open(os.path.join(d, "freed.json"))) if os.path.exists(os.path.join(d, "freed.json")) else None
-    r = L.analyse(d, freed=freed)
+    # what main() does: RUNDIR/shmem.json when it exists
+    p = os.path.join(d, "shmem.json")
+    r = L.analyse(d, shmem=json.load(open(p)) if os.path.exists(p) else None)
     assert r["mapping_valid"], r["mapping_reasons"]
     return r["fpr"]
 
@@ -126,21 +130,44 @@ def test_memory_falls_back_after_heavy_exec(tmp_path):
     f = run_fpr(heavy_fixture(tmp_path, after_mib=300))
     e = f["execs"][0]
     assert e["end_bytes"] == 900 * MIB and e["after_15s_bytes"] == 300 * MIB and e["peak_bytes"] == 900 * MIB
-    assert e["follows"] is True  # 300 <= 900 - 500/2
+    assert e["start_bytes"] == 100 * MIB and e["delta_shmem_bytes"] == 0
+    assert e["freed_bytes"] == 800 * MIB  # max(0, 900 - 100 - 0)
+    assert e["follows"] is True  # 300 <= 900 - 800/2
     assert f["follows_true"] == 1 and f["follows_false"] == 0
+    assert f["definition"] == "freed = max(0, peak - start - dShmem); follows: value_15s <= peak - freed/2"
 
 
 def test_memory_pinned_after_heavy_exec_is_false(tmp_path):
-    e = run_fpr(heavy_fixture(tmp_path, after_mib=880, freed=True, ))["execs"][0]
-    assert e["follows"] is False  # 880 > 650
+    e = run_fpr(heavy_fixture(tmp_path, after_mib=880))["execs"][0]
+    assert e["follows"] is False  # 880 > 500
 
 
-def test_fpr_without_freed_is_null_not_false(tmp_path):
-    d = tmp_path / "nofreed"
-    d.mkdir()
-    e = run_fpr(heavy_fixture(d, after_mib=300, freed=False))["execs"][0]
-    assert e["follows"] is None and "freed" in e["why_null"]
+def test_tmpfs_growth_is_not_counted_as_freed(tmp_path):
+    # 600 MiB of the growth went to guest tmpfs: freed 200 MiB, so 700 MiB 15 s later still follows.
+    e = run_fpr(heavy_fixture(tmp_path, after_mib=700, delta_mib=600))["execs"][0]
+    assert e["freed_bytes"] == 200 * MIB and e["follows"] is True  # 700 <= 900 - 100
+    e = run_fpr(heavy_fixture(tmp_path, after_mib=700, name="no-tmpfs"))["execs"][0]
+    assert e["follows"] is False  # without the tmpfs growth: 700 > 500
+    # more tmpfs than growth: freed is 0, never negative
+    e = run_fpr(heavy_fixture(tmp_path, after_mib=880, delta_mib=2000, name="big-tmpfs"))["execs"][0]
+    assert e["freed_bytes"] == 0 and e["follows"] is True
+
+
+@pytest.mark.parametrize("delta", [None, "null"])
+def test_fpr_without_delta_shmem_is_null_not_false(tmp_path, delta):
+    e = run_fpr(heavy_fixture(tmp_path, after_mib=300, delta_mib=delta))["execs"][0]
+    assert e["follows"] is None and e["freed_bytes"] is None and "dShmem" in e["why_null"]
     assert (e["end_bytes"], e["after_15s_bytes"], e["peak_bytes"]) == (900 * MIB, 300 * MIB, 900 * MIB)
+
+
+def test_main_reads_shmem_json_not_freed_json(tmp_path):
+    d = heavy_fixture(tmp_path, after_mib=300)
+    with open(os.path.join(d, "freed.json"), "w") as f:
+        json.dump({"A:1": 10 * MIB}, f)  # nothing writes it any more: ignored
+    r = L.main([d])
+    assert r["fpr"]["execs"][0]["freed_bytes"] == 800 * MIB
+    os.remove(os.path.join(d, "shmem.json"))
+    assert L.main([d])["fpr"]["execs"][0]["follows"] is None
 
 
 def test_fpr_null_when_next_call_within_15s(tmp_path):
@@ -350,5 +377,6 @@ def test_age_text_and_freed_format_documented(tmp_path):
     d = heavy_fixture(tmp_path, after_mib=300)
     r = L.analyse(d)
     assert "not its promotion" in r["memory_vs_age"]["age"]
-    assert '"session:call"' in L.__doc__ and "py_shmem" in L.__doc__
+    assert '"session:call"' in L.__doc__ and "py_shmem" in L.__doc__ and "shmem.json" in L.__doc__
+    assert "freed.json" not in L.__doc__ and "max(0, peak - start - dShmem)" in L.__doc__
     assert "lease_start_failed_without_marker_suspected" in L.__doc__

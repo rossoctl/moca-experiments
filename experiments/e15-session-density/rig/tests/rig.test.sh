@@ -3140,8 +3140,13 @@ test_ship_rung_passes_lease_flags() {
     "$(sparams ship-30 worker_env | grep -c "'SH_MAX_COMMITTED_MB': '385024'")" "1"
   check "ship rung: params.json keeps driver_bin_sha256 of the -e17b driver (not the sealed one)" \
     "$(sparams ship-30 driver_bin_sha256)" "$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$RS/bin/e15-driver-e17b")"
+  check "ship rung: the driver records py_shmem's stdout (--record-stdout py_shmem, E17B-R22)" \
+    "$(grep -c -- '--record-stdout py_shmem' "$SARGS")" "1"
   srung sbx
   check "sbx rung under E17B=1: the -e17b driver runs and gets no lease flag" "$(grep -c '^driver$' "$SORD")/$(grep -c -- '--lease-mode\|--token' "$SARGS")" "1/0"
+  check "sbx rung under E17B=1: it records py_shmem's stdout too" "$(grep -c -- '--record-stdout py_shmem' "$SARGS")" "1"
+  check "--record-stdout is passed only under E17B=1 (the sealed driver never gets it)" \
+    "$(grep -c 'stdout_flag=(--record-stdout py_shmem)' "$RIG/rung.sh")/$(grep -B2 'stdout_flag=(--record-stdout py_shmem)' "$RIG/rung.sh" | grep -c 'E17B:-}" = 1')/$(grep -c '"\${stdout_flag\[@\]}"' "$RIG/rung.sh")" "1/1/1"
   check "sbx rung under E17B=1: no mint-key, no lease params" "$(grep -c '^mint-key' "$SARGS")/$(sparams sbx idle_timeout_s | grep -c KeyError)" "0/1"
 }
 test_relay_env_has_token_keyset_and_issuer() {

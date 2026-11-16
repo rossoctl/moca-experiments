@@ -59,9 +59,9 @@ func TestDefaultPathUnchanged(t *testing.T) {
 			}
 			delete(m, f)
 		}
-		for _, f := range []string{"lease_events", "first_lease", "not_lease"} {
+		for _, f := range []string{"lease_events", "first_lease", "not_lease", "stdout", "stdout_truncated"} {
 			if _, ok := m[f]; ok {
-				t.Fatalf("lease field %s present with the mode off: %s", f, line)
+				t.Fatalf("opt-in field %s present with the modes off: %s", f, line)
 			}
 		}
 		b, _ := json.Marshal(m) // map keys marshal sorted: a stable form

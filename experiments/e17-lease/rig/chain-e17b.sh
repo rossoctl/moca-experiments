@@ -26,8 +26,8 @@
 #
 # Before a stage, its run directories ($E15_RUNS/POINT/ARM) must hold no params.json from another moca commit than
 # E17B_MOCA_PIN (a result that mixes commits is not one arm; under E17B=1 nothing sealed is overwritten, E17B-R3).
-# After a stage, every rung it wrote for a ship-* arm is analysed (Task 14 Step 5): warmcold_lease.py, lease_ends.py
-# and vm_age_lease.py. The chain stops there for the user on: an unknown call, a source disagreement, warmcold
+# After a stage, every rung it wrote for a ship-* arm is analysed (Task 14 Step 5): warmcold_lease.py, lease_ends.py,
+# freed_from_shmem.py (its shmem.json, E17B-R22) and vm_age_lease.py. The chain stops there for the user on: an unknown call, a source disagreement, warmcold
 # valid false, an unmatched lease end, lease_ends valid false or criterion4_pass false (null, no lease ended, does not
 # stop), vm_age_lease mapping_valid false, or an analysis failure. After a measured stage (not "-"),
 # latency_report.py runs over every rung the stage wrote, to $L/<stage>.latency/ (informational: not a stop).
@@ -272,7 +272,8 @@ gate() {
     d=$(dirname "$f")
     arm=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("arm", ""))' "$f" 2>/dev/null)
     case "$arm" in ship-*) ;; *) continue ;; esac
-    for a in warmcold_lease.py lease_ends.py vm_age_lease.py; do
+    # freed_from_shmem.py writes the shmem.json vm_age_lease.py reads (E17B-R22), so it runs first.
+    for a in warmcold_lease.py lease_ends.py freed_from_shmem.py vm_age_lease.py; do
       out=$(python3 "$ANALYSIS/$a" "$d" 2>&1) || {
         echo "E17B $STAGE ANALYSIS $a failed on $d: $(printf '%s' "$out" | tail -1)"
         rc=1

@@ -2,6 +2,7 @@
 """E17b lease-aware VM age and the memory-returns reading (PLAN-E17B Task 7, spec §7.3 / criterion 5).
 
   python3 vm_age_lease.py RUNDIR [--sbx SBX_RUNDIR | --sbx-median-ms MS] [--guest-ram-mib N] -> RUNDIR/vm_age_lease.json
+  (reads RUNDIR/shmem.json when it exists: run freed_from_shmem.py RUNDIR first)
 
 E16's vm_age.py replays moca's cgroup allocator as a LIFO free list: every destroyed VM's cgroup name
 goes back on it. A LEASE VM's does not (remote-worker/internal/vmpool/cgroup_pool.go `retire`, called from
@@ -40,15 +41,20 @@ promotion: a lease VM promoted from a standby carries its standby time), 60 s bi
 median and p95 over VMs per bin; and the share of lease VMs whose PEAK exceeds 50% and 90% of guest RAM.
 
 MEMORY RETURNS (criterion 5, first half). Per heavy Exec (class in HEAVY_CLASSES, one Exec, on a lease
-VM): memory.current at the Exec's end (the sample nearest it, within 1 s), 15 s later, and the peak over
-the Exec (samples from its send to its end). The Exec's end = calls.jsonl `ts` + observed_ms. VERDICT
-"charge follows the working set": value_15s <= peak - freed/2, where `freed` is the guest's freed amount
-for that Exec. That comes from the `py_shmem` reading (Task 10); until it exists it is an optional
-input, RUNDIR/freed.json = {"session:call": bytes} (the key format is fixed: Task 10's py_shmem
-reading must be turned into exactly that; HEAVY_CLASSES stays py_analyze and py_test, py_shmem is only the
-source of the freed amount). Without it the three raw numbers are reported and
-the verdict is null, never false. It is also null when the 15 s sample is missing, the VM ended first, or
-the session's next call began within 15 s (the later Exec's charge is not "falling back").
+VM): memory.current at the Exec's end (the sample nearest it, within 1 s), 15 s later, the peak over
+the Exec (samples from its send to its end) and its start (the last sample at or before its send, within
+1 s). The Exec's end = calls.jsonl `ts` + observed_ms. The guest's FREED amount (ruling E17B-R22):
+
+    freed = max(0, peak - start - dShmem)
+
+where dShmem is the guest's tmpfs growth over the call, from the `py_shmem` readings that bracket it:
+RUNDIR/shmem.json = {"session:call": dShmem bytes or null}, written by freed_from_shmem.py (its docstring
+has the bracketing rule and the null cases; HEAVY_CLASSES stays py_analyze and py_test, py_shmem is only
+the source of dShmem). Tmpfs is guest RAM held until the VM goes, so that growth is not freed. VERDICT
+"charge follows the working set": value_15s <= peak - freed/2. With no shmem.json, or a null or missing
+dShmem, freed is null and the verdict is null, never false; the raw numbers are still reported. The
+verdict is also null when the 15 s sample or the start sample is missing, the VM ended first, or the
+session's next call began within 15 s (the later Exec's charge is not "falling back").
 
 REPLACEMENT VM (criterion 5, second half). A lease whose first call is cold with reason `idle` (the key's
 previous lease ended by the idle timeout; warmcold_lease.py's cold_reason): its first ok `py_grep`
@@ -221,7 +227,16 @@ def share_above(lease_vms, obs, guest_ram_mib):
     return out
 
 
-def fpr_reading(rows, calls, obs, vm_by_id, freed):
+def _at_or_before(series, t, tol):
+    """Value of the last sample of [(ts, val)] (sorted) at or before t, within tol; else None."""
+    i = bisect.bisect_right(series, (t, math.inf)) - 1
+    return series[i][1] if i >= 0 and t - series[i][0] <= tol else None
+
+
+FREED_DEFINITION = "freed = max(0, peak - start - dShmem); follows: value_15s <= peak - freed/2"
+
+
+def fpr_reading(rows, calls, obs, vm_by_id, shmem):
     by_key = {}
     for c in calls:
         by_key.setdefault(c.get("session"), []).append(c)
@@ -237,8 +252,8 @@ def fpr_reading(rows, calls, obs, vm_by_id, freed):
             continue
         c = cmap[(r["session"], r["call"])]
         e = {"session": r["session"], "call": r["call"], "class": r["class"], "vm": r["vm"],
-             "end_bytes": None, "after_15s_bytes": None, "peak_bytes": None, "freed_bytes": None,
-             "follows": None, "why_null": None}
+             "end_bytes": None, "after_15s_bytes": None, "peak_bytes": None, "start_bytes": None,
+             "delta_shmem_bytes": None, "freed_bytes": None, "follows": None, "why_null": None}
         out.append(e)
         v = vm_by_id.get(r["vm"])
         if c.get("execs") != 1 or v is None or not v["lease"]:
@@ -254,19 +269,24 @@ def fpr_reading(rows, calls, obs, vm_by_id, freed):
         e["after_15s_bytes"] = _nearest(s, end + AFTER_S, SAMPLE_TOL_S)
         within = [val for ts, val in s if start <= ts <= end]
         e["peak_bytes"] = max(within) if within else None
-        e["freed_bytes"] = freed.get("%s:%s" % (r["session"], r["call"])) if freed else None
+        e["start_bytes"] = _at_or_before(s, start, SAMPLE_TOL_S)
+        e["delta_shmem_bytes"] = (shmem or {}).get("%s:%s" % (r["session"], r["call"]))
+        if None not in (e["peak_bytes"], e["start_bytes"], e["delta_shmem_bytes"]):
+            e["freed_bytes"] = max(0, e["peak_bytes"] - e["start_bytes"] - e["delta_shmem_bytes"])
         nxt = next_start.get((r["session"], r["call"]))
         if e["after_15s_bytes"] is None or e["peak_bytes"] is None:
             e["why_null"] = "no sample at +15 s (VM ended?) or within the Exec"
         elif nxt is not None and nxt < end + AFTER_S:
             e["why_null"] = "the session's next call began within 15 s"
-        elif e["freed_bytes"] is None:
-            e["why_null"] = "no freed amount (py_shmem reading absent)"
+        elif e["delta_shmem_bytes"] is None:
+            e["why_null"] = "no dShmem (shmem.json absent, or null for this call: freed_from_shmem.py)"
+        elif e["start_bytes"] is None:
+            e["why_null"] = "no sample at or before the Exec's start"
         else:
             e["follows"] = e["after_15s_bytes"] <= e["peak_bytes"] - e["freed_bytes"] / 2.0
     n_t = sum(e["follows"] is True for e in out)
     n_f = sum(e["follows"] is False for e in out)
-    return {"definition": "value_15s <= peak - freed/2", "heavy_classes": list(HEAVY_CLASSES),
+    return {"definition": FREED_DEFINITION, "heavy_classes": list(HEAVY_CLASSES),
             "heavy_execs": len(out), "follows_true": n_t, "follows_false": n_f,
             "follows_null": len(out) - n_t - n_f,
             "share_true": (n_t / float(n_t + n_f)) if n_t + n_f else None, "execs": out}
@@ -304,7 +324,7 @@ def replacement_reading(rows, sbx_median):
             "ratio_to_sbx": (med / sbx_median) if med is not None and sbx_median else None}
 
 
-def analyse(d, sbx_median_ms=None, freed=None, guest_ram_mib=None):
+def analyse(d, sbx_median_ms=None, shmem=None, guest_ram_mib=None):
     params = {}
     if os.path.exists(os.path.join(d, "params.json")):
         params = json.load(open(os.path.join(d, "params.json")))
@@ -363,7 +383,7 @@ def analyse(d, sbx_median_ms=None, freed=None, guest_ram_mib=None):
                    "samples": seen[v["id"]]} for v in vms]
     out["memory_vs_age"] = mem_vs_age(lease_vms, obs, born_ts)
     out["share_above"] = share_above(lease_vms, obs, guest_ram_mib)
-    out["fpr"] = fpr_reading(rows, W.read_calls(d), obs, {v["id"]: v for v in vms}, freed)
+    out["fpr"] = fpr_reading(rows, W.read_calls(d), obs, {v["id"]: v for v in vms}, shmem)
     return out
 
 
@@ -375,11 +395,12 @@ def main(argv=None):
     ap.add_argument("--guest-ram-mib", type=float, default=None)
     a = ap.parse_args(argv)
     med = a.sbx_median_ms if a.sbx_median_ms is not None else (sbx_median_grep(a.sbx) if a.sbx else None)
-    freed = None
-    fp = os.path.join(a.rundir, "freed.json")
+    shmem = None
+    fp = os.path.join(a.rundir, "shmem.json")
     if os.path.exists(fp):
-        freed = json.load(open(fp))
-    r = analyse(a.rundir, med, freed, a.guest_ram_mib)
+        with open(fp) as f:
+            shmem = json.load(f)
+    r = analyse(a.rundir, med, shmem, a.guest_ram_mib)
     with open(os.path.join(a.rundir, "vm_age_lease.json"), "w") as f:
         json.dump(r, f, indent=2, sort_keys=True)
         f.write("\n")

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -147,6 +148,18 @@ func (f *fake) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServer[pb.Ex
 		case cmd == "spew":
 			if err := stderr(bytes.Repeat([]byte("x"), 10<<10)); err != nil {
 				return err
+			}
+		case strings.HasPrefix(cmd, "say:"):
+			// say:<n>:<text>: <text> n times on stdout, in chunks of at most 100 bytes
+			parts := strings.SplitN(strings.TrimPrefix(cmd, "say:"), ":", 2)
+			n, _ := strconv.Atoi(parts[0])
+			out := []byte(strings.Repeat(parts[1], n))
+			for len(out) > 0 {
+				c := out[:min(100, len(out))]
+				out = out[len(c):]
+				if err := stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_Chunk{Chunk: &pb.Chunk{ReqId: e.GetReqId(), Stream: pb.Stream_STREAM_STDOUT, Data: c}}}); err != nil {
+					return err
+				}
 			}
 		}
 		if st.want < 0 {
@@ -1085,5 +1098,90 @@ func TestTmpfsSessionCachesInGuestTmpfs(t *testing.T) {
 				t.Fatalf("call %d: %+v", i, res.calls[i])
 			}
 		}
+	}
+}
+
+// --record-stdout (E17b, E17B-R22): the calls of a listed class carry the Exec's stdout, at most
+// stdoutMax bytes, cut on a UTF-8 boundary and flagged stdout_truncated when cut; every other call
+// has neither field.
+func TestRecordStdoutOnlyListedClasses(t *testing.T) {
+	client, _ := newFake(t)
+	cfg := baseCfg()
+	cfg.StartAtZero, cfg.MaxSessions, cfg.Window = true, 1, 20*time.Second
+	cfg.RecordStdout = map[string]bool{"shm": true, "quiet": true}
+	lib := &Library{Classes: map[string][]Invocation{
+		"shm":   {{ID: "shm", Cmd: "say:1:51234\n", NominalMs: 1}},
+		"other": {{ID: "o", Cmd: "say:1:not recorded\n", NominalMs: 1}},
+		"quiet": {{ID: "q", Cmd: "q", NominalMs: 1}},
+	}}
+	lib.Standin.InterpreterClass = "other"
+	res := run(t, cfg, []Session{sess("s", "u", 5, "shm", "other", "quiet")}, lib, client)
+	if res.err != nil || len(res.calls) != 3 {
+		t.Fatalf("%v: %d calls", res.err, len(res.calls))
+	}
+	byClass := map[string]callRecord{}
+	for _, c := range res.calls {
+		byClass[c.Class] = c
+	}
+	if c := byClass["shm"]; c.Stdout == nil || *c.Stdout != "51234\n" || c.StdoutTruncated {
+		t.Fatalf("listed class: %+v", c)
+	}
+	if c := byClass["quiet"]; c.Stdout == nil || *c.Stdout != "" {
+		t.Fatalf("a listed class with no output still records an empty stdout: %+v", c)
+	}
+	if c := byClass["other"]; c.Stdout != nil || c.StdoutTruncated {
+		t.Fatalf("unlisted class: %+v", c)
+	}
+}
+
+func TestRecordStdoutTruncatedOnARuneBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		cmd       string
+		wantLen   int
+		truncated bool
+	}{
+		{"say:1024:a", 1024, false},    // exactly the bound: kept whole
+		{"say:1025:a", 1024, true},     // one byte over
+		{"say:600:\u00e9", 1024, true}, // 1200 bytes of 2-byte runes: 512 whole runes
+		{"say:400:\u20ac", 1023, true}, // 1200 bytes of 3-byte runes: 341 whole runes
+	} {
+		client, _ := newFake(t)
+		cfg := baseCfg()
+		cfg.StartAtZero, cfg.MaxSessions, cfg.Window = true, 1, 20*time.Second
+		cfg.RecordStdout = map[string]bool{"x": true}
+		lib := &Library{Classes: map[string][]Invocation{"x": {{ID: "x", Cmd: tc.cmd, NominalMs: 1}}}}
+		lib.Standin.InterpreterClass = "x"
+		res := run(t, cfg, []Session{sess("s", "u", 5, "x", "x", "x")}, lib, client)
+		if res.err != nil || len(res.calls) == 0 {
+			t.Fatalf("%s: %v", tc.cmd, res.err)
+		}
+		c := res.calls[0]
+		if c.Stdout == nil || len(*c.Stdout) != tc.wantLen || !utf8.ValidString(*c.Stdout) || c.StdoutTruncated != tc.truncated {
+			n := -1
+			if c.Stdout != nil {
+				n = len(*c.Stdout)
+			}
+			t.Fatalf("%s: %d bytes (valid %v), truncated %v; want %d, %v", tc.cmd, n, c.Stdout != nil && utf8.ValidString(*c.Stdout), c.StdoutTruncated, tc.wantLen, tc.truncated)
+		}
+	}
+}
+
+func TestParseRecordStdout(t *testing.T) {
+	if m, err := ParseRecordStdout(""); err != nil || m != nil {
+		t.Fatalf("empty: %v %v, want nil (off)", m, err)
+	}
+	if m, err := ParseRecordStdout("py_shmem,py_grep"); err != nil || len(m) != 2 || !m["py_shmem"] || !m["py_grep"] {
+		t.Fatalf("two classes: %v %v", m, err)
+	}
+	for _, bad := range []string{",", "a,,b", " a"} {
+		if _, err := ParseRecordStdout(bad); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+	var stderr bytes.Buffer
+	code := realMain([]string{"--record-stdout", "a,,b", "--corpus", "x", "--library", "y", "--n", "1", "--run-id", "r", "--out", t.TempDir()},
+		func(string) string { return "tok" }, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "--record-stdout") {
+		t.Fatalf("code %d: %s", code, stderr.String())
 	}
 }

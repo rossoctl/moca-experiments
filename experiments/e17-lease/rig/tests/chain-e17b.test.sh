@@ -97,6 +97,12 @@ json.dump({"notices": {"unmatched_ends": [{"key": "k"}] * int(os.environ.get("ST
 print("valid True")
 open(os.environ["ALOG"], "a").write("lease_ends %s\n" % sys.argv[1])
 PY
+cat >"$TMP/an/freed_from_shmem.py" <<'PY'
+import json, os, sys
+json.dump({}, open(sys.argv[1] + "/shmem.json", "w"))
+open(os.environ["ALOG"], "a").write("freed_from_shmem %s\n" % sys.argv[1])
+print("heavy 0 with_delta 0")
+PY
 cat >"$TMP/an/vm_age_lease.py" <<'PY'
 import json, os, sys
 json.dump({"mapping_valid": os.environ.get("STUB_MAP_VALID", "1") == "1", "mapping_reasons": ["stub mapping"]}, open(sys.argv[1] + "/vm_age_lease.json", "w"))
@@ -216,9 +222,9 @@ test_chain_squeeze_stages() {
 test_chain_analysis_gate() {
   reset
   seal true
-  check "gate: each ship-* rung the stage wrote is analysed (warmcold_lease, lease_ends, vm_age_lease); sbx rungs are not" \
+  check "gate: each ship-* rung the stage wrote is analysed (warmcold_lease, lease_ends, freed_from_shmem before vm_age_lease); sbx rungs are not" \
     "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-ship-300-n1)/$(grep -v '^latency_report' "$TMP/alog" | sed "s#$T/runs/##" | tr '\n' ';')" \
-    "0/warmcold_lease pycache/ship-300/N1-lat;lease_ends pycache/ship-300/N1-lat;vm_age_lease pycache/ship-300/N1-lat;"
+    "0/warmcold_lease pycache/ship-300/N1-lat;lease_ends pycache/ship-300/N1-lat;freed_from_shmem pycache/ship-300/N1-lat;vm_age_lease pycache/ship-300/N1-lat;"
   check "gate: an unknown call stops the chain at that stage, which stays not done" \
     "$(chain STUB_UNKNOWN=2 -- --from lat-pycache-ship-300-n1 --to lat-pycache-low-sbx-n1)/$(grep -c 'STOP pycache/ship-300/N1-lat: 2 unknown call(s)' "$TMP/c.out")/$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open)/$(grep -c . "$CLOG")" \
     "1/1/open/1"

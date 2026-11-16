@@ -50,6 +50,9 @@ type Config struct {
 	SandboxID string
 	RunID     string
 	Token     string
+	// RecordStdout (E17b, --record-stdout; nil = off): the calls of these classes record their
+	// Exec's stdout (callRecord.Stdout). Every other call, and every call when nil, is as before.
+	RecordStdout map[string]bool
 	// Lease (E17b), nil = off, and then nothing below differs from the E15 driver: each session
 	// sends set_mode before its first Exec, authenticates with its own sandbox token (Token is
 	// unused), records LeaseEvents, sends no end-session Exec, and is swept at the end.
@@ -400,7 +403,7 @@ func (r *Replayer) endSession(key string) {
 		return
 	}
 	r.endSent.Add(1)
-	res := execOne(r.endCtx, r.client, r.cfg.SandboxID, r.reqID.Add(1), EndSessionCommand, endSessionTimeoutS, key)
+	res := execOne(r.endCtx, r.client, r.cfg.SandboxID, r.reqID.Add(1), EndSessionCommand, endSessionTimeoutS, key, false)
 	if res.cause == "" && *res.exit == 0 {
 		r.endOK.Add(1)
 	} else {
@@ -538,9 +541,17 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 			return rec, time.Now()
 		}
 	}
-	res := execOne(execCtx, r.client, r.cfg.SandboxID, r.reqID.Add(1), script, timeoutS, key)
+	keep := r.cfg.RecordStdout[c.Class]
+	res := execOne(execCtx, r.client, r.cfg.SandboxID, r.reqID.Add(1), script, timeoutS, key, keep)
 	last := time.Now()
 	rec.Execs = 1
+	if keep {
+		out := string(res.stdout)
+		if res.stdoutCut {
+			out = string(cutRunes(res.stdout))
+		}
+		rec.Stdout, rec.StdoutTruncated = &out, res.stdoutCut
+	}
 	if ls != nil {
 		// Whatever the call's outcome: a notice acknowledged on the stream is consumed even if the
 		// call then failed.
