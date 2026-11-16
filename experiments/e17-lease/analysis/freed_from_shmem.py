@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E17b: the guest-tmpfs growth behind each heavy call, from the py_shmem readings (PLAN-E17B Task 10, ruling E17B-R23).
+"""E17b: the guest-tmpfs growth behind each heavy call, from the py_shmem readings (PLAN-E17B Task 10, rulings E17B-R23..R25).
 
   python3 experiments/e17-lease/analysis/freed_from_shmem.py RUNDIR -> RUNDIR/shmem.json
 
@@ -18,14 +18,15 @@ there is not freed.
 TURNS. Per session (calls.jsonl `session`, the workspace key) in call order, a turn is the calls after one
 py_shmem up to and including the next; its id is that closing py_shmem's call number ("session:turn" keys
 below), and it is incomplete (no reading) when the run ended inside it. Its measured delta is the closing
-reading minus the base:
-  - the base is the previous reading (the end of the previous turn);
-  - a new lease inside the turn (a call carrying lease_events, or first_lease) restarts it: the base is
-    then the new lease's start, Shmem 0, and only the heavy calls at or after that call can be judged
-    (the earlier ones ran on a VM whose last reading is unknown: null);
+reading minus the base, the previous reading (the end of the previous turn), in bytes (1024 * kB):
+  - a LEASE'S FIRST TURN (it holds a new-lease mark: a call carrying lease_events, or first_lease) has no
+    base (E17B-R24): a guest's Shmem at lease start is not measured, and assuming 0 would count the guest's
+    own baseline tmpfs as growth. Every heavy call of that turn is null, and its delta is null; its closing
+    reading is kept under `first_turn_readings` (E17B-R25), for flagged and unflagged sessions alike, so the
+    tmpfs cost of a first turn is flagged minus unflagged against a measured baseline. The next turn's base
+    is that reading;
   - no previous reading and no new lease inside the turn (the recorded calls begin mid-lease): null;
   - a reading that is not an ok call printing one integer is no reading: its turn and the next are null.
-The delta is in bytes (1024 * kB).
 
 PER CALL (shmem.json `calls`, {"session:call": dShmem bytes or null}, one key per heavy call, HEAVY_CLASSES
 the same as vm_age_lease.py's):
@@ -41,7 +42,7 @@ Rows with cause set_mode_failed ran no Exec and are skipped. A null dShmem makes
 null, never false.
 
 shmem.json = {"calls": {...}, "turns": {"session:turn": bytes or null}, "unexpected_turns": {"session:turn":
-bytes}, "tolerance_bytes": 1048576}.
+bytes}, "first_turn_readings": {"session:turn": closing Shmem bytes or null}, "tolerance_bytes": 1048576}.
 """
 import json
 import os
@@ -72,40 +73,38 @@ def new_lease(c):
 
 
 def turns_of(calls):
-    """[(turn calls, closing reading index or None, base bytes or None, first judged index)] for one
-    session's calls (sorted by call). `first judged` is the index of the turn's last new-lease mark, or
-    the turn's first index when it has none."""
+    """[(turn calls, closing reading index or None, base bytes or None, a lease's first turn)] for one
+    session's calls (sorted by call). A turn holding a new-lease mark has no base (E17B-R24)."""
     out, lo, prev = [], 0, None  # prev: the index of the previous turn's closing reading
     for i, c in enumerate(calls + [None]):
         closing = c is not None and c.get("class") == READING_CLASS
         if not closing and c is not None:
             continue
         idx = list(range(lo, i + 1 if closing else i))
-        marks = [j for j in idx if new_lease(calls[j])]
-        if marks:
-            base, first = 0, marks[-1]
-        else:
-            base = reading(calls[prev]) if prev is not None else None
-            first = lo
+        first = any(new_lease(calls[j]) for j in idx)
+        base = None if first or prev is None else reading(calls[prev])
         out.append((idx, i if closing else None, base, first))
         lo, prev = i + 1, (i if closing else prev)
     return out
 
 
 def session_result(calls, judged):
-    """({call: dShmem or None} for the heavy calls, [(turn id, delta or None)]) for one session."""
-    per_call, turns = {}, []
+    """({call: dShmem or None} for the heavy calls, [(turn id, delta or None)], {turn id: closing reading
+    or None} for the leases' first turns) for one session."""
+    per_call, turns, firsts = {}, [], {}
     for idx, closing, base, first in turns_of(calls):
         heavy = [j for j in idx if calls[j].get("class") in HEAVY_CLASSES]
         if closing is None:  # the run ended inside this turn
             per_call.update((calls[j].get("call"), None) for j in heavy)
             continue
         after = reading(calls[closing])
+        if first:
+            firsts[calls[closing].get("call")] = after
         delta = after - base if after is not None and base is not None else None
         turns.append((calls[closing].get("call"), delta))
         ok = judged and delta is not None and abs(delta) <= SHMEM_TOL_BYTES
-        per_call.update((calls[j].get("call"), 0 if ok and j >= first else None) for j in heavy)
-    return per_call, turns
+        per_call.update((calls[j].get("call"), 0 if ok else None) for j in heavy)
+    return per_call, turns, firsts
 
 
 def is_lease_rung(d, calls):
@@ -122,14 +121,16 @@ def shmem_deltas(d):
     for c in calls:
         by_key.setdefault(c.get("session"), []).append(c)
     lease = is_lease_rung(d, calls)
-    out = {"calls": {}, "turns": {}, "unexpected_turns": {}, "tolerance_bytes": SHMEM_TOL_BYTES}
+    out = {"calls": {}, "turns": {}, "unexpected_turns": {}, "first_turn_readings": {},
+           "tolerance_bytes": SHMEM_TOL_BYTES}
     for key in sorted(by_key, key=str):
         cs = sorted(by_key[key], key=lambda c: c.get("call"))
         tmpfs = any(c.get("tmpfs") for c in cs)
-        per_call, turns = session_result(cs, judged=lease and not tmpfs)
+        per_call, turns, firsts = session_result(cs, judged=lease and not tmpfs)
         out["calls"].update(("%s:%s" % (key, call), v) for call, v in per_call.items())
         if not lease:
             continue
+        out["first_turn_readings"].update(("%s:%s" % (key, turn), v) for turn, v in firsts.items())
         for turn, delta in turns:
             if tmpfs:
                 out["turns"]["%s:%s" % (key, turn)] = delta
@@ -148,9 +149,9 @@ def main(argv=None):
         json.dump(out, f, indent=2, sort_keys=True)
         f.write("\n")
     v = out["calls"].values()
-    print("heavy %d with_delta %d null %d; tmpfs turns %d; unexpected turns %d" % (
+    print("heavy %d with_delta %d null %d; tmpfs turns %d; unexpected turns %d; lease first turns %d" % (
         len(out["calls"]), sum(x is not None for x in v), sum(x is None for x in v), len(out["turns"]),
-        len(out["unexpected_turns"])))
+        len(out["unexpected_turns"]), len(out["first_turn_readings"])))
     return out
 
 

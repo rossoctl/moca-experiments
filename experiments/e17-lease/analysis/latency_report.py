@@ -26,7 +26,12 @@ each D, e.g. the gain-against-D runs, in its own invocation).
   - Reported-only classes (REPORTED_ONLY: py_shmem, E17b's guest Shmem reading, PLAN-E17B Task 10) are
     in none of the above: not a class, not in the counts, the warm share, the first call after idle or
     the gain, so never in a latency gate or a per-class median. Their in-window ok calls are
-    reported apart, under reported_only[class].all.
+    reported apart, under reported_only[class].all. A reported-only call tagged first_lease (a session
+    drawn to start at its py_shmem) is filed under first_lease like any first call: it carries the walk.
+  - by_tmpfs (E17B-R26, reported only, never gated): py_short and py_import warm and all {n, median_ms,
+    p95_ms}, split by the session's tmpfs flag (calls.jsonl `tmpfs`) into flagged and unflagged, so the
+    report shows whether flagged sessions' bytecode recompiles slowed the gated classes. Only in a group
+    with a flagged session (an E15/E16/E17a group keeps its exact shape).
 """
 import argparse
 import json
@@ -52,8 +57,10 @@ def stats(ms):
 
 
 # Classes that are measured only for what they print (py_shmem: the guest's Shmem after a turn's
-# last py_analyze), never for their latency.
-REPORTED_ONLY = ("py_shmem",)
+# last py_analyze), never for their latency: warmcold_lease's one definition.
+REPORTED_ONLY = WL.REPORTED_ONLY
+# E17B-R26: the gated classes' medians split by the session's tmpfs flag (reported only).
+BY_TMPFS_CLASSES = ("py_short", "py_import")
 
 # Rungs of one (point, N, arm) pool only if these agree: the gain-against-D runs (SPEC §10) share a
 # point, N and arm with the default D = 256 MiB runs and differ only in the dataset size.
@@ -81,12 +88,14 @@ def summarize(rows):
     for r in rows:
         if r["warm"] == "set_mode_failed":
             continue  # never sent: reported by the join's set_mode_failed count, in no class
-        if r["class"] in REPORTED_ONLY:
+        if r.get("first_lease"):  # before the reported-only check: a first py_shmem carries the walk
+            firsts.append(r)
+        elif r["class"] in REPORTED_ONLY:
             reported.setdefault(r["class"], [])
             if r["in_window"] and r["status"] == "ok":
                 reported[r["class"]].append(r["observed_ms"])
-            continue
-        (firsts if r.get("first_lease") else rest).append(r)
+        else:
+            rest.append(r)
     rows = rest
     counts = {"calls": len(rows), "used": 0, "unknown": 0, "not_in_window": 0, "not_ok": 0}
     by_class, after = {}, []
@@ -109,6 +118,14 @@ def summarize(rows):
             after.append(r)
     classes = {k: {"warm": stats(v["warm"]), "cold": stats(v["cold"]), "all": stats(v["all"]),
                    "unknown": v["unknown"]} for k, v in sorted(by_class.items())}
+    split = {}
+    for r in rows:
+        if r["class"] in BY_TMPFS_CLASSES and r["in_window"] and r["status"] == "ok":
+            s = split.setdefault(r["class"], {"flagged": {"warm": [], "all": []},
+                                               "unflagged": {"warm": [], "all": []}})["flagged" if r.get("tmpfs") else "unflagged"]
+            s["all"].append(r["observed_ms"])
+            if r["warm"] is True:
+                s["warm"].append(r["observed_ms"])
     n_warm = sum(len(v["warm"]) for v in by_class.values())
     after_by = {}
     for r in after:
@@ -130,6 +147,9 @@ def summarize(rows):
                               "by_class": {k: stats(v) for k, v in sorted(fl_by.items())}}
     if reported:  # only E17b corpora have py_shmem: an E17a group keeps its exact shape
         out["reported_only"] = {k: {"all": stats(v)} for k, v in sorted(reported.items())}
+    if any(r.get("tmpfs") for r in rows):  # only E17b corpora flag sessions: the same
+        out["by_tmpfs"] = {k: {f: {"warm": stats(v[f]["warm"]), "all": stats(v[f]["all"])} for f in v}
+                           for k, v in sorted(split.items())}
     return out
 
 
@@ -146,6 +166,11 @@ def build(rung_dirs, baseline_arm="sbx", arms=None):
                 raise SystemExit("latency_report.py: will not pool point %s N %s arm %s: %s %r in %s, %r in %s"
                                  % (gk + (f, g["params"].get(f), g["dir"], p.get(f), d)))
         rows, summary = join_rung(d, p.get("arm"))
+        # E17B-R26: a row's session flag (the driver writes tmpfs on every row of a flagged session)
+        flagged = {c.get("session") for c in W.read_calls(d) if c.get("tmpfs")}
+        for r in rows:
+            if r["session"] in flagged:
+                r["tmpfs"] = True
         keys = ("warm", "cold", "unknown", "unknown_keys", "dropped_end_session_execs")
         if str(p.get("arm")).startswith("ship-"):
             # A ship rung the join cannot vouch for is listed, never pooled (E17B-R9).

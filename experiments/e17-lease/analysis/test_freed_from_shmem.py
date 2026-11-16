@@ -63,85 +63,119 @@ def two_turns(key="A", tmpfs=False, kb=(800, 800)):
 
 
 HEAVY = {0, 1, 5, 7, 8, 12}
+FIRST = {"A:0": None, "A:1": None, "A:5": None}  # the lease's first turn (R24: never judged)
 
 
 def test_shape_and_tolerance(tmp_path):
     out = run(rundir(tmp_path, two_turns()))
-    assert set(out) == {"calls", "turns", "unexpected_turns", "tolerance_bytes"}
+    assert set(out) == {"calls", "turns", "unexpected_turns", "first_turn_readings", "tolerance_bytes"}
     assert out["tolerance_bytes"] == F.SHMEM_TOL_BYTES == 1 << 20
-    assert "max(0, peak - start - dShmem)" in F.__doc__
+    assert "max(0, peak - start - dShmem)" in F.__doc__ and "E17B-R24" in F.__doc__
 
 
-def test_untouched_tmpfs_gives_every_heavy_call_zero(tmp_path):
-    # tmpfs=false: Shmem 800 kB at both turn ends (and from 0 in the first turn, where the lease began):
-    # within 1 MiB, so every heavy call of both turns gets dShmem 0.
+@pytest.mark.parametrize("kb", [0, 800])
+def test_lease_first_turn_is_null(tmp_path, kb):
+    # R24: a turn holding a new-lease mark has no base (a guest's Shmem at lease start is unknown, not 0),
+    # whatever it reads at its end; the next turn is judged against that reading. R25: the reading is
+    # kept under first_turn_readings, flagged or not.
+    for t in (False, True):
+        out = run(rundir(tmp_path, two_turns(tmpfs=t, kb=(kb, kb)), name="r%d-%s" % (kb, t)))
+        assert all(out["calls"][k] is None for k in FIRST)
+        assert out["first_turn_readings"] == {"A:6": kb * KIB}
+        assert out["unexpected_turns"] == {}
+        if t:
+            assert out["turns"] == {"A:6": None, "A:13": 0}
+        else:
+            assert out["calls"]["A:7"] == out["calls"]["A:8"] == out["calls"]["A:12"] == 0
+
+
+def test_untouched_tmpfs_gives_every_later_heavy_call_zero(tmp_path):
+    # tmpfs=false: Shmem 800 kB at both turn ends: the second turn's delta is 0, within 1 MiB.
     out = run(rundir(tmp_path, two_turns()))
-    assert out["calls"] == {"A:%d" % i: 0 for i in HEAVY}
+    assert out["calls"] == dict(FIRST, **{"A:7": 0, "A:8": 0, "A:12": 0})
     assert out["turns"] == {} and out["unexpected_turns"] == {}
+    assert out["first_turn_readings"] == {"A:6": 800 * KIB}
 
 
 def test_growth_over_tolerance_nulls_the_turn_and_lists_it(tmp_path):
     out = run(rundir(tmp_path, two_turns(kb=(800, 800 + 2048))))
-    assert out["calls"] == {"A:0": 0, "A:1": 0, "A:5": 0, "A:7": None, "A:8": None, "A:12": None}
+    assert out["calls"] == dict(FIRST, **{"A:7": None, "A:8": None, "A:12": None})
     assert out["unexpected_turns"] == {"A:13": 2048 * KIB}
     # exactly 1 MiB is within it; a shrink counts by its size too
     out = run(rundir(tmp_path, two_turns(kb=(800, 800 + 1024)), name="edge"))
     assert out["calls"]["A:12"] == 0
     out = run(rundir(tmp_path, two_turns(kb=(4000, 800)), name="shrink"))
-    assert out["calls"]["A:0"] is None and out["calls"]["A:7"] is None  # 4000 kB from 0, then -3200 kB
-    assert out["unexpected_turns"] == {"A:6": 4000 * KIB, "A:13": -3200 * KIB}
+    assert out["calls"]["A:7"] is None and out["unexpected_turns"] == {"A:13": -3200 * KIB}
 
 
 def test_tmpfs_sessions_are_not_judged_and_their_growth_is_reported(tmp_path):
     out = run(rundir(tmp_path, two_turns(tmpfs=True, kb=(60000, 61000))))
     assert out["calls"] == {"A:%d" % i: None for i in HEAVY}
-    assert out["turns"] == {"A:6": 60000 * KIB, "A:13": 1000 * KIB}
+    assert out["turns"] == {"A:6": None, "A:13": 1000 * KIB}
+    assert out["first_turn_readings"] == {"A:6": 60000 * KIB}
     assert out["unexpected_turns"] == {}
 
 
 def test_first_turn_without_lease_start_in_it_is_null(tmp_path):
-    # The recorded calls begin mid-lease (the driver's random start index; no mark before the reading).
+    # The recorded calls begin mid-lease (the driver's random start index; no mark before the reading):
+    # null, and not a lease's first turn (no first_turn_readings).
     calls = [x for x in two_turns() if x["call"] >= 3]
     out = run(rundir(tmp_path, calls))
     assert out["calls"] == {"A:5": None, "A:7": 0, "A:8": 0, "A:12": 0}
+    assert out["first_turn_readings"] == {}
+
+
+def three_turns(tmpfs=False, kb=(800, 900, 900)):
+    calls = two_turns(tmpfs=tmpfs, kb=kb[:2])
+    t = tmpfs
+    return calls + [c("A", 14, "py_analyze", t), c("A", 15, "py_test", t), c("A", 16, "py_short", t),
+                    c("A", 17, "py_analyze", t), shm("A", 18, kb[2], t)]
 
 
 def test_new_lease_inside_a_turn(tmp_path):
-    # An idle end is delivered on call 9: calls 7 and 8 ran on the old VM, whose last reading is unknown
-    # (null); from call 9 on the new lease starts at Shmem 0, so call 12 is judged against 0.
-    calls = two_turns()
+    # An idle end is delivered on call 9: turn 2 is the replacement lease's first turn, so all of its
+    # heavy calls are null (R24); turn 3 is judged against turn 2's closing reading.
+    calls = three_turns(kb=(800, 5000, 5000 + 512))
     calls[9] = c("A", 9, "py_import", lease_events=end_ev())
     out = run(rundir(tmp_path, calls))
-    assert (out["calls"]["A:7"], out["calls"]["A:8"], out["calls"]["A:12"]) == (None, None, 0)
-    # the same in a tmpfs session: the turn's growth is from the new lease's start
-    calls = two_turns(tmpfs=True, kb=(5000, 3000))
+    assert [out["calls"]["A:%d" % i] for i in (7, 8, 12, 14, 15, 17)] == [None, None, None, 0, 0, 0]
+    assert out["first_turn_readings"] == {"A:6": 800 * KIB, "A:13": 5000 * KIB}
+    # the same in a tmpfs session: no growth for the first turns, turn 3's from turn 2's reading
+    calls = three_turns(tmpfs=True, kb=(5000, 3000, 7000))
     calls[9] = c("A", 9, "py_import", True, lease_events=end_ev())
-    assert run(rundir(tmp_path, calls, name="t"))["turns"] == {"A:6": 5000 * KIB, "A:13": 3000 * KIB}
+    out = run(rundir(tmp_path, calls, name="t"))
+    assert out["turns"] == {"A:6": None, "A:13": None, "A:18": 4000 * KIB}
+    assert out["first_turn_readings"] == {"A:6": 5000 * KIB, "A:13": 3000 * KIB}
 
 
 def test_missing_or_bad_reading_nulls_its_turn_and_the_next(tmp_path):
-    calls = two_turns()[:13]  # the run ended before turn 2's py_shmem
+    calls = three_turns()[:18]  # the run ended before turn 3's py_shmem
     out = run(rundir(tmp_path, calls, name="cut"))
-    assert out["calls"]["A:12"] is None and out["calls"]["A:0"] == 0
+    assert out["calls"]["A:17"] is None and out["calls"]["A:12"] == 0
     for n, bad in enumerate((dict(stdout="oops\n"), dict(status="err"), dict(stdout=""))):
-        calls = two_turns()
-        calls[6] = dict(calls[6], **bad)
+        calls = three_turns()
+        calls[13] = dict(calls[13], **bad)
         out = run(rundir(tmp_path, calls, name="bad%d" % n))
-        # turn 1 has no reading at its end; turn 2 has no reading at its start
-        assert all(out["calls"]["A:%d" % i] is None for i in HEAVY), (bad, out)
+        # turn 2 has no reading at its end; turn 3 has no reading at its start
+        assert all(out["calls"]["A:%d" % i] is None for i in (7, 8, 12, 14, 15, 17)), (bad, out)
+    # a bad first-turn reading: first_turn_readings keeps the turn, with null
+    calls = two_turns()
+    calls[6] = dict(calls[6], stdout="")
+    assert run(rundir(tmp_path, calls, name="badfirst"))["first_turn_readings"] == {"A:6": None}
 
 
 def test_sessions_are_separate(tmp_path):
     out = run(rundir(tmp_path, two_turns("A") + two_turns("B", tmpfs=True, kb=(9000, 9100))))
-    assert all(out["calls"]["A:%d" % i] == 0 for i in HEAVY)
+    assert [out["calls"]["A:%d" % i] for i in (7, 8, 12)] == [0, 0, 0]
     assert all(out["calls"]["B:%d" % i] is None for i in HEAVY)
-    assert out["turns"] == {"B:6": 9000 * KIB, "B:13": 100 * KIB}
+    assert out["turns"] == {"B:6": None, "B:13": 100 * KIB}
+    assert out["first_turn_readings"] == {"A:6": 800 * KIB, "B:6": 9000 * KIB}
 
 
 def test_not_a_lease_arm_is_all_null(tmp_path):
     out = run(rundir(tmp_path, two_turns(tmpfs=False) + two_turns("B", tmpfs=True), arm="sbx"))
     assert set(out["calls"].values()) == {None} and len(out["calls"]) == 12
-    assert out["turns"] == {} and out["unexpected_turns"] == {}
+    assert out["turns"] == {} and out["unexpected_turns"] == {} and out["first_turn_readings"] == {}
 
 
 def test_set_mode_failed_rows_are_skipped(tmp_path):
@@ -154,17 +188,19 @@ def test_reads_gzipped_calls(tmp_path):
     with open(os.path.join(d, "calls.jsonl"), "rb") as f, gzip.open(os.path.join(d, "calls.jsonl.gz"), "wb") as g:
         g.write(f.read())
     os.remove(os.path.join(d, "calls.jsonl"))
-    assert run(d)["calls"] == {"A:%d" % i: 0 for i in HEAVY}
+    assert run(d)["calls"] == dict(FIRST, **{"A:7": 0, "A:8": 0, "A:12": 0})
 
 
 def test_driver_fixture_every_untouched_session_heavy_call_is_judged(tmp_path):
     # The E17b driver fixture (3 sessions, 2 flagged tmpfs), replayed as if every call ran ok in one
-    # lease per session with Shmem steady at 800 kB: every heavy call of the tmpfs=false session has a
-    # dShmem (0); every heavy call of the flagged ones is null, and their turns are reported.
-    calls, flags = [], {}
+    # lease per session with Shmem steady at 800 kB: every heavy call of the tmpfs=false session after
+    # its lease's first turn has a dShmem (0); the first turn's and every flagged session's are null;
+    # each session's first turn is in first_turn_readings, and the flagged sessions' turns are reported.
+    calls, flags, first_turn = [], {}, {}
     for line in open(FIXTURE):
         s = json.loads(line)
         flags[s["session"]] = s["tmpfs"]
+        first_turn[s["session"]] = next(x["i"] for x in s["calls"] if x["class"] == "py_shmem")
         for x in s["calls"]:
             row = c(s["session"], x["i"], x["class"], s["tmpfs"],
                     **({"stdout": "800\n"} if x["class"] == "py_shmem" else {}),
@@ -173,11 +209,12 @@ def test_driver_fixture_every_untouched_session_heavy_call_is_judged(tmp_path):
     assert sorted(flags.values()) == [False, True, True]
     out = run(rundir(tmp_path, calls))
     for key, v in out["calls"].items():
-        sess = key.rsplit(":", 1)[0]
-        assert (v is None) == flags[sess], (key, v)
-    plain = [k for k in out["calls"] if not flags[k.rsplit(":", 1)[0]]]
-    assert plain and all(out["calls"][k] == 0 for k in plain)
+        sess, call = key.rsplit(":", 1)
+        assert (v is None) == (flags[sess] or int(call) < first_turn[sess]), (key, v)
+    plain = [k for k in out["calls"] if not flags[k.rsplit(":", 1)[0]] and out["calls"][k] is not None]
+    assert len(plain) >= 9 and all(out["calls"][k] == 0 for k in plain)
     assert out["turns"] and all(flags[k.rsplit(":", 1)[0]] for k in out["turns"])
+    assert out["first_turn_readings"] == {"%s:%d" % (k, v): 800 * KIB for k, v in first_turn.items()}
 
 
 def test_heavy_classes_are_vm_age_lease_s():

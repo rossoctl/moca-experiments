@@ -95,7 +95,7 @@ def test_retired_cgroups_end_to_end(tmp_path):
                                                         "vm-5": "pool-2"}
 
 
-def heavy_fixture(tmp_path, after_mib, delta_mib=0, next_send=None, name="rung"):
+def heavy_fixture(tmp_path, after_mib, delta_mib=0, next_send=None, name="rung", shmem_at=None):
     """A lease VM (pool-0, ages 0-90 s) with one py_analyze from t=10 to t=30: 100 MiB at its start,
     peak 900 MiB, then `after_mib` from t=31 on. shmem.json gives its dShmem (None: no shmem.json;
     "null": the key is there with null)."""
@@ -108,6 +108,9 @@ def heavy_fixture(tmp_path, after_mib, delta_mib=0, next_send=None, name="rung")
             return {"pool-0": min(900, 100 + 80 * (t - 10)) * MIB}  # up to 900 MiB by t=20
         return {"pool-0": after_mib * MIB}
     calls = [call("A", 1, "py_analyze", 10, 20000)]
+    if shmem_at is not None:  # the turn's py_shmem reading, sent right after the heavy call
+        log.append(execl(shmem_at, "A", "vm-1"))
+        calls.append(call("A", 1.5, "py_shmem", shmem_at, 40, stdout="800\n"))
     if next_send is not None:
         log.append(execl(next_send + 1, "A", "vm-1"))
         calls.append(call("A", 2, "py_short", next_send, 500))
@@ -173,6 +176,16 @@ def test_main_reads_shmem_json_not_freed_json(tmp_path):
 
 def test_fpr_null_when_next_call_within_15s(tmp_path):
     e = run_fpr(heavy_fixture(tmp_path, after_mib=300, next_send=40))["execs"][0]
+    assert e["follows"] is None and "next call" in e["why_null"]
+
+
+def test_py_shmem_right_after_does_not_void_the_verdict(tmp_path):
+    # The turn's py_shmem follows the closing py_analyze at +0 s; the next real call is at +40 s. The
+    # reading is reported only (warmcold_lease.REPORTED_ONLY): it is not "the session's next call".
+    e = run_fpr(heavy_fixture(tmp_path, after_mib=300, shmem_at=30, next_send=70))["execs"][0]
+    assert e["follows"] is True and e["why_null"] is None
+    # a real call within 15 s still voids it, with the reading in between
+    e = run_fpr(heavy_fixture(tmp_path, after_mib=300, shmem_at=30, next_send=40, name="near"))["execs"][0]
     assert e["follows"] is None and "next call" in e["why_null"]
 
 

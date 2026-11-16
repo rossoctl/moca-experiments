@@ -47,16 +47,17 @@ the Exec (samples from its send to its end) and its start (the last sample at or
 
     freed = max(0, peak - start - dShmem)
 
-where dShmem is the guest's tmpfs growth behind the call, from the `py_shmem` readings (ruling E17B-R23):
+where dShmem is the guest's tmpfs growth behind the call, from the `py_shmem` readings (rulings E17B-R23..R25):
 RUNDIR/shmem.json `calls` = {"session:call": dShmem bytes or null}, written by freed_from_shmem.py. Its
 docstring has the rule: 0 for every heavy call of a turn whose measured Shmem delta is within 1 MiB in a
-session the corpus did not flag tmpfs, null otherwise and always null in a flagged one (whose per-turn growth
-shmem.json reports under `turns`). HEAVY_CLASSES stays py_analyze and py_test, py_shmem is only the source of
+session the corpus did not flag tmpfs, null otherwise, always null in a lease's first turn (no measured
+base) and always null in a flagged session (whose per-turn growth shmem.json reports under `turns`). HEAVY_CLASSES stays py_analyze and py_test, py_shmem is only the source of
 dShmem. Tmpfs is guest RAM held until the VM goes, so that growth is not freed. VERDICT
 "charge follows the working set": value_15s <= peak - freed/2. With no shmem.json, or a null or missing
 dShmem, freed is null and the verdict is null, never false; the raw numbers are still reported. The
 verdict is also null when the 15 s sample or the start sample is missing, the VM ended first, or the
-session's next call began within 15 s (the later Exec's charge is not "falling back").
+session's next call began within 15 s (the later Exec's charge is not "falling back"; a reported-only call,
+the turn's py_shmem reading right after its last py_analyze, is not a next call).
 
 REPLACEMENT VM (criterion 5, second half). A lease whose first call is cold with reason `idle` (the key's
 previous lease ended by the idle timeout; warmcold_lease.py's cold_reason): its first ok `py_grep`
@@ -244,7 +245,7 @@ def fpr_reading(rows, calls, obs, vm_by_id, shmem):
         by_key.setdefault(c.get("session"), []).append(c)
     next_start = {}
     for k, cs in by_key.items():
-        cs.sort(key=lambda c: c.get("call"))
+        cs = sorted((c for c in cs if c.get("class") not in WL.REPORTED_ONLY), key=lambda c: c.get("call"))
         for a, b in zip(cs, cs[1:]):
             next_start[(k, a.get("call"))] = W.call_epoch(b.get("ts"))
     cmap = {(c.get("session"), c.get("call")): c for c in calls}
