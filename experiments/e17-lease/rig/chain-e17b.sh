@@ -10,8 +10,13 @@
 #   bash /srv/e15/src/e17/rig/chain-e17b.sh --list        # the stages, in order, with what each needs
 #
 # Every stage runs with E17B=1 (the profile: its own moca pin and checkout, the -e17b binaries), on fresh-metal,
-# with the manifest at ~/e17-manifest.md (E15_MANIFEST overrides). Probe-only and per-rung knobs from the caller's
-# environment never reach a stage (unset below); the stage sets what it needs.
+# with the manifest at ~/e17-manifest.md (E15_MANIFEST overrides). The caller's environment cannot change a stage
+# (E17B-R36): the per-rung knobs a stage sets itself (E15_TAG, E15_SEED, E15_WINDOW_S, ...) are unset below, and the
+# chain REFUSES to start (exit 1, each named) while any other stage-changing knob is set, even to "": the list is
+# STAGE_KNOBS below (everything lib.sh, rung.sh, ladder.sh, baseline.sh, classprobe.sh and sample.sh read from the
+# environment that changes a measurement, e.g. E15_RUNG, E15_MAX_COMMITTED_MB, E15_LADDER_EXTRA, as an E16 shell
+# leaves them). The operator's own inputs are E17B_OPTIONAL, E17B_SQUEEZE_MEMMAX_MB, E17B_SQUEEZE256_MEMMAX_MB,
+# E17B_OVERHEAD_REF and E15_MANIFEST.
 #
 # THE SEAL. No measured rung runs before the predictions are sealed (spec §9): a stage marked "seal" runs only
 # when experiments/e17-lease/predictions-e17b.json (staged beside this directory) exists, parses, and has
@@ -30,7 +35,8 @@
 # After a stage, every rung it wrote (every arm) is checked for its own failure: params.json rung_failed, record.json
 # aborted, or a non-zero driver exit without a record.json (a memory-watchdog abort is a host verdict, not a failure);
 # any stops the chain. Then every rung it wrote for a ship-* arm is analysed (Task 14 Step 5): warmcold_lease.py, lease_ends.py,
-# freed_from_shmem.py (its shmem.json, E17B-R22) and vm_age_lease.py. The chain stops there for the user on: an unknown call, a source disagreement, warmcold
+# freed_from_shmem.py (its shmem.json, E17B-R22) and vm_age_lease.py. The chain stops there for the user on: an unknown call (an ok
+# call the join could not place; failed_no_vm calls -- refusals, queue-full -- are a NOTE, E17B-R35), a source disagreement, warmcold
 # valid false, an unmatched lease end, lease_ends valid false or criterion4_pass false (null, no lease ended, does not
 # stop), vm_age_lease mapping_valid false, or an analysis failure. After a measured stage (not "-"),
 # latency_report.py runs over every rung the stage wrote, to $L/<stage>.latency/ (informational: not a stop).
@@ -48,16 +54,33 @@
 # ship-300, then the comparison with the resident patch), ownwalk runs ownwalk.sh once per workspace size, each with its
 # own worker. The probe-overhead stage runs the same commit preflight as a baseline stage (default ship-300) first.
 # The last stage, verdict (needs the seal), runs analysis/verdict.py over $E15_RUNS at the pin to $L/verdict.json: each
-# criterion's value and inputs, computed by code (pass null: the thresholds are sealed in Task 13).
+# criterion's value, inputs and pass, computed by code: criteria 1-4 apply SPEC §7.5's fixed bars (E17B-R40), criterion 5's
+# pass stays null until its thresholds are sealed (Task 13).
 # A stage kind "blocked" fails naming what is missing (none is left).
 #
 # Output: "E17B <stage> START|DONE|FAILED|SKIP ..." lines. Exit 0 when every selected stage is done, 1 on a
 # refusal or a failed stage, 2 on bad usage.
 # Test hooks (rig.test.sh-style scratch roots only matter through lib.sh): E17B_RUNG, E17B_LADDER, E17B_BASELINE,
 # E17B_SMOKE, E17B_OWNWALK replace rung.sh, ladder.sh, baseline.sh, smoke.sh, ownwalk.sh; E17B_ANALYSIS the analysis
-# directory. probe-overhead.sh reads E17B_BASELINE too.
+# directory. probe-overhead.sh reads E17B_BASELINE too. They are honoured only with E17B_TEST_HARNESS=1 (set by
+# tests/chain-e17b.test.sh); otherwise any of them set refuses the chain like a knob (E17B-R36).
 set -uo pipefail
 E15_PROG=chain-e17b.sh
+# E17B-R36: refuse to start while a stage-changing knob, or (outside the test harness) a test hook, is set.
+STAGE_KNOBS=(E15_RUNG E15_MAX_COMMITTED_MB E15_MAX_RUNS E15_LADDER_EXTRA E15_SPREAD_S E15_MEMAVAIL_FLOOR_MIB
+  E15_END_SESSION_RATE E15_ATTACH_TIMEOUT_S E15_BASELINE_MAX_SEEDS E15_WS_DELTA_MB E15_CLASSPROBE E15_PROBE_CALLS
+  E15_PROBE_SEED E15_MEMINFO E15_OS_RELEASE E15_SLICE_DIR E15_STATS_URL E15_PROC E15_DISK_DEV E15_DISK_PATH
+  E15_SQUEEZE_ACTIVE E15_SQUEEZE_RESTORED E15_SQUEEZE_ORIG_MAX E15_SQUEEZE_ORIG_HIGH E15_SQUEEZE_MAX E15_SQUEEZE_HIGH)
+TEST_HOOKS=(E17B_RUNG E17B_LADDER E17B_BASELINE E17B_SMOKE E17B_OWNWALK E17B_ANALYSIS)
+knobs_set=()
+for v in "${STAGE_KNOBS[@]}"; do [ -z "${!v+x}" ] || knobs_set+=("$v"); done
+if [ "${E17B_TEST_HARNESS:-}" != 1 ]; then
+  for v in "${TEST_HOOKS[@]}"; do [ -z "${!v+x}" ] || knobs_set+=("$v"); done
+fi
+if [ ${#knobs_set[@]} -gt 0 ]; then
+  echo "E17B REFUSED: stage-changing variable(s) set in the environment: ${knobs_set[*]}; unset them (a leftover from an E16 or probe shell would change a sealed measurement silently; E17B_* hooks are for tests/chain-e17b.test.sh only)" >&2
+  exit 1
+fi
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export E17B=1
 export E15_HOST_PROFILE=fresh-metal
@@ -135,7 +158,7 @@ STAGES=(
   "ram256-squeeze-ship-300|seal|squeeze-ladder squeeze-256 ship-300|budget = MemoryMax - 8192 (its own E17B_SQUEEZE256_MEMMAX_MB)"
   "ram256-squeeze-sbx|seal|squeeze-rung squeeze-256 sbx"
   # the criteria's inputs, computed by code from every rung (final review M1): $L/verdict.json, pass null per criterion
-  "verdict|seal|verdict|analysis/verdict.py over the runs: criteria 1-5 values and inputs; the thresholds are sealed (Task 13)"
+  "verdict|seal|verdict|analysis/verdict.py over the runs: criteria 1-5 values and inputs; 1-4 judged on SPEC 7.5's fixed bars, 5 after Task 13 seals it"
 )
 
 usage() {
@@ -280,7 +303,8 @@ PY
 # when the driver failed, so the flags are read here: params.json rung_failed (a driver exit or set_mode_failed rows on
 # a lease arm), record.json aborted (driver_exit != 0 without a memory-watchdog abort: a rig error, never a host
 # verdict), and, when there is no record.json, the driver exit itself. A memory-watchdog abort is a host verdict
-# (holds false, binding memory_floor), not a failure. Unreadable flags exit non-zero: the caller stops.
+# (holds false, binding memory_floor), not a failure -- but set_mode_failed rows still are (independent failures).
+# Unreadable flags exit non-zero: the caller stops.
 rung_flags() {
   python3 - "$1" <<'PY'
 import json, os, sys
@@ -289,8 +313,10 @@ p = json.load(open(os.path.join(d, "params.json")))
 rp = os.path.join(d, "record.json")
 r = json.load(open(rp)) if os.path.exists(rp) else None
 why = []
-if p.get("rung_failed") is not None and not p.get("memory_abort"):
-    why.append("rung_failed %s" % p["rung_failed"])
+# A set_mode failure is independent of a memory abort: it stops the stage whatever the host's verdict was.
+rf = p.get("rung_failed")
+if rf is not None and (not p.get("memory_abort") or str(rf).startswith("set_mode_failed")):
+    why.append("rung_failed %s" % rf)
 de = p.get("driver_exit") or 0
 if r is not None and r.get("aborted") is True:
     why.append("record.json aborted (driver_exit %s)" % de)
@@ -303,7 +329,7 @@ PY
 # gate MARKER: check every rung written since MARKER for its own failure flags (every arm), then analyse each ship-*
 # rung (Task 14 Step 5); 1 when the chain must stop.
 gate() {
-  local marker=$1 rc=0 d arm f out sbxd extra
+  local marker=$1 rc=0 d arm f out sbxd extra note
   while IFS= read -r f; do
     d=$(dirname "$f")
     out=$(rung_flags "$d" 2>/dev/null) || out="the rung flags are unreadable ($f)"
@@ -356,6 +382,11 @@ PY
       echo "E17B $STAGE STOP ${d#"$E15_RUNS"/}: $out (Task 14 Step 5: goes to the user)"
       rc=1
     fi
+    # E17B-R35: failed calls that ran in no VM (refusals, queue-full, not started) are reported, not a stop: lease_ends'
+    # criterion-3 refusal check judges them (a refusal while an idle lease existed fails criterion 3 there).
+    note=$(python3 -c 'import json,sys; w=json.load(open(sys.argv[1] + "/warmcold-report.json")); n=w.get("failed_no_vm") or 0
+print("%d failed_no_vm call(s) %s" % (n, json.dumps(w.get("failed_no_vm_by_reason") or {}, sort_keys=True)) if n else "")' "$d" 2>/dev/null) || note=""
+    [ -z "$note" ] || echo "E17B $STAGE NOTE ${d#"$E15_RUNS"/}: $note (reported, not a stop: criterion 3's refusal check judges them)"
   done < <(find "$E15_RUNS" -name params.json -newer "$marker" 2>/dev/null | sort)
   return "$rc"
 }
@@ -421,7 +452,10 @@ run_cmd() {
     sq_point "$1"
     local lj=$E15_RUNS/$1/ship-300/ladder.json
     [ -f "$lj" ] || die "no $lj: run the $1 ship-300 climb first"
-    read -r n mm < <(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("squeeze") or {}; print(s.get("stop_n") or "null", s.get("memmax_mb") or "null")' "$lj")
+    n=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("squeeze") or {}; print(s.get("stop_n") or "null", s.get("memmax_mb") or "null")' "$lj") ||
+      die "$lj is unreadable: refusing (no N or MemoryMax to run $2 at)"
+    read -r n mm <<<"$n"
+    [ -n "$n" ] && [ -n "${mm:-}" ] || die "$lj is unreadable (no stop_n/memmax_mb): refusing"
     [ "$n" != null ] || die "the ship-300 $1 climb stopped at no N ($lj): nothing to run $2 at"
     [ "$mm" != null ] || die "$lj records no memmax_mb"
     [ -z "$sq_mb" ] || [ "$sq_mb" = "$mm" ] ||
@@ -446,7 +480,7 @@ run_cmd() {
       bash "$OWNWALK" "$n" || die "ownwalk.sh $n failed (its ownwalk.json and driver.log: $E15_RUNS/ownwalk/ship-300/F$n)"
     done
     ;;
-  verdict) # the criteria's inputs from every rung at the pin (final review M1); pass stays null (Task 13 seals it)
+  verdict) # the criteria from every rung at the pin (final review M1); 1-4 judged on fixed bars, 5 null until Task 13
     python3 "$ANALYSIS/verdict.py" "$E15_RUNS" --moca-commit "$E15_MOCA_PIN" --out "$L/verdict.json"
     ;;
   blocked) die "not wired: $*" ;;

@@ -91,7 +91,9 @@ for k in rung ladder baseline smoke ownwalk; do mkstub "$k"; done
 # analysis stubs: warmcold_lease.py writes warmcold-report.json (unknown = STUB_UNKNOWN), lease_ends.py lease_ends.json
 cat >"$TMP/an/warmcold_lease.py" <<'PY'
 import json, os, sys
+fnv = int(os.environ.get("STUB_FNV", "0"))
 json.dump({"unknown": int(os.environ.get("STUB_UNKNOWN", "0")), "disagreements": int(os.environ.get("STUB_DIS", "0")),
+           "failed_no_vm": fnv, "failed_no_vm_by_reason": {"no-vm": fnv} if fnv else {},
            "valid": os.environ.get("STUB_WC_VALID", "1") == "1"}, open(sys.argv[1] + "/warmcold-report.json", "w"))
 print("warm 1 cold 1 unknown %s" % os.environ.get("STUB_UNKNOWN", "0"))
 open(os.environ["ALOG"], "a").write("warmcold_lease %s\n" % sys.argv[1])
@@ -149,7 +151,7 @@ chain() { # [VAR=val ...] -- ARGS: run the staged chain; rc echoed, output in $T
   : >"$CLOG"
   : >"$TMP/alog"
   env -u E17B E15_ROOT="$T" E15_TEST_ROOT="$T" E15_TEST_PINS="$TMP/pins.sh" E15_MANIFEST="$TMP/m.md" PATH="$TMP/stub:$PATH" \
-    E17B_RUNG="$TMP/stub-rung.sh" E17B_LADDER="$TMP/stub-ladder.sh" E17B_BASELINE="$TMP/stub-baseline.sh" E17B_SMOKE="$TMP/stub-smoke.sh" \
+    E17B_TEST_HARNESS=1 E17B_RUNG="$TMP/stub-rung.sh" E17B_LADDER="$TMP/stub-ladder.sh" E17B_BASELINE="$TMP/stub-baseline.sh" E17B_SMOKE="$TMP/stub-smoke.sh" \
     E17B_OWNWALK="$TMP/stub-ownwalk.sh" E17B_ANALYSIS="$TMP/an" ALOG="$TMP/alog" ${envs[@]+"${envs[@]}"} bash "$CHAIN" "$@" >"$TMP/c.out" 2>&1
   echo $?
 }
@@ -233,6 +235,9 @@ test_chain_squeeze_stages() {
     "$(chain E17B_SQUEEZE_MEMMAX_MB=4096 -- --from squeeze-sbx --to squeeze-sbx)/$(grep -c 'the ship-300 climb ran under 8192' "$T/e17b/squeeze-sbx.log")" "1/1"
   check "squeeze: sbx alone takes the climb's value from its ladder.json" \
     "$(chain -- --from squeeze-sbx --to squeeze-sbx)/$(cat "$CLOG")" "0/rung sbx 64 squeeze tag=sq memmax=8192 e17b=1 ram=unset"
+  printf '{"squeeze": {"stop_n": 64,' >"$T/runs/squeeze/ship-300/ladder.json"
+  check "squeeze (PR #34 nit): an unreadable ladder.json stops the stage, naming it (never an empty N)" \
+    "$(chain -- --from squeeze-sbx --to squeeze-sbx)/$(grep -c "unreadable.*ladder.json\|ladder.json.*unreadable" "$T/e17b/squeeze-sbx.log")/$(grep -c . "$CLOG")" "1/1/0"
   printf '{"squeeze": {"stop_n": null, "memmax_mb": 8192}}\n' >"$T/runs/squeeze/ship-300/ladder.json"
   check "squeeze: a climb that stopped at no N leaves sbx nothing to run (fails)" \
     "$(chain -- --from squeeze-sbx --to squeeze-sbx)/$(grep -c 'stopped at no N' "$T/e17b/squeeze-sbx.log")/$(grep -c . "$CLOG")" "1/1/0"
@@ -249,6 +254,11 @@ test_chain_analysis_gate() {
   check "gate: an unknown call stops the chain at that stage, which stays not done" \
     "$(chain STUB_UNKNOWN=2 -- --from lat-pycache-ship-300-n1 --to lat-pycache-low-sbx-n1)/$(grep -c 'STOP pycache/ship-300/N1-lat: 2 unknown call(s)' "$TMP/c.out")/$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open)/$(grep -c . "$CLOG")" \
     "1/1/open/1"
+  check "gate (E17B-R35): failed_no_vm calls are reported (a NOTE naming the count and reasons), not a stop; the stage is done" \
+    "$(chain STUB_FNV=3 -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c 'NOTE pycache/ship-300/N1-lat: 3 failed_no_vm call(s) {"no-vm": 3}' "$TMP/c.out")/$(grep -c STOP "$TMP/c.out")/$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open)" \
+    "0/1/0/done"
+  check "gate: no failed_no_vm call, no NOTE" \
+    "$(chain -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c 'failed_no_vm' "$TMP/c.out")" "0/0"
   check "gate: an unmatched lease end stops it too" \
     "$(chain STUB_UNMATCHED=1 -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c '1 unmatched lease end(s)' "$TMP/c.out")" "1/1"
   check "gate: a rung written before the stage started is not re-analysed (only the stage's own rung is reported)" \
@@ -306,6 +316,8 @@ test_chain_gate_reads_rung_failure_flags() {
     "$(chain STUB_DRIVER_EXIT=143 STUB_MEMORY_ABORT='{"reason":"floor"}' -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(chain STUB_NO_RECORD=1 STUB_DRIVER_EXIT=143 STUB_MEMORY_ABORT='{"reason":"floor"}' -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)" "0/0"
   check "gate: a ship rung's memory-watchdog abort (rung_failed set with memory_abort) does not stop the stage" \
     "$(chain STUB_DRIVER_EXIT=143 STUB_RUNG_FAILED='"driver_exit=143"' STUB_MEMORY_ABORT='{"reason":"floor"}' -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c 'STOP' "$TMP/c.out")" "0/0"
+  check "gate (PR #34 nit): set_mode failures stop the stage even when the rung also had a memory abort (independent failures)" \
+    "$(chain STUB_DRIVER_EXIT=143 STUB_RUNG_FAILED='"set_mode_failed=2"' STUB_MEMORY_ABORT='{"reason":"floor"}' -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c 'STOP pycache/ship-300/N1-lat: rung_failed set_mode_failed=2' "$TMP/c.out")" "1/1"
   check "gate: a clean sbx rung passes the flag check (driver_exit 0, rung_failed null, aborted false)" \
     "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$([ -f "$T/e17b/lat-pycache-sbx-n1.done" ] && echo "done")" "0/done"
   check "gate: an unreadable params.json stops the stage (never passes)" \
@@ -361,7 +373,35 @@ test_chain_preflight_and_guards() {
   check "guard: only the staged copy runs" \
     "$(env E15_ROOT="$T" E15_TEST_ROOT="$T" E15_TEST_PINS="$TMP/pins.sh" PATH="$TMP/stub:$PATH" bash "$RIG/chain-e17b.sh" --list >"$TMP/c.out" 2>&1; echo $?)/$(grep -c 'run the staged copy' "$TMP/c.out")" "1/1"
 }
+# E17B-R36: a stage-changing knob in the caller's environment refuses the chain up front, naming it; the chain's own
+# test hooks are honoured only under E17B_TEST_HARNESS=1 (set by chain() above).
+test_chain_refuses_stage_knobs() {
+  reset
+  seal true
+  local v out=""
+  for v in E15_RUNG E15_MAX_COMMITTED_MB E15_MAX_RUNS E15_LADDER_EXTRA E15_SPREAD_S E15_MEMAVAIL_FLOOR_MIB E15_END_SESSION_RATE \
+    E15_ATTACH_TIMEOUT_S E15_BASELINE_MAX_SEEDS E15_WS_DELTA_MB E15_CLASSPROBE E15_PROBE_CALLS E15_PROBE_SEED E15_MEMINFO \
+    E15_OS_RELEASE E15_SLICE_DIR E15_STATS_URL E15_PROC E15_DISK_DEV E15_DISK_PATH E15_SQUEEZE_ACTIVE E15_SQUEEZE_RESTORED \
+    E15_SQUEEZE_ORIG_MAX E15_SQUEEZE_ORIG_HIGH E15_SQUEEZE_MAX E15_SQUEEZE_HIGH; do
+    out+="$v=$(chain "$v=1" -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1):$(grep -c "REFUSED: .*$v" "$TMP/c.out"):$(grep -c . "$CLOG") "
+  done
+  check "knobs: each stage-changing knob set in the environment refuses the chain (exit 1), naming it, nothing run" \
+    "$(printf '%s' "$out" | tr ' ' '\n' | grep -vc '=1:1:0$')" "0"
+  check "knobs: an empty value counts as set" "$(chain E15_LADDER_EXTRA= -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(grep -c . "$CLOG")" "1/0"
+  check "knobs: two set are both named" \
+    "$(chain E15_LADDER_EXTRA="1280 1536" E15_MAX_RUNS=9 -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(grep -c 'REFUSED: .*E15_LADDER_EXTRA.*E15_MAX_RUNS\|REFUSED: .*E15_MAX_RUNS.*E15_LADDER_EXTRA' "$TMP/c.out")" "1/1"
+  check "knobs: --list is refused too (the chain refuses to start)" "$(chain E15_RUNG=/tmp/x -- --list)/$(grep -c 'REFUSED: .*E15_RUNG' "$TMP/c.out")" "1/1"
+  out=$(chain E17B_TEST_HARNESS= -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)
+  check "hooks: without E17B_TEST_HARNESS=1 the test hooks are refused, each named, nothing run" \
+    "$out/$(for v in E17B_RUNG E17B_LADDER E17B_BASELINE E17B_SMOKE E17B_OWNWALK E17B_ANALYSIS; do grep -q "REFUSED: .*$v" "$TMP/c.out" && printf '%s ' "$v"; done)/$(grep -c . "$CLOG")" \
+    "1/E17B_RUNG E17B_LADDER E17B_BASELINE E17B_SMOKE E17B_OWNWALK E17B_ANALYSIS /0"
+  check "hooks: with E17B_TEST_HARNESS=1 they are honoured (the stub rung ran)" \
+    "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(calls)" "0/rung sbx 1 pycache;"
+  check "knobs: the operator's own inputs are not knobs (E17B_OPTIONAL, E17B_SQUEEZE_MEMMAX_MB, E17B_OVERHEAD_REF, E15_MANIFEST)" \
+    "$(chain E17B_OPTIONAL=0 E17B_SQUEEZE_MEMMAX_MB=8192 E17B_OVERHEAD_REF=/tmp/x -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)" "0"
+}
 test_chain_lists_stages
+test_chain_refuses_stage_knobs
 test_chain_refuses_unsealed
 test_chain_runs_bringup_unsealed
 test_chain_resumes_at_stage
