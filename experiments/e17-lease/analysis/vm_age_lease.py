@@ -10,7 +10,7 @@ so the directory is removed and the name is never reissued (`issued` is monotoni
 VM's destroy as a push assigns the NEXT VM the wrong name. Here the replay retires the cgroups of VMs
 that have a `lease start` line, and recycles every other VM's.
 
-Identity (worker.log, SH_DIAG_PHASES=1, parsed once): `vmpool: restore phases id=vm-N` is a VM birth,
+Identity (worker.log, SH_DIAG_PHASES=1; read three times per analysis, by this module, by the E16 events reader and by the warm/cold join): `vmpool: restore phases id=vm-N` is a VM birth,
 `destroy phases id=vm-N` its end. Lines are replayed in log order, never by timestamp.
 
 WHICH VMs RETIRE. launcher_firecracker.go LeaseCgroup sets `leaseCgroup` BEFORE it writes memory.max, so
