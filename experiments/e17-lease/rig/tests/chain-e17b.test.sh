@@ -69,6 +69,9 @@ rung)
   d=\$E15_ROOT/runs/\$3/\$1/N\$2\${E15_TAG:+-\$E15_TAG}
   mkdir -p "\$d"
   printf '{"arm": "%s", "n": %s, "moca_commit": "%s"}\n' "\$1" "\$2" "\${STUB_COMMIT:-$PIN}" >"\$d/params.json" ;;
+baseline)
+  mkdir -p "\$E15_ROOT/runs/\$1/\$2/N1"
+  printf '{"class_medians": {"build": 1.0}}\n' >"\$E15_ROOT/runs/\$1/\$2/N1/baseline.json" ;;
 ladder)
   if [ "\${1#squeeze}" != "\$1" ]; then
     mkdir -p "\$E15_ROOT/runs/\$1/\$2"
@@ -79,7 +82,7 @@ exit 0
 SH
   chmod +x "$TMP/stub-$1.sh"
 }
-for k in rung ladder baseline smoke; do mkstub "$k"; done
+for k in rung ladder baseline smoke ownwalk; do mkstub "$k"; done
 # analysis stubs: warmcold_lease.py writes warmcold-report.json (unknown = STUB_UNKNOWN), lease_ends.py lease_ends.json
 cat >"$TMP/an/warmcold_lease.py" <<'PY'
 import json, os, sys
@@ -132,7 +135,7 @@ chain() { # [VAR=val ...] -- ARGS: run the staged chain; rc echoed, output in $T
   : >"$TMP/alog"
   env -u E17B E15_ROOT="$T" E15_TEST_ROOT="$T" E15_TEST_PINS="$TMP/pins.sh" E15_MANIFEST="$TMP/m.md" PATH="$TMP/stub:$PATH" \
     E17B_RUNG="$TMP/stub-rung.sh" E17B_LADDER="$TMP/stub-ladder.sh" E17B_BASELINE="$TMP/stub-baseline.sh" E17B_SMOKE="$TMP/stub-smoke.sh" \
-    E17B_ANALYSIS="$TMP/an" ALOG="$TMP/alog" ${envs[@]+"${envs[@]}"} bash "$CHAIN" "$@" >"$TMP/c.out" 2>&1
+    E17B_OWNWALK="$TMP/stub-ownwalk.sh" E17B_ANALYSIS="$TMP/an" ALOG="$TMP/alog" ${envs[@]+"${envs[@]}"} bash "$CHAIN" "$@" >"$TMP/c.out" 2>&1
   echo $?
 }
 calls() { sed 's/ *tag=.*//' "$CLOG" | tr '\n' ';'; }
@@ -265,8 +268,11 @@ test_chain_preflight_and_guards() {
   check "ram256: the pycache N=1 stages run at pycache-d64 (D scaled 256 -> 64 with the RAM) with E17B_GUEST_RAM_MB=256, tag ram256" \
     "$(chain -- --from ram256-pycache-sbx-n1 --to ram256-pycache-ship-300-n1)/$(tr '\n' ';' <"$CLOG")" \
     "0/rung sbx 1 pycache-d64 tag=ram256 memmax=unset e17b=1 ram=256;rung ship-300 1 pycache-d64 tag=ram256 memmax=unset e17b=1 ram=256;"
-  check "blocked: the ownership-walk stage fails naming what is missing" \
-    "$(chain -- --from ownwalk --to ownwalk)/$(grep -c 'not wired: the ownership-walk runner' "$T/e17b/ownwalk.log")" "1/1"
+  check "ownwalk: ownwalk.sh once per size (10k, 100k, 500k files), in order, each under E17B=1" \
+    "$(chain -- --from ownwalk --to ownwalk)/$(tr '\n' ';' <"$CLOG")" \
+    "0/ownwalk 10000 tag=unset memmax=unset e17b=1 ram=unset;ownwalk 100000 tag=unset memmax=unset e17b=1 ram=unset;ownwalk 500000 tag=unset memmax=unset e17b=1 ram=unset;"
+  check "ownwalk: a failed size stops the stage there, naming it" \
+    "$(chain FAIL_ON='ownwalk 100000' -- --from ownwalk --to ownwalk)/$(grep -c 'ownwalk.sh 100000 failed' "$T/e17b/ownwalk.log")/$(grep -c . "$CLOG")" "1/1/2"
   reset
   check "ram256 squeeze (E17B-R21): squeeze-256 baselines, the ship-300 climb under E17B_SQUEEZE256_MEMMAX_MB, then sbx at its stop N, all at 256 MiB" \
     "$(chain E17B_SQUEEZE256_MEMMAX_MB=12288 E17B_SQUEEZE_MEMMAX_MB=16384 -- --from ram256-base-squeeze-sbx --to ram256-squeeze-sbx)/$(tr '\n' ';' <"$CLOG")" \
@@ -276,8 +282,9 @@ test_chain_preflight_and_guards() {
     "$(chain E17B_SQUEEZE_MEMMAX_MB=16384 -- --from ram256-squeeze-ship-300 --to ram256-squeeze-ship-300)/$(grep -c 'needs E17B_SQUEEZE256_MEMMAX_MB' "$T/e17b/ram256-squeeze-ship-300.log")/$(grep -c . "$CLOG")" "1/1/0"
   check "ram256 squeeze: sbx refuses without the squeeze-256 climb's ladder.json (not the 1024 MiB one)" \
     "$(mkdir -p "$T/runs/squeeze/ship-300"; printf '{"squeeze": {"stop_n": 64, "memmax_mb": 16384}}\n' >"$T/runs/squeeze/ship-300/ladder.json"; chain -- --from ram256-squeeze-sbx --to ram256-squeeze-sbx)/$(grep -c "no $T/runs/squeeze-256/ship-300/ladder.json" "$T/e17b/ram256-squeeze-sbx.log")" "1/1"
-  check "probe-overhead: fails while Task 11's probe-overhead.sh is missing" \
-    "$(chain -- --from probe-overhead --to probe-overhead)/$(grep -c 'probe-overhead.sh (Task 11 provides it)' "$T/e17b/probe-overhead.log")" "1/1"
+  check "probe-overhead: the stage runs probe-overhead.sh: baseline.sh for ship-300 at the default point, under E17B=1" \
+    "$(chain -- --from probe-overhead --to probe-overhead)/$(cat "$CLOG")/$([ -f "$T/runs/default/ship-300/N1/baseline.probe-overhead.json" ] && echo kept)" \
+    "0/baseline default ship-300 tag=unset memmax=unset e17b=1 ram=unset/kept"
   check "optional: the ship-30/ship-120 ladder stages SKIP without E17B_OPTIONAL=1, run with it" \
     "$(chain -- --from base-default-ship-30 --to ladder-default-ship-120)/$(grep -c 'SKIP (optional' "$TMP/c.out")/$(chain E17B_OPTIONAL=1 -- --from base-default-ship-30 --to ladder-default-ship-120)/$(calls)" \
     "0/4/0/baseline default ship-30;baseline default ship-120;ladder default ship-30;ladder default ship-120;"

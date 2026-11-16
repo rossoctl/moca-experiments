@@ -41,13 +41,15 @@
 # Guest RAM (E17B-R17): every stage runs on the snapshot leaf e17b-<pin8>-1024; the ram256-* stages set
 # E17B_GUEST_RAM_MB=256 (leaf e17b-<pin8>-256) with D scaled to the same dataset-to-RAM ratio: pycache (D=256) runs as
 # pycache-d64, and the squeeze as point squeeze-256 (D=768 scales to 192; ruling E17B-R21) under its own
-# E17B_SQUEEZE256_MEMMAX_MB. Stages that cannot run yet are "blocked" and fail naming what is missing: the
-# ownership-walk runner (Task 11).
+# E17B_SQUEEZE256_MEMMAX_MB. The §7.4 probes (Task 11): probe-overhead runs probe-overhead.sh (baseline.sh default
+# ship-300, then the comparison with the resident patch), ownwalk runs ownwalk.sh once per workspace size, each with its
+# own worker. A stage kind "blocked" fails naming what is missing (none is left).
 #
 # Output: "E17B <stage> START|DONE|FAILED|SKIP ..." lines. Exit 0 when every selected stage is done, 1 on a
 # refusal or a failed stage, 2 on bad usage.
 # Test hooks (rig.test.sh-style scratch roots only matter through lib.sh): E17B_RUNG, E17B_LADDER, E17B_BASELINE,
-# E17B_SMOKE replace rung.sh, ladder.sh, baseline.sh, smoke.sh; E17B_ANALYSIS the analysis directory.
+# E17B_SMOKE, E17B_OWNWALK replace rung.sh, ladder.sh, baseline.sh, smoke.sh, ownwalk.sh; E17B_ANALYSIS the analysis
+# directory. probe-overhead.sh reads E17B_BASELINE too.
 set -uo pipefail
 E15_PROG=chain-e17b.sh
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,6 +74,7 @@ RUNG=${E17B_RUNG:-$E15_SRC/rig/rung.sh}
 LADDER=${E17B_LADDER:-$E15_SRC/rig/ladder.sh}
 BASELINE=${E17B_BASELINE:-$E15_SRC/rig/baseline.sh}
 SMOKE=${E17B_SMOKE:-$E17_SRC/rig/smoke.sh}
+OWNWALK=${E17B_OWNWALK:-$E17_SRC/rig/ownwalk.sh}
 ANALYSIS=${E17B_ANALYSIS:-$E17_SRC/analysis}
 L=$E15_ROOT/e17b
 
@@ -110,7 +113,7 @@ STAGES=(
   "squeeze-sbx|seal|squeeze-rung squeeze sbx"
   # Task 14 Step 4: the §7.4 probes (Task 11)
   "probe-overhead|seal|script probe-overhead.sh"
-  "ownwalk|seal|blocked the ownership-walk runner (Task 11: driver subcommand ownwalk at 10000, 100000, 500000 files)"
+  "ownwalk|seal|ownwalk 10000 100000 500000|the walk is A - B per size, 5 repeats (ownwalk.json under runs/ownwalk/ship-300/F<files>)"
   # Task 14 Step 2, optional: the ship-30 and ship-120 ladders at default (the user may cut them)
   "base-default-ship-30|opt|baseline default ship-30"
   "base-default-ship-120|opt|baseline default ship-120"
@@ -389,6 +392,11 @@ run_cmd() {
     shift
     [ -f "$E17_SRC/rig/$n" ] || die "no $E17_SRC/rig/$n (Task 11 provides it)"
     bash "$E17_SRC/rig/$n" "$@"
+    ;;
+  ownwalk) # FILES...: the ownership-walk probe, one ownwalk.sh (its own worker cycle) per workspace size, in order
+    for n in "$@"; do
+      bash "$OWNWALK" "$n" || die "ownwalk.sh $n failed (its ownwalk.json and driver.log: $E15_RUNS/ownwalk/ship-300/F$n)"
+    done
     ;;
   blocked) die "not wired: $*" ;;
   *) die "unknown stage kind $kind" ;;

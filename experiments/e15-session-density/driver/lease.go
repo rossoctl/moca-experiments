@@ -34,6 +34,7 @@ const (
 	leaseDefaultTTL   = 300 * time.Second // Exec token TTL, refreshed before it runs out
 	setModeCallLimit  = 120 * time.Second // client-side bound on one set_mode
 	statusCallLimit   = 30 * time.Second  // client-side bound on one status call of the sweep
+	resetCallLimit    = 120 * time.Second // client-side bound on one reset (ownwalk; the lease is idle)
 	sweepParallel     = 32
 	setModeFailBackof = time.Second // a session whose set_mode failed waits this long before the slot draws the next
 	causeSetMode      = "set_mode_failed"
@@ -169,6 +170,23 @@ func (l *leaseSession) status(ctx context.Context, client pb.SandboxExecClient) 
 	cctx, cancel := context.WithTimeout(cctx, statusCallLimit)
 	defer cancel()
 	resp, err := client.LeaseControl(cctx, &pb.LeaseControlRequest{SandboxId: l.cfg.Wrk, Op: pb.LeaseOp_LEASE_OP_STATUS})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetStatus(), nil
+}
+
+// reset sends LeaseControl reset (ownwalk only): the worker ends this workspace's live lease
+// with reason "reset" and answers once it has ended; with no lease it is a no-op. Like status it
+// carries no set-mode token, mode or epoch (sandbox-caller.ts reads those for set_mode only).
+func (l *leaseSession) reset(ctx context.Context, client pb.SandboxExecClient) (*pb.LeaseStatus, error) {
+	cctx, err := l.bearer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cctx, cancel := context.WithTimeout(cctx, resetCallLimit)
+	defer cancel()
+	resp, err := client.LeaseControl(cctx, &pb.LeaseControlRequest{SandboxId: l.cfg.Wrk, Op: pb.LeaseOp_LEASE_OP_RESET})
 	if err != nil {
 		return nil, err
 	}
