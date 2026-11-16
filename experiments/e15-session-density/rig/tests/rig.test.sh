@@ -2776,7 +2776,7 @@ test_e17b_profile_off_is_unchanged
 test_e17b_profile_on
 
 test_e17b_setup_never_deletes_the_sealed_snapshot() {
-  local snip="$TMP/e17b-snapstep.sh" rm_line
+  local snip="$TMP/e17b-snapstep.sh"
   # The snapshot step's opening line and the guard that must follow it, run with sudo/rm stubbed.
   awk '/^if ! stamp_ok snapshot "\$snap_key"/{p=1} p{print} p&&/E17B/{exit}' "$RIG/setup.sh" >"$snip"
   printf 'fi\n' >>"$snip"
@@ -2840,7 +2840,7 @@ test_sealed_binaries_untouched_when_e17b_set() {
   check "e17b build: under E17B=1 the go builds write only the -e17b binaries" \
     "$(grep -c 'go build -o '"$TROOT"'/bin/microvm-worker-e17b ' "$rec")/$(grep -c 'go build -o '"$TROOT"'/bin/null-responder-e17b ' "$rec")/$(grep -cE 'go build -o '"$TROOT"'/bin/(microvm-worker|null-responder) ' "$rec")" "1/1/0"
   check "e17b build: under E17B=1 the stamp written is go-stock-e17b, never go-stock" "$(grep -c "^stamp go-stock-e17b $E17B_FIXPIN\$" "$rec")/$(grep -c '^stamp go-stock ' "$rec")" "1/0"
-  rm -rf "$TROOT/moca-e17b" "$TROOT/logs" "$TROOT/bin"
+  rm -rf "${TROOT:?}/moca-e17b" "${TROOT:?}/logs" "${TROOT:?}/bin"
 }
 check "e17b: the pin-file-not-found error names both candidate paths" \
   "$(grep -c "but no e17b-pins.sh at.*e17-lease/rig/e17b-pins.sh.*e17/rig/e17b-pins.sh" "$RIG/lib.sh")" "1"
@@ -2880,7 +2880,7 @@ test_ship_arms_known_on_fresh_metal_only() {
   check "ship arms: the default warm-up is 1200 s (as the lease arms)" "$(t17m fresh-metal 1 'e15_default_warmup ship-30; e15_default_warmup ship-300' | tr '\n' ' ')" "1200 1200 "
 }
 test_ship_worker_env_has_admission() {
-  local wenv='worker_env ship-120 "$1"; cat "$1"' f="$TMP/ship-wenv"
+  local f="$TMP/ship-wenv"
   # 393216 MiB host RAM - 8192 = 385024
   check "ship worker_env: SH_MAX_COMMITTED_MB = host RAM MiB - 8192" "$(t17m fresh-metal 1 'worker_env ship-120 "'"$f"'"; grep "^SH_MAX_COMMITTED_MB=" "'"$f"'"')" "SH_MAX_COMMITTED_MB=385024"
   check "ship worker_env: WORKER_MAX_CONCURRENT is above the ladder's top N (also with E15_LADDER_EXTRA)" \
@@ -2946,7 +2946,7 @@ test_e17b_driver_builds_to_separate_binaries() {
   run_blk "" 0
   check "e17b driver build: with E17B unset and no driver the old path builds e15-driver and stamps go-driver" \
     "$(grep '^build' "$rec" | sed "s#$TROOT/##" | tr '\n' ' ')/$(grep -c '^stamp go-driver srckey$' "$rec")" "build bin/e15-driver /1"
-  rm -rf "$TROOT/bin" "$TROOT/logs"
+  rm -rf "${TROOT:?}/bin" "${TROOT:?}/logs"
   check "e17b driver build: lib.sh names the binaries" \
     "$(t17m fresh-metal 1 'echo $E15_BIN' | sed "s#$TROOT/##")" "bin"
 }
@@ -2954,7 +2954,7 @@ test_sealed_driver_untouched_when_e17b_set() {
   check "e17b driver: the sealed build lines in setup.sh are still present, once each" \
     "$(grep -c 'go build -o "\$E15_BIN/e15-driver-defer" \.' "$RIG/setup.sh")/$(grep -c 'go build -o "\$E15_BIN/e15-driver" \.' "$RIG/setup.sh")" "1/1"
   check "e17b driver: no E17B build writes a sealed driver name (every e17b go build names -e17b)" \
-    "$(grep -E 'go build -o "\$E15_BIN/e15-driver[a-z-]*e17b" \.' "$RIG/setup.sh" | wc -l | tr -d ' ')" "2"
+    "$(grep -cE 'go build -o "\$E15_BIN/e15-driver[a-z-]*e17b" \.' "$RIG/setup.sh")" "2"
   check "e17b driver: rung.sh under E17B=1 selects the -e17b driver and its defer variant" \
     "$(grep -c 'DRIVER=\${DRIVER}-e17b' "$RIG/rung.sh")/$(grep -c 'BASE_DRIVER=\${BASE_DRIVER}-e17b' "$RIG/rung.sh")" "1/1"
 }

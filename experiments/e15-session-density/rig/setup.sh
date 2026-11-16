@@ -504,6 +504,7 @@ if ! unit_active "$E15_UNIT_RELAY"; then
   # UNDO recorded BEFORE the start: a check that fails after systemd-run leaves a recorded unit.
   m_change "starting $E15_UNIT_RELAY (127.0.0.1:$E15_PORT_ATTACH attach, 127.0.0.1:$E15_PORT_EXEC exec)" \
     "sudo -n systemctl stop $E15_UNIT_RELAY 2>/dev/null; sudo -n systemctl reset-failed $E15_UNIT_RELAY 2>/dev/null; true"
+  # shellcheck disable=SC2119 # start_relay's optional $1 is the E17b token-keyset env file; setup starts it without
   start_relay
   sleep 3
   if grep -q 'redis client error' "$E15_LOGS/relay.log"; then

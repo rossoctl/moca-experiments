@@ -95,8 +95,12 @@ if [ "${E17B:-}" = 1 ]; then
   # shellcheck disable=SC1090
   . "$_e17b_f"
   case "$E15_ROOT" in
-  */e15-rig-test.*) [ -n "${E15_TEST_PINS:-}" ] && [ "${E15_TEST_ROOT:-}" = "$E15_ROOT" ] && . "$E15_TEST_PINS" ;;
+  */e15-rig-test.*)
+    # shellcheck disable=SC1090
+    [ -n "${E15_TEST_PINS:-}" ] && [ "${E15_TEST_ROOT:-}" = "$E15_ROOT" ] && . "$E15_TEST_PINS"
+    ;;
   esac
+  # shellcheck disable=SC2153 # assigned by the pin file sourced above
   E15_MOCA_PIN=$E17B_MOCA_PIN
 fi
 # e17b_require_pin: refuse an E17B_MOCA_PIN that is not a full 40-hex sha or is the all-zero placeholder.
