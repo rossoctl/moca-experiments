@@ -174,8 +174,8 @@ func realMain(args []string, getenv func(string) string, stderr io.Writer) int {
 	case runErr != nil:
 		return fail(1, "run aborted: %v", runErr)
 	}
-	if n := r.NotLeaseSessions(); n > 0 {
-		return fail(1, "%d session(s) not_lease: the first call that ran an Exec carried no lease start event, so it ran outside a lease; this rung is not a lease measurement (a refused first call is first_refused, not judged)", n)
+	if err := leaseRunVerdict(r); err != nil {
+		return fail(1, "%v", err)
 	}
 	return 0
 }

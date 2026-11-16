@@ -46,6 +46,9 @@ type callRecord struct {
 	FirstLease   bool         `json:"first_lease,omitempty"`
 	FirstRefused bool         `json:"first_refused,omitempty"`
 	NotLease     bool         `json:"not_lease,omitempty"`
+	// Refused (lease mode only) is the class of a refusal that came before the call ran (refusalOf): load
+	// (memory-budget, host-memory, max-runs, queue-full, relay-busy) or configuration (configRefusal; E17B-R42).
+	Refused string `json:"refused,omitempty"`
 	// --record-stdout only (omitted otherwise): for a call of a listed class, the Exec's stdout, its
 	// first stdoutMax bytes cut on a UTF-8 rune boundary ("" when it wrote none), and
 	// stdout_truncated when more was written.

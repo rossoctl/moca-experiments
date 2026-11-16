@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -123,6 +124,8 @@ type leaseSession struct {
 	seen     map[[2]any]bool // (at_unix_ms, state) of every event already recorded
 	checked  bool            // the session's first call that ran an Exec has been judged (E17B-R30)
 	notLease bool            // that call carried no start event
+	// configRefused is the first configuration refusal the session saw (configRefusal; E17B-R42), "" when none.
+	configRefused string
 }
 
 func newLeaseSession(cfg *LeaseConfig, key string) *leaseSession {
@@ -257,6 +260,47 @@ func (r *Replayer) NotLeaseSessions() int {
 		}
 	}
 	return n
+}
+
+// ConfigRefusedSessions is how many sessions ended without one call that ran an Exec after seeing a configuration
+// refusal (E17B-R42): the rung's configuration is broken (a stale mode epoch, no lease support, a token bound to
+// the wrong sandbox), not loaded, so the driver exits non-zero. Load refusals stay outcomes.
+func (r *Replayer) ConfigRefusedSessions() int {
+	n, _ := r.configRefused()
+	return n
+}
+
+func (r *Replayer) configRefused() (int, []string) {
+	r.leaseMu.Lock()
+	defer r.leaseMu.Unlock()
+	n, classes := 0, map[string]bool{}
+	for _, ls := range r.leaseSessions {
+		if !ls.checked && ls.configRefused != "" {
+			n++
+			classes[ls.configRefused] = true
+		}
+	}
+	out := make([]string, 0, len(classes))
+	for c := range classes {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return n, out
+}
+
+// leaseRunVerdict is the lease run's own failure, after the run (nil without lease mode): sessions whose first call
+// that ran carried no start (not_lease), or that ran none after a configuration refusal (E17B-R42).
+func leaseRunVerdict(r *Replayer) error {
+	if r.cfg.Lease == nil {
+		return nil
+	}
+	if n := r.NotLeaseSessions(); n > 0 {
+		return fmt.Errorf("%d session(s) not_lease: the first call that ran an Exec carried no lease start event, so it ran outside a lease; this rung is not a lease measurement (a refused first call is first_refused, not judged)", n)
+	}
+	if n, classes := r.configRefused(); n > 0 {
+		return fmt.Errorf("%d session(s) ran no call after a configuration refusal (%s): the rung's mode, lease support or token binding is wrong, so it is not a lease measurement (load refusals are outcomes; these are not)", n, strings.Join(classes, ", "))
+	}
+	return nil
 }
 
 // beginLeaseSession registers the session (so the sweep covers it even if set_mode fails) and sends

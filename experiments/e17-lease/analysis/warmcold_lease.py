@@ -23,6 +23,11 @@ Per key, in log order (never re-ordered by timestamp):
     logs its exec line with an empty vm=, runner.go:74; reason no-vm) or a call that left no exec line
     (queue-full, not started; reason not-started). It is not a warm/cold reading and not unknown: the
     chain gate stops on unknown, and these are judged by lease_ends' criterion-3 refusal check.
+    They are counted by cause (failed_no_vm_by_cause: the driver's `refused` class, "other" when it recorded
+    none). A CONFIGURATION refusal (E17B-R42: stale-mode, lease-unsupported, permission-denied, req-id-in-flight)
+    in any row is counted apart (config_refusals): the rung's mode, lease support or token binding is wrong, and
+    the chain gate stops on it. Load refusals (memory-budget, host-memory, max-runs, queue-full, relay-busy) are
+    outcomes.
 The driver's own events (calls.jsonl `lease_events`) are a SECOND source (E17B-R9): a call with any
 event is cold, one with none is warm. A disagreement with the log is counted and listed, never
 resolved: the log's verdict stands, and `countable` is false unless there are none.
@@ -52,6 +57,8 @@ END_RE = re.compile(r'vmpool: lease end workspace_key="(?P<key>(?:[^"\\]|\\.)*)"
                     r'mode=(?P<mode>\S+) reason=(?P<reason>\S+)')
 SET_MODE_FAILED = "set_mode_failed"
 FAILED_NO_VM = "failed_no_vm"
+# driver exec.go configRefusal (E17B-R42)
+CONFIG_REFUSALS = ("stale-mode", "lease-unsupported", "permission-denied", "req-id-in-flight")
 
 
 def read_events(d):
@@ -105,7 +112,7 @@ def row(c, warm, vm, prev_vm, reason, in_lease=None):
             "observed_ms": c.get("observed_ms"), "status": c.get("status"),
             "in_window": bool(c.get("in_window")), "warm": warm, "vm": vm, "prev_vm": prev_vm,
             "cold_reason": reason, "in_lease": in_lease, "first_lease": bool(c.get("first_lease")),
-            "driver": driver_verdict(c)}
+            "driver": driver_verdict(c), "refused": c.get("refused") or None}
 
 
 def tag_key(calls, seq):
@@ -185,6 +192,9 @@ def join(rung_dir):
         "unknown_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] == "unknown"),
         "failed_no_vm": sum(r["warm"] == FAILED_NO_VM for r in gated),
         "failed_no_vm_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] == FAILED_NO_VM),
+        "failed_no_vm_by_cause": W.count_by(r["refused"] or "other" for r in gated if r["warm"] == FAILED_NO_VM),
+        "config_refusals": sum(r["refused"] in CONFIG_REFUSALS for r in rows),
+        "config_refusals_by_cause": W.count_by(r["refused"] for r in rows if r["refused"] in CONFIG_REFUSALS),
         "cold_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] is False),
         "unknown_keys": unknown_keys,
         "disagreements": len(dis),

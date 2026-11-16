@@ -59,7 +59,7 @@ func TestDefaultPathUnchanged(t *testing.T) {
 			}
 			delete(m, f)
 		}
-		for _, f := range []string{"lease_events", "first_lease", "first_refused", "not_lease", "stdout", "stdout_truncated", "tmpfs"} {
+		for _, f := range []string{"lease_events", "first_lease", "first_refused", "not_lease", "refused", "stdout", "stdout_truncated", "tmpfs"} {
 			if _, ok := m[f]; ok {
 				t.Fatalf("opt-in field %s present with the modes off: %s", f, line)
 			}
@@ -851,5 +851,74 @@ func TestLeaseModeFlags(t *testing.T) {
 		if code := realMain(append(append([]string{}, base...), c.extra...), func(string) string { return "" }, &buf); code != 2 || !strings.Contains(buf.String(), c.want) {
 			t.Fatalf("%s: exit %d, want 2 with %q: %s", name, code, c.want, buf.String())
 		}
+	}
+}
+
+// E17B-R42 (PR #34 fix round 2): a session that ends without one call that ran, having seen a CONFIGURATION
+// refusal (stale mode, lease-unsupported, the relay's permission and req_id_in_flight refusals), is a broken rung,
+// not a load outcome: the driver exits non-zero. Load refusals (memory-budget, host-memory, max-runs, queue-full,
+// relay-busy) stay outcomes. Every lease row with a refusal records its class in `refused`.
+func TestConfigRefusedSessionFailsTheRun(t *testing.T) {
+	cases := []struct {
+		name      string
+		inErr     string
+		status    error
+		ranAfter  bool // the third call runs and starts the lease
+		wantCount int
+		wantClass string
+	}{
+		{name: "stale-mode every call", inErr: "stale-mode: Exec mode_epoch 0 is below the stored 1", wantCount: 1, wantClass: "stale-mode"},
+		{name: "lease_unsupported every call", inErr: "lease_unsupported: this worker has no lease mode", wantCount: 1, wantClass: "lease-unsupported"},
+		{name: "permission denied every call", status: status.Error(codes.PermissionDenied, "exec not permitted: sandbox_id is not this token's worker"), wantCount: 1, wantClass: "permission-denied"},
+		{name: "req_id in flight every call", status: status.Error(codes.AlreadyExists, "req_id 3 already in flight for this sandbox"), wantCount: 1, wantClass: "req-id-in-flight"},
+		{name: "config refusal then a run", inErr: "stale-mode: refused", ranAfter: true, wantCount: 0, wantClass: "stale-mode"},
+		{name: "memory-budget every call (load)", inErr: "memory-budget: over the budget", wantCount: 0, wantClass: "memory-budget"},
+		{name: "queue-full every call (load)", inErr: "busy: queue full", wantCount: 0, wantClass: "queue-full"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, lr := newLeaseRelay(t)
+			refused := func(n int) bool { return !tc.ranAfter || n < 2 }
+			lr.execEvents = func(key string, n int) []*pb.LeaseEvent {
+				if !refused(n) {
+					return []*pb.LeaseEvent{startEvent(1000)}
+				}
+				return nil
+			}
+			lr.execError = func(key string, n int) string {
+				if refused(n) {
+					return tc.inErr
+				}
+				return ""
+			}
+			lr.execFail = func(key string, n int) error {
+				if refused(n) {
+					return tc.status
+				}
+				return nil
+			}
+			cfg := leaseCfg()
+			cfg.MaxSessions = 1
+			res, _, r := leaseRun(t, cfg, []Session{sess("s", "u", 20, "q", "q", "q")}, testLib(nil, "q"), client)
+			if res.err != nil || len(res.calls) != 3 {
+				t.Fatalf("err %v, %d calls", res.err, len(res.calls))
+			}
+			if got := r.ConfigRefusedSessions(); got != tc.wantCount {
+				t.Fatalf("ConfigRefusedSessions %d, want %d", got, tc.wantCount)
+			}
+			err := leaseRunVerdict(r)
+			if (err != nil) != (tc.wantCount > 0) {
+				t.Fatalf("leaseRunVerdict %v, want an error %v", err, tc.wantCount > 0)
+			}
+			if err != nil && !strings.Contains(err.Error(), tc.wantClass) {
+				t.Fatalf("the error does not name the cause %s: %v", tc.wantClass, err)
+			}
+			if c0 := res.calls[0]; c0.Refused != tc.wantClass || !c0.FirstRefused {
+				t.Fatalf("call 0 %+v: want refused %s, first_refused", c0, tc.wantClass)
+			}
+			if tc.ranAfter && res.calls[2].Refused != "" {
+				t.Fatalf("a call that ran records no refusal: %+v", res.calls[2])
+			}
+		})
 	}
 }

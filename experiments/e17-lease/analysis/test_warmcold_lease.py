@@ -358,3 +358,37 @@ def test_ok_call_with_no_vm_stays_unknown(tmp_path):
     rows, s = WL.join(rung(tmp_path, calls, log))
     assert tags(rows)[("A", 2)] == ("unknown", "no-vm")
     assert s["unknown"] == 1 and s["failed_no_vm"] == 0
+
+
+# E17B-R42 (PR #34 fix round 2): the driver records each refused call's class (`refused`). failed_no_vm rows are
+# counted by that cause; a configuration cause (stale-mode, lease-unsupported, permission-denied, req-id-in-flight)
+# in any row is counted apart, and the chain gate stops on it. Load causes stay outcomes.
+def test_failed_no_vm_rows_are_counted_by_refusal_cause(tmp_path):
+    log = first() + [exec_line("A", "", req=2, err="memory-budget: x"), exec_line("A", "", req=3, err="stale-mode: x"),
+                     exec_line("A", "vm-1", req=4)]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]),
+             call("A", 2, status="err", cause="exec_error", msg="memory-budget: x", refused="memory-budget"),
+             call("A", 3, status="err", cause="exec_error", msg="stale-mode: x", refused="stale-mode"),
+             call("A", 4)]
+    rows, s = WL.join(rung(tmp_path, calls, log))
+    assert s["failed_no_vm"] == 2 and s["failed_no_vm_by_cause"] == {"memory-budget": 1, "stale-mode": 1}
+    assert s["config_refusals"] == 1 and s["config_refusals_by_cause"] == {"stale-mode": 1}
+    assert {r["call"]: r["refused"] for r in rows} == {1: None, 2: "memory-budget", 3: "stale-mode", 4: None}
+
+
+def test_config_refusal_on_a_first_refused_row_counts(tmp_path):
+    # a session refused on every call (no exec line with a vm): every row failed_no_vm, all of them config refusals
+    log = [exec_line("B", "", req=i, err="lease-unsupported: x") for i in (1, 2)]
+    calls = [call("B", i, status="err", cause="exec_error", msg="lease-unsupported: x", refused="lease-unsupported",
+                  first_refused=True) for i in (1, 2)]
+    _, s = WL.join(rung(tmp_path, calls, log))
+    assert s["config_refusals"] == 2 and s["failed_no_vm_by_cause"] == {"lease-unsupported": 2}
+    assert s["unknown"] == 0
+
+
+def test_failed_no_vm_without_a_recorded_cause_is_other(tmp_path):
+    log = first() + [exec_line("A", "", req=2, err="spawn-failure: x")]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]),
+             call("A", 2, status="err", cause="exec_error", msg="spawn-failure: x")]
+    _, s = WL.join(rung(tmp_path, calls, log))
+    assert s["failed_no_vm_by_cause"] == {"other": 1} and s["config_refusals"] == 0

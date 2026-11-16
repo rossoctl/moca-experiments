@@ -36,7 +36,8 @@
 # aborted, or a non-zero driver exit without a record.json (a memory-watchdog abort is a host verdict, not a failure);
 # any stops the chain. Then every rung it wrote for a ship-* arm is analysed (Task 14 Step 5): warmcold_lease.py, lease_ends.py,
 # freed_from_shmem.py (its shmem.json, E17B-R22) and vm_age_lease.py. The chain stops there for the user on: an unknown call (an ok
-# call the join could not place; failed_no_vm calls -- refusals, queue-full -- are a NOTE, E17B-R35), a source disagreement, warmcold
+# call the join could not place; failed_no_vm calls -- refusals, queue-full -- are a NOTE naming their causes, E17B-R35), a
+# configuration refusal in any row (stale-mode, lease-unsupported, permission-denied, req-id-in-flight; E17B-R42), a source disagreement, warmcold
 # valid false, an unmatched lease end, lease_ends valid false or criterion4_pass false (null, no lease ended, does not
 # stop), vm_age_lease mapping_valid false, or an analysis failure. After a measured stage (not "-"),
 # latency_report.py runs over every rung the stage wrote, to $L/<stage>.latency/ (informational: not a stop).
@@ -364,6 +365,9 @@ if w.get("unknown"):
     why.append("%d unknown call(s)" % w["unknown"])
 if w.get("disagreements"):
     why.append("%d source disagreement(s)" % w["disagreements"])
+if w.get("config_refusals"):  # E17B-R42: the rung's mode, lease support or token binding is wrong, not its load
+    why.append("%d configuration refusal(s) %s" % (w["config_refusals"],
+                                                    json.dumps(w.get("config_refusals_by_cause") or {}, sort_keys=True)))
 if w.get("valid") is False:
     why.append("warmcold-report valid false")
 un = (e.get("notices") or {}).get("unmatched_ends") or []
@@ -385,7 +389,8 @@ PY
     # E17B-R35: failed calls that ran in no VM (refusals, queue-full, not started) are reported, not a stop: lease_ends'
     # criterion-3 refusal check judges them (a refusal while an idle lease existed fails criterion 3 there).
     note=$(python3 -c 'import json,sys; w=json.load(open(sys.argv[1] + "/warmcold-report.json")); n=w.get("failed_no_vm") or 0
-print("%d failed_no_vm call(s) %s" % (n, json.dumps(w.get("failed_no_vm_by_reason") or {}, sort_keys=True)) if n else "")' "$d" 2>/dev/null) || note=""
+print("%d failed_no_vm call(s) %s by cause %s" % (n, json.dumps(w.get("failed_no_vm_by_reason") or {}, sort_keys=True),
+                                                  json.dumps(w.get("failed_no_vm_by_cause") or {}, sort_keys=True)) if n else "")' "$d" 2>/dev/null) || note=""
     [ -z "$note" ] || echo "E17B $STAGE NOTE ${d#"$E15_RUNS"/}: $note (reported, not a stop: criterion 3's refusal check judges them)"
   done < <(find "$E15_RUNS" -name params.json -newer "$marker" 2>/dev/null | sort)
   return "$rc"

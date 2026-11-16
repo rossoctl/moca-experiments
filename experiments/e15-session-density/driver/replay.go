@@ -553,6 +553,10 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 		// Whatever the call's outcome: a notice acknowledged on the stream is consumed even if the
 		// call then failed.
 		rec.LeaseEvents = ls.fresh(res.events)
+		rec.Refused = res.refused
+		if configRefusal(res.refused) && ls.configRefused == "" {
+			ls.configRefused = res.refused
+		}
 		if !ls.checked {
 			// E17B-R30: judge the session's first call that RAN an Exec. A refusal (memory-budget,
 			// host-memory, max-runs, busy; stale mode, lease-unsupported, the relay's permission and

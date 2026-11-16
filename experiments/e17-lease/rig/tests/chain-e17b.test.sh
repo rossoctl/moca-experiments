@@ -92,8 +92,11 @@ for k in rung ladder baseline smoke ownwalk; do mkstub "$k"; done
 cat >"$TMP/an/warmcold_lease.py" <<'PY'
 import json, os, sys
 fnv = int(os.environ.get("STUB_FNV", "0"))
+cfg = os.environ.get("STUB_CFG", "")  # a configuration refusal cause on every failed_no_vm row (E17B-R42)
 json.dump({"unknown": int(os.environ.get("STUB_UNKNOWN", "0")), "disagreements": int(os.environ.get("STUB_DIS", "0")),
            "failed_no_vm": fnv, "failed_no_vm_by_reason": {"no-vm": fnv} if fnv else {},
+           "failed_no_vm_by_cause": {(cfg or "memory-budget"): fnv} if fnv else {},
+           "config_refusals": fnv if cfg else 0, "config_refusals_by_cause": {cfg: fnv} if cfg and fnv else {},
            "valid": os.environ.get("STUB_WC_VALID", "1") == "1"}, open(sys.argv[1] + "/warmcold-report.json", "w"))
 print("warm 1 cold 1 unknown %s" % os.environ.get("STUB_UNKNOWN", "0"))
 open(os.environ["ALOG"], "a").write("warmcold_lease %s\n" % sys.argv[1])
@@ -255,8 +258,14 @@ test_chain_analysis_gate() {
     "$(chain STUB_UNKNOWN=2 -- --from lat-pycache-ship-300-n1 --to lat-pycache-low-sbx-n1)/$(grep -c 'STOP pycache/ship-300/N1-lat: 2 unknown call(s)' "$TMP/c.out")/$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open)/$(grep -c . "$CLOG")" \
     "1/1/open/1"
   check "gate (E17B-R35): failed_no_vm calls are reported (a NOTE naming the count and reasons), not a stop; the stage is done" \
-    "$(chain STUB_FNV=3 -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c 'NOTE pycache/ship-300/N1-lat: 3 failed_no_vm call(s) {"no-vm": 3}' "$TMP/c.out")/$(grep -c STOP "$TMP/c.out")/$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open)" \
+    "$(chain STUB_FNV=3 -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c 'NOTE pycache/ship-300/N1-lat: 3 failed_no_vm call(s) {"no-vm": 3} by cause {"memory-budget": 3}' "$TMP/c.out")/$(grep -c STOP "$TMP/c.out")/$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open)" \
     "0/1/0/done"
+  local c out=""
+  for c in stale-mode lease-unsupported permission-denied req-id-in-flight; do
+    out+="$c=$(chain STUB_FNV=2 STUB_CFG=$c -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1):$(grep -c "STOP pycache/ship-300/N1-lat: 2 configuration refusal(s) {\"$c\": 2}" "$TMP/c.out"):$([ -f "$T/e17b/lat-pycache-ship-300-n1.done" ] && echo "done" || echo open) "
+  done
+  check "gate (E17B-R42): a configuration refusal cause in any row stops the stage, naming the cause" \
+    "$out" "stale-mode=1:1:open lease-unsupported=1:1:open permission-denied=1:1:open req-id-in-flight=1:1:open "
   check "gate: no failed_no_vm call, no NOTE" \
     "$(chain -- --from lat-pycache-ship-300-n1 --to lat-pycache-ship-300-n1)/$(grep -c 'failed_no_vm' "$TMP/c.out")" "0/0"
   check "gate: an unmatched lease end stops it too" \

@@ -108,6 +108,17 @@ func refusalOf(code codes.Code, msg string) string {
 	return ""
 }
 
+// configRefusal reports whether a refusalOf class is a CONFIGURATION refusal (E17B-R42): the mode, the token's
+// binding or the request itself is wrong, so every later call of the session will be refused the same way. The
+// others (memory-budget, host-memory, max-runs, queue-full, relay-busy) are load outcomes.
+func configRefusal(class string) bool {
+	switch class {
+	case "stale-mode", "lease-unsupported", "permission-denied", "req-id-in-flight":
+		return true
+	}
+	return false
+}
+
 // statusRefusal is refusalOf for a gRPC error.
 func statusRefusal(err error) string {
 	st, _ := status.FromError(err)
