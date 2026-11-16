@@ -106,7 +106,7 @@ STAGES=(
   # budget there is MemoryMax - 8192 (E17B-R20); the host-MemAvailable reclaim trigger is not exercised by the squeeze.
   "base-squeeze-sbx|seal|baseline squeeze sbx"
   "base-squeeze-ship-300|seal|baseline squeeze ship-300"
-  "squeeze-ship-300|seal|squeeze-ladder squeeze ship-300 (budget = MemoryMax - 8192; the host-MemAvailable reclaim trigger is not exercised by the squeeze)"
+  "squeeze-ship-300|seal|squeeze-ladder squeeze ship-300|budget = MemoryMax - 8192 (E17B-R20); the host-MemAvailable reclaim trigger is not exercised by the squeeze"
   "squeeze-sbx|seal|squeeze-rung squeeze sbx"
   # Task 14 Step 4: the §7.4 probes (Task 11)
   "probe-overhead|seal|script probe-overhead.sh"
@@ -123,7 +123,7 @@ STAGES=(
   # MemoryMax (E17B_SQUEEZE256_MEMMAX_MB, from its own short climb), sbx at its climb's stop N
   "ram256-base-squeeze-sbx|seal|baseline256 squeeze-256 sbx"
   "ram256-base-squeeze-ship-300|seal|baseline256 squeeze-256 ship-300"
-  "ram256-squeeze-ship-300|seal|squeeze-ladder squeeze-256 ship-300 (budget = MemoryMax - 8192)"
+  "ram256-squeeze-ship-300|seal|squeeze-ladder squeeze-256 ship-300|budget = MemoryMax - 8192 (its own E17B_SQUEEZE256_MEMMAX_MB)"
   "ram256-squeeze-sbx|seal|squeeze-rung squeeze-256 sbx"
 )
 
@@ -136,9 +136,15 @@ s_needs() {
   local r=${1#*|}
   printf '%s' "${r%%|*}"
 }
-s_cmd() {
+s_cmd() { # the third field: the command (an optional fourth field is a note, never part of the command)
   local r=${1#*|}
-  printf '%s' "${r#*|}"
+  r=${r#*|}
+  printf '%s' "${r%%|*}"
+}
+s_note() { # the optional fourth field, shown by --list only
+  local r=${1#*|}
+  r=${r#*|}
+  case "$r" in *"|"*) printf '%s' "${r#*|}" ;; esac
 }
 stage_index() { # NAME -> its index, or return 1
   local i
@@ -191,7 +197,7 @@ if [ "$LIST" = 1 ]; then
   echo "E17B stages (predictions: $(seal_state)); needs: - before the seal, seal, opt (E17B_OPTIONAL=1)"
   for st in "${STAGES[@]}"; do
     n=$(s_name "$st")
-    printf '%-32s %-5s %-5s %s\n' "$n" "$(s_needs "$st")" "$([ -f "$L/$n.done" ] && echo "done" || echo -)" "$(s_cmd "$st")"
+    printf '%-32s %-5s %-5s %s%s\n' "$n" "$(s_needs "$st")" "$([ -f "$L/$n.done" ] && echo "done" || echo -)" "$(s_cmd "$st")" "$(n2=$(s_note "$st"); [ -n "$n2" ] && printf '  # %s' "$n2")"
   done
   exit 0
 fi

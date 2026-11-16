@@ -198,6 +198,8 @@ test_chain_squeeze_stages() {
   reset
   seal true
   check "squeeze: the stage list says the host-MemAvailable reclaim trigger is not exercised" "$(chain -- --list)/$(grep -c 'host-MemAvailable reclaim trigger is not exercised' "$TMP/c.out")" "0/1"
+  check "squeeze: the note is shown after the command, never inside it" \
+    "$(chain -- --list)/$(grep -c 'squeeze-ladder squeeze ship-300  # budget' "$TMP/c.out")" "0/1"
   check "squeeze: the climb without E17B_SQUEEZE_MEMMAX_MB fails, naming it" \
     "$(chain -- --from squeeze-ship-300 --to squeeze-ship-300)/$(grep -c 'needs E17B_SQUEEZE_MEMMAX_MB' "$T/e17b/squeeze-ship-300.log")/$(grep -c . "$CLOG")" "1/1/0"
   check "squeeze: the climb is ladder.sh squeeze ship-300 under the value, then sbx runs once at its stop N under the same" \
