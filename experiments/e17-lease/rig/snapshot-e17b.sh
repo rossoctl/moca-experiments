@@ -120,7 +120,15 @@ prepare_kernel() {
   e15_fetch "$E15_KERNEL_URL" "$E15_KERNEL_SHA256" "$KERNEL"
 }
 
-# prepare_tree TREE: setup.sh step 7's fresh-metal rootfs, byte for byte the same recipe.
+# E17B_ROOTFS_REQUIRE: the tools build-rootfs.sh checks the image for (its --require; ruling E17B-R43). moca's own
+# default list (deploy/microvm/build-rootfs.sh REQUIRED_TOOLS) includes gh, which E15's pinned benchmark image never
+# shipped, so the default refuses it ("gh there refuses every benchmark image"). The E17b guest must keep E15/E17a's
+# userland (Python 3.9, the cp39 wheels), and the pycache workload never calls gh: so the list is moca's minus gh. The
+# snapshot's manifest still records the capabilities the guest really has.
+E17B_ROOTFS_REQUIRE="bash git rg python3 base64 file ls cat"
+
+# prepare_tree TREE: setup.sh step 7's fresh-metal rootfs, the same recipe (build-rootfs.sh at the E17b pin with
+# --require E17B_ROOTFS_REQUIRE).
 prepare_tree() {
   local tree=$1 src_digest sp w
   log "rootfs: $E15_MOCA/deploy/microvm/build-rootfs.sh over $E15_SANDBOX_IMAGE + pytest wheels (log $E15_LOGS/build-rootfs-$LEAF.log)"
@@ -128,6 +136,7 @@ prepare_tree() {
     die "podman pull $E15_SANDBOX_IMAGE failed; see $E15_LOGS/podman-pull-sandbox-$LEAF.log"
   sudo -n env CONTAINERS_STORAGE_CONF="$E15_PODMAN_CONF" PATH="$(e15_path)" \
     bash "$E15_MOCA/deploy/microvm/build-rootfs.sh" --out "$tree" --image "$E15_SANDBOX_IMAGE" \
+    --require "$E17B_ROOTFS_REQUIRE" \
     >"$E15_LOGS/build-rootfs-$LEAF.log" 2>&1 || die "build-rootfs.sh failed; see $E15_LOGS/build-rootfs-$LEAF.log"
   src_digest=$(sudo -n sed -n 's/^digest=//p' "$tree/etc/moca-rootfs-source")
   case "$src_digest" in

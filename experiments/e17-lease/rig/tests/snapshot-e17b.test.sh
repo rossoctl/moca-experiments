@@ -74,7 +74,10 @@ gate() { run_in 'leaf_new_ok "$T_LEAF" "$T_RAM"' T_LEAF="$1" T_RAM="$2" >"$TMP/g
 # --- 1. the leaf-path guard ------------------------------------------------------------------
 for bad in "e15" "" "../x" "a/b" "e17b-$P8-1024/.." "e17b-$P8-512" "e17b-$P8-" "e17b-deadbeef-1024" "E17B-ABCDEF12-1024" \
   "e17b-${P8}0-1024" "e17b-${P8:0:7}-1024" "x-e17b-$P8-1024" "e17b-$P8-1024x" "$SNAP/e17b-$P8-1024" ".."; do
-  check "guard refuses leaf '$bad'" "$(gate "$bad" 1024)" "refused"
+  check "rootfs --require is moca's tool list minus gh (E17B-R43: E15's benchmark image never shipped gh)" \
+  "$(sed -n 's/^E17B_ROOTFS_REQUIRE="\(.*\)"$/\1/p' "$SCRIPT")/$(grep -c -- '--require "\$E17B_ROOTFS_REQUIRE"' "$SCRIPT")" \
+  "bash git rg python3 base64 file ls cat/1"
+check "guard refuses leaf '$bad'" "$(gate "$bad" 1024)" "refused"
 done
 check "guard refuses the right name with the wrong --ram-mb (1024 vs 256)" "$(gate "e17b-$P8-1024" 256)" "refused"
 check "guard refuses the right name with the wrong --ram-mb (256 vs 1024)" "$(gate "e17b-$P8-256" 1024)" "refused"
