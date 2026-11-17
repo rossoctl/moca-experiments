@@ -1,0 +1,262 @@
+{
+  "status": "DRAFT",
+  "sealed": false,
+  "spec": "experiments/e17-lease/SPEC.md v0.6",
+  "section": "7.5",
+  "recordedAt": "2026-11-17",
+  "codeCommit": null,
+  "note": "E17b predictions (PLAN-E17B Task 13), drafted from the Task 12 calibration at moca c3adf490 on the AWS rig: N=1 baselines + class probes at default and pycache for sbx and ship-300 (chain stages cal-*, ended 2026-11-17T12:41:57Z), the lease KVM gates (TestGateLease 56/0/0 on e17b-c3adf490-1024), the ownership-walk smoke at 10000 files and the 256 MiB tmpfs smoke. To be reviewed and sealed with the user before the first measured E17b rung (Task 14). Criteria 1-4 are judged on SPEC 7.5's fixed bars by verdict.py; criterion 5's thresholds are sealed here (criterion5_thresholds, E17B-R29).",
+  "calibration": {
+    "host": "AWS m7i.metal-24xl, 96 vCPU, 377 GiB, /srv/e15 XFS reflink, profile fresh-metal",
+    "moca_commit": "c3adf4909df48aa9d167d366ee95278b3aff87ff",
+    "moca_experiments_commit": "4bb4fb658b98104859d8c07f46d5e9770384b3ac",
+    "snapshots": {
+      "e17b-c3adf490-1024": "sha256:c5b804f2d4d56ca7e1f397243ba431eb3b803b5de1bfa6b0ea72621852d9b170",
+      "e17b-c3adf490-256": "44a71893",
+      "features": [
+        "lease-v1",
+        "lease-processes-v1",
+        "balloon-fpr-v1"
+      ],
+      "kernel_release": "6.18.44+ (CONFIG_PAGE_REPORTING and virtio_balloon free-page reporting present)"
+    },
+    "driver_bin_sha256": "af058bb0f4710769af186322629aca44fc5aa2456717340c22b37f9f3831ebfd",
+    "corpus_sha256_default": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+    "corpus_sha256_pycache": "864b0b56519cfeb1b03ea82a7d6aa16ffc7147fc59c3ba60b2edba02f72dd864",
+    "corpus_sha256_pycache_low": "07dbecd258f13d7d5adaf6211df3be4bce8b43bdc3ba0418965a1f9705584adc",
+    "library_sha256_default": "3c8251383a81239366d5e9c4781af747f4c67cb18b75dc93de4db7045cce7b5f",
+    "library_sha256_pycache": "9eebb729909e71777d4d78bb926312f9f91106a82ddd6682d83dcd36c08fbc98",
+    "template_pycache": "template-pycache-d256 afe883b9 (D = 256 MiB)",
+    "worker_profile": "ship-* arms: lease=on, standby depth 2 (E17B-R44), lease_start 192 MiB, lease_headroom 1.25, lease_pagecache 256 MiB",
+    "baseline_p95_ms": {
+      "default": {
+        "sbx": 117.2,
+        "ship-300": 27.2
+      },
+      "pycache": {
+        "sbx": 2515.6,
+        "ship-300": 72.1
+      }
+    },
+    "latency_n1_seeded": {
+      "_": "pycache, seeds 1-4 pooled, in-window ok calls; gain = 1 - ship-300 warm median / sbx median (latency_report.py)",
+      "py_short": {
+        "sbx_ms": 55,
+        "warm_ms": 8,
+        "gain": 0.86,
+        "warm_n": 11
+      },
+      "py_import": {
+        "sbx_ms": 944,
+        "warm_ms": 501,
+        "gain": 0.47,
+        "warm_n": 4
+      },
+      "py_grep": {
+        "sbx_ms": 400,
+        "warm_ms": 200,
+        "gain": 0.5,
+        "warm_n": 4
+      },
+      "py_analyze": {
+        "sbx_ms": 17118,
+        "warm_ms": 14626,
+        "gain": 0.15,
+        "warm_n": 5
+      },
+      "py_test": {
+        "sbx_ms": 63305,
+        "warm_ms": 60925,
+        "gain": 0.04,
+        "warm_n": 3
+      },
+      "warm_share_ship_300": 0.931
+    },
+    "latency_n1_probes": {
+      "_": "20 back-to-back calls per class in one session (the first call is the lease's first, excluded from warm)",
+      "py_short": {
+        "sbx_ms": 48,
+        "warm_ms": 7,
+        "gain": 0.86
+      },
+      "py_import": {
+        "sbx_ms": 757,
+        "warm_ms": 460,
+        "gain": 0.39
+      },
+      "py_grep": {
+        "sbx_ms": 395,
+        "warm_ms": 114,
+        "gain": 0.71
+      },
+      "py_analyze": {
+        "sbx_ms": 15282,
+        "warm_ms": 14669,
+        "gain": 0.04
+      },
+      "py_test": {
+        "sbx_ms": 61441,
+        "warm_ms": 61254,
+        "gain": 0.0
+      },
+      "e17a_resident_patch_warm_ms": {
+        "py_short": 5,
+        "py_import": 453,
+        "py_grep": 112
+      }
+    },
+    "level1_overhead": {
+      "_": "overhead_compare.py: default probe class medians, ship-300 (this calibration) minus the E15 metal resident-300 N=1 baseline (the resident patch)",
+      "median_per_class_added_ms": 2.8,
+      "per_class_range_ms": [
+        -28.3,
+        18.5
+      ],
+      "classes": 17,
+      "weighted_overhead_difference_ms": -7.1
+    },
+    "memory_pycache_n1": {
+      "_": "vm_age_lease.py on ship-300 seeds 1-4 (mapping_valid on all four)",
+      "lease_vms": 10,
+      "lease_vms_peak_above_90_pct": 6,
+      "absolute_readings_15s": 13,
+      "pinned_readings_15s": 11,
+      "pinned_share": 0.85,
+      "judged_relative_readings": 0,
+      "py_analyze_charge_mib": "start ~60 on a fresh lease; peak 1064-1312; +15 s 912-1261: free-page reporting returns 100-250 MiB of a ~1 GiB growth",
+      "idle_charge_mib": "the longest-lived lease VM (s4 vm-4, 1411 samples) holds 1048-1115 MiB through 20 minutes, idle gaps included",
+      "replacement_first_py_grep": [
+        {
+          "seed": 2,
+          "ms": 1352,
+          "sbx_median_ms": 1536,
+          "ratio": 0.88
+        },
+        {
+          "seed": 3,
+          "ms": 252,
+          "sbx_median_ms": 402,
+          "ratio": 0.63
+        }
+      ],
+      "first_turn_shmem_kb": "0 (one sample; R24 stands: first turns are not judged)"
+    },
+    "memory_default_n1": "vm_age_lease.py on ship-300 seeds 1-5: 16 lease VMs, none peaks above 50% of guest RAM, no absolute reading (no heavy Exec)",
+    "ownwalk_smoke": {
+      "files": 10000,
+      "repeats": 5,
+      "valid": true,
+      "median_a_ms": 176.3,
+      "median_b_ms": 86.3,
+      "median_walk_ms": 88.5,
+      "template_build_s": "< 5"
+    },
+    "smoke_256": {
+      "_": "N=1, pycache-d64 (D=64), E17B_GUEST_RAM_MB=256 on e17b-c3adf490-256, 60 s warm-up + 600 s window, tag smoke256; session 0 of the corpus (not tmpfs-flagged)",
+      "ship-300": "py_analyze 0 of 3 ok: first call timeout:136 (thrash), then exit 137 twice (the lease Exec cap: MemTotal - max(64 MiB, MemTotal/8), ~166 MiB); py_test, py_import, py_grep, py_short, py_shmem all ok",
+      "sbx": "py_analyze 0 of 3 ok: exit 137 each time (~4.5 s), VMs peak at 256 MiB; every other class ok",
+      "reading": "the workload's py_analyze does not fit a 256 MiB guest in either arm, tmpfs or not; it is not a lease effect. The tmpfs-flagged 256 MiB check was not reached (session 0 is unflagged) and is moot while py_analyze OOMs"
+    },
+    "priors": {
+      "e15_metal_default_n_max": {
+        "sbx": 80,
+        "resident-300": 128,
+        "first_failed": {
+          "sbx": "96, added_latency",
+          "resident-300": "160, added_latency"
+        }
+      },
+      "e17a_warm_share_from_corpus": {
+        "lease-30": 0.6,
+        "lease-120": 0.85,
+        "lease-300": 0.91
+      },
+      "e17a_fpr_probe": "2026-11-12 on this host: a 700 MiB anonymous guest allocation is returned after exit with free-page reporting (734 -> 81 MiB at +15 s); without the balloon it stays at 734 MiB"
+    }
+  },
+  "criterion5_thresholds": {
+    "_": "SPEC 7.5 criterion 5, applied in Task 15 to verdict.json criteria.5 (pycache, ship rungs pooled; pycache-d64 reported apart)",
+    "first_half": "PASS iff first_half.pooled.share_true >= 0.50 (judged heavy Execs, growth >= 64 MiB, E17B-R29) AND first_half.pooled.pinned_share <= 0.50 (absolute +15 s readings at >= 0.9 of guest RAM)",
+    "second_half": "PASS iff second_half.ratio_to_sbx_max <= 1.5 (every ship rung's replacement-lease median first py_grep within 1.5x of the same rung's sbx median py_grep; E17a was ~5x: ~2 s against 388 ms)",
+    "missing": "a half with no judged reading (share_true or pinned_share null, or no ratio) is null, not a pass"
+  },
+  "predictions": [
+    {
+      "id": 1,
+      "claim": "SPEC 7.5 criterion 2 HOLDS at pycache, N=1 and N=128: ship-300's warm py_short gain against sbx is in [0.75, 0.95] and its warm py_import gain in [0.30, 0.50]. Reported, not gated: py_grep in [0.30, 0.80], py_analyze in [-0.05, 0.20], py_test in [-0.05, 0.10].",
+      "metric": "verdict.json criteria.2 gated gains (latency_report.py over the N1-lat / N128-lat rungs, point pycache, ship-300 vs sbx); groups for the reported classes",
+      "falsifiedBy": "py_short gain outside [0.75, 0.95] or py_import gain outside [0.30, 0.50] at N=1 or at N=128 (criterion 2 itself fails below 0.50 / 0.30)",
+      "note": "Calibration: seeded 0.86 / 0.47 (warm n 11 / 4), probes 0.86 / 0.39, the same as E17a's resident patch (0.89-0.90 / 0.40-0.42). py_import's probe gain is 0.09 above its bar. py_grep moved from E17a's -0.02 (seeded) to 0.50 here; whether it holds at N=128 is the open part (reported only)."
+    },
+    {
+      "id": 2,
+      "claim": "SPEC 7.5 criterion 1 HOLDS at point default: sbx N_max in [64, 96], ship-300 N_max in [96, 160], and ship-300 >= sbx by at least one ladder step.",
+      "metric": "RUNS/default/{sbx,ship-300}/ladder.json n_max (primary verdict, E15 8 / E16 7.1 rules); verdict.json criteria.1",
+      "falsifiedBy": "either n_max outside its range, or ship-300 n_max < sbx n_max + one ladder step",
+      "note": "E15 metal: sbx 80, resident-300 128, both stopped by p95 added latency, not memory. At default no lease VM grows past 50% of guest RAM (calibration), and level 1 adds ~3 ms (prediction 6), so ship-300 is expected to track resident-300. Ship arms carry 2 standbys (E17B-R44); sbx is re-run at the new pin rather than reusing E15's 80."
+    },
+    {
+      "id": 3,
+      "claim": "Warm share at pycache follows the idle timeout: ship-30 in [0.50, 0.70], ship-120 in [0.78, 0.90], ship-300 in [0.86, 0.96]; ship-30's first-call-after-idle py_short median is at or above sbx's py_short median.",
+      "metric": "latency_report.py warm_share and first_after_idle per arm, point pycache, N=128 (ship-30, ship-120) and N=1 / N=128 (ship-300)",
+      "falsifiedBy": "a warm share outside its range, or ship-30's first-after-idle py_short median below sbx's py_short median",
+      "note": "E17a's corpus shares: 0.60 / 0.85 / 0.91; this calibration's ship-300 seeded share is 0.931. A first call after idle pays a restore plus the ownership walk (the one cold py_short in calibration: 98 ms against sbx's 55 ms)."
+    },
+    {
+      "id": 4,
+      "claim": "SPEC 7.5 criterion 5, first half, FAILS at pycache: a lease VM's charge does not fall back toward its working set after a heavy command. Pooled pinned_share in [0.60, 1.00]; pooled share_true <= 0.25; at least half the ship-300 lease VMs peak above 900 MiB (guest RAM 1024 MiB), at N=1 and N=128. At default no lease VM peaks above 50% of guest RAM.",
+      "metric": "verdict.json criteria.5 first_half.pooled (share_true, pinned_share); vm_age_lease.json share_above per rung (pycache and default)",
+      "falsifiedBy": "pooled pinned_share < 0.60, or pooled share_true > 0.25, or fewer than half the pycache ship-300 lease VMs above 900 MiB, or any default lease VM above 50%",
+      "note": "Calibration: 11 of 13 +15 s readings pinned (0.85), 6 of 10 lease VMs above 90%; py_analyze grows a fresh lease from ~60 MiB to 1.06-1.31 GiB and +15 s later it holds 0.91-1.26 GiB, also through 20 minutes of idle. Free-page reporting works on this kernel (E17a's probe: 734 -> 81 MiB for anonymous memory), so the residue is cache: the guest's page cache (dataset, venv) and the host page cache of the workspace image charged to the VM's cgroup (readings above guest RAM). No free-page report returns either. No relative reading was judged in calibration (all first turns or tmpfs-flagged sessions)."
+    },
+    {
+      "id": 5,
+      "claim": "SPEC 7.5 criterion 5, second half, HOLDS at pycache: a lease VM that replaces one ended by the idle timeout reads its workspace from the host page cache; every ship rung's replacement median first py_grep is within 1.5x of its sbx median py_grep (predicted ratio in [0.4, 1.2]).",
+      "metric": "verdict.json criteria.5 second_half ratio_to_sbx_max / ratio_to_sbx_min (vm_age_lease.py --sbx)",
+      "falsifiedBy": "ratio_to_sbx_max > 1.2 or ratio_to_sbx_min < 0.4 (criterion 5's second half itself fails above 1.5)",
+      "note": "Calibration: two replacement leases with a first py_grep, ratio 0.88 and 0.63 (E17a: ~5x). SH_LEASE_PAGECACHE_MB=256 headroom is the decision-18 mechanism. n is small; N=128 gives many more."
+    },
+    {
+      "id": 6,
+      "claim": "Level 1's end-of-Exec kill, fresh shell and privilege drop add a median of [0, 20] ms per Exec at N=1 over the resident patch on the default probe classes.",
+      "metric": "probe-overhead stage: overhead_compare.py median of the per-class added latency (ship-300 minus E15 metal resident-300 N=1 baseline)",
+      "falsifiedBy": "a median per-class added latency outside [0, 20] ms",
+      "note": "Calibration 2.8 ms over 17 classes (per class -28 to +18 ms). E17a's sealed prior, [2, 50] ms, is reported against the same number. Warm py_short at pycache: 7 ms against the resident patch's 5 ms."
+    },
+    {
+      "id": 7,
+      "claim": "SPEC 7.5 criterion 3 HOLDS at squeeze (and squeeze-256 when it runs): zero memory-guard events, zero memory-budget or host-memory refusals while an idle lease existed, every reclaim takes the idle-longest lease, and at least one reclaim happens.",
+      "metric": "verdict.json criteria.3 (lease_ends.json per climb rung, squeeze_rule.py)",
+      "falsifiedBy": "any guard event, any such refusal with an idle lease, any wrong / unknown / victim_executing reclaim, or no reclaim at the point",
+      "note": "TestGateLease (reclaim order, budget admission, retired cgroups) passed 56/0/0 at the pin. The squeeze budget is MemoryMax - 8192 (E17B-R20); the host-MemAvailable trigger is not exercised."
+    },
+    {
+      "id": 8,
+      "claim": "SPEC 7.5 criterion 4 HOLDS: every lease end on every ship rung has exactly one matching notice (r16_met true).",
+      "metric": "verdict.json criteria.4 (lease_ends.json criterion4_pass and valid, E17B-R16)",
+      "falsifiedBy": "any ship rung with criterion4_pass false or invalid",
+      "note": "Calibration and smoke ship rungs: no unmatched end."
+    },
+    {
+      "id": 9,
+      "claim": "The first-lease ownership walk grows about linearly with file count: median A - B in [50, 150] ms at 10000 files, [0.4, 1.5] s at 100000, [2, 8] s at 500000.",
+      "metric": "ownwalk stage: ownwalk.json median_walk_ms per size (5 repeats, A - B, inferred from the worker code, not observed: E17B-R28)",
+      "falsifiedBy": "a median outside its range, or a size whose repeats are not valid",
+      "note": "Smoke at 10000 files: 88 ms (A 176, B 86; 5/5 valid; ~8.8 us per file). The template build took < 5 s at 10000, so 500000 is not expected to hit ownwalk.sh's 25-minute skip."
+    },
+    {
+      "id": 10,
+      "claim": "The driver stays under 1% of host CPU on every E17b rung.",
+      "metric": "driver-cpu.jsonl per rung: driver CPU / (96 vCPU x window)",
+      "falsifiedBy": "any rung with driver CPU >= 1% of host CPU",
+      "note": "E15 and E16 held this to N=1536 on this host with the same driver lineage; E17b's largest rung is N=128 plus the ladders."
+    }
+  ],
+  "open_for_the_seal": [
+    "Criterion 5's first half is predicted to FAIL (prediction 4). Free-page reporting returns freed anonymous memory, but a heavy command's growth here is mostly page cache (guest and host-side), which it never returns. Options: keep the bar as sealed above and let the rungs record the miss (recommended; the spec's wording is 'falls back toward its working set'), or decide now that cache counts as working set and judge only anonymous memory, which needs a guest reading the analysis does not have.",
+    "Design input, whatever the verdict: for a lease's charge to follow its working set, something must drop the guest's clean page cache on idle (e.g. drop_caches or a balloon inflate before reporting) and the workspace image's host cache must not stay charged to the VM's cgroup.",
+    "py_import's calibrated gain (0.39 probes, 0.47 seeded on 4 warm calls) sits close to the 0.30 bar; N=128 contention could push it under.",
+    "Criterion 5's second-half bar (1.5x) is new, set here between the host-page-cache case (~1x) and E17a's cold case (~5x).",
+    "The 256 MiB stages (ram256-*: pycache-d64 N=1 both arms, the squeeze-256 baselines, climb and sbx rung) cannot measure what they were for: py_analyze is OOM-killed in a 256 MiB guest in BOTH arms (calibration.smoke_256), so every heavy turn fails, criterion 5's d64 reading has no heavy Exec, and a squeeze-256 climb stops on failed calls, not on memory. Options: (a) cut the ram256 stages from E17b and record the limit (recommended: they are reported-only, criteria 1-5 do not depend on them, saves ~3 rig h); (b) run them as is and report the OOMs; (c) build a 256-specific library with a smaller py_analyze (new workload + calibration, ~half a day)."
+  ]
+}
