@@ -1,10 +1,10 @@
 {
-  "status": "DRAFT",
-  "sealed": false,
+  "status": "SEALED",
+  "sealed": true,
   "spec": "experiments/e17-lease/SPEC.md v0.6",
   "section": "7.5",
   "recordedAt": "2026-11-17",
-  "codeCommit": null,
+  "codeCommit": "46cd283",
   "note": "E17b predictions (PLAN-E17B Task 13), drafted from the Task 12 calibration at moca c3adf490 on the AWS rig: N=1 baselines + class probes at default and pycache for sbx and ship-300 (chain stages cal-*, ended 2026-11-17T12:41:57Z), the lease KVM gates (TestGateLease 56/0/0 on e17b-c3adf490-1024), the ownership-walk smoke at 10000 files and the 256 MiB tmpfs smoke. To be reviewed and sealed with the user before the first measured E17b rung (Task 14). Criteria 1-4 are judged on SPEC 7.5's fixed bars by verdict.py; criterion 5's thresholds are sealed here (criterion5_thresholds, E17B-R29).",
   "calibration": {
     "host": "AWS m7i.metal-24xl, 96 vCPU, 377 GiB, /srv/e15 XFS reflink, profile fresh-metal",
@@ -258,5 +258,7 @@
     "py_import's calibrated gain (0.39 probes, 0.47 seeded on 4 warm calls) sits close to the 0.30 bar; N=128 contention could push it under.",
     "Criterion 5's second-half bar (1.5x) is new, set here between the host-page-cache case (~1x) and E17a's cold case (~5x).",
     "The 256 MiB stages (ram256-*: pycache-d64 N=1 both arms, the squeeze-256 baselines, climb and sbx rung) cannot measure what they were for: py_analyze is OOM-killed in a 256 MiB guest in BOTH arms (calibration.smoke_256), so every heavy turn fails, criterion 5's d64 reading has no heavy Exec, and a squeeze-256 climb stops on failed calls, not on memory. Options: (a) cut the ram256 stages from E17b and record the limit (recommended: they are reported-only, criteria 1-5 do not depend on them, saves ~3 rig h); (b) run them as is and report the OOMs; (c) build a 256-specific library with a smaller py_analyze (new workload + calibration, ~half a day)."
-  ]
+  ],
+  "sealedAt": "2026-11-17T13:25:43Z",
+  "sealNote": "Sealed on the user's go-ahead (2026-11-17, 'go ahead with the recommendation'), before any measured E17b rung. Decisions at the seal: (1) criterion 5's first-half bar stays as written (criterion5_thresholds) and the rungs record the predicted miss; cache is not counted as working set. (2) The second-half bar is 1.5x sbx's median py_grep. (3) The ram256 stages are cut (ruling E17B-R45: needs kind ram256, run only with E17B_RAM256=1); pycache-d64 is not measured, and verdict.py's reported d64 reading stays empty. (4) Predictions 1-10 as drafted. The optional ship-30/ship-120 default ladders stay off (E17B_OPTIONAL unset) unless the user asks."
 }
