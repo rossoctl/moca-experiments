@@ -310,6 +310,13 @@
       "by": "user",
       "what": "criterion 2's N=1 half pools the pycache N=1 baseline seeds (N1-s1..s4, the calibration) with N1-lat; N=128 is judged on N128-lat alone; the class probes are reported beside it",
       "why": "the sealed N1-lat rung (one session, seed 1, 900 s window) holds a single in-window call (py_analyze) in both arms, so it cannot measure warm py_short or py_import; E17a judged its N=1 parts on the calibration; the user chose no re-runs to keep the v0.11.0 schedule"
+    },
+    {
+      "id": "E17B-R53",
+      "at": "2026-11-18",
+      "by": "controller",
+      "what": "vm_age_lease.py resolves restores logged in the same second from the samples (adjacent swaps kept only if every sample is then explained; listed in same_second_reorders); otherwise the mapping stays invalid",
+      "why": "N128-lat ship-300 stopped the chain on mapping_valid false: vm-232 and vm-233 restored in the same second, logged in the other order than their cgroup names were issued; an analysis limit, not a measurement change"
     }
   ]
 }

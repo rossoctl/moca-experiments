@@ -491,3 +491,27 @@ def test_imports_from_the_rig_staged_layout(tmp_path):
     out = subprocess.run([sys.executable, str(src / "e17" / "analysis" / "vm_age_lease.py"), "--help"],
                          capture_output=True, text=True, env={"PATH": os.environ.get("PATH", "")})
     assert out.returncode == 0, out.stderr
+
+
+def test_same_second_restores_are_resolved_from_the_samples(tmp_path):
+    # E17B-R53: vm-2 and vm-3 restore in the same second; vm-3's line is logged first, but the allocator gave
+    # vm-2 pool-0 and vm-3 pool-1 (the samples). Log order alone puts vm-2 on pool-1 and leaves pool-1's samples
+    # after vm-2's end with no live VM; the swap of the two same-second restores is consistent with every sample.
+    log = [restore(1, "vm-3"), restore(1, "vm-2"), lstart(1, "B", "vm-3"), lstart(1, "A", "vm-2"),
+           destroy(20, "vm-2"), destroy(40, "vm-3")]
+    mem = lambda t: dict(([("pool-0", 50 * MIB)] if 1 <= t < 20 else []) + ([("pool-1", 70 * MIB)] if 1 <= t < 40 else []))
+    r = L.analyse(rung(tmp_path, log, mem, t_end=60))
+    assert r["mapping_valid"], r["mapping_reasons"]
+    assert r["same_second_reorders"] == [{"vms": ["vm-3", "vm-2"], "at": float(T0 + 1)}]
+    assert {v["id"]: v["cgroup"] for v in r["vms"]} == {"vm-2": "pool-0", "vm-3": "pool-1"}
+
+
+def test_same_second_swap_that_does_not_explain_the_samples_stays_invalid(tmp_path):
+    # the same two restores, but a sample in a cgroup no order explains (pool-7): nothing is accepted
+    log = [restore(1, "vm-3"), restore(1, "vm-2"), lstart(1, "B", "vm-3"), lstart(1, "A", "vm-2"),
+           destroy(20, "vm-2"), destroy(40, "vm-3")]
+    mem = lambda t: dict(([("pool-0", 50 * MIB)] if 1 <= t < 20 else []) + ([("pool-1", 70 * MIB)] if 1 <= t < 40 else [])
+                         + ([("pool-7", 1)] if t == 30 else []))
+    r = L.analyse(rung(tmp_path, log, mem, t_end=60))
+    assert r["mapping_valid"] is False and r["same_second_reorders"] == []
+    assert r["vms"] is None

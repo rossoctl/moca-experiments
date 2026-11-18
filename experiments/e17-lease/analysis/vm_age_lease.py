@@ -29,6 +29,11 @@ result is mapping_valid=false with the extra reason `lease_start_failed_without_
 invisible in the log, and caught only the same way: a failed restore (its cgroup is released with no
 restore line) and a leaked cgroup (never reissued).
 
+SAME-SECOND RESTORES (E17B-R53). Two restores logged in the same whole second are in the order they finished, which
+need not be the order the allocator issued their names. When the samples then show a cgroup holding no live VM, the
+replay swaps adjacent same-second restores, one at a time and only when the swap lowers that count, and keeps the
+result only when every sample is explained (`same_second_reorders` lists the swaps); otherwise nothing changes.
+
 MAPPING VALIDITY. `mapping_valid` is false, with `mapping_reasons`, when: a vm id is restored twice, a
 destroy or a lease start or an Exec line names a vm with no restore (zero cgroups), a sampled cgroup
 holds no live VM per the replay (samples.jsonl `vm_mem`, beyond a 2 s tolerance for the log's
@@ -178,6 +183,34 @@ def vm_table_lease(events, retired_ids, started=None):
     return vms, problems, recycled
 
 
+def resolve_same_second(events, retired, started, d, samples):
+    """E17B-R53: restores logged in the same whole second are in log order, which need not be the order the
+    allocator issued their cgroup names (two concurrent restores: the one that finishes first logs first). When
+    the replay leaves samples in a cgroup that holds no live VM, swap ADJACENT restore events that share a second,
+    keeping a swap only when it lowers that count, until none is left or no swap helps. Returns (events, swaps
+    [(vm, vm, epoch)]); the caller accepts the result only when nothing is left unattributed."""
+    def unatt_count(evs):
+        vms, _, _ = vm_table_lease([(k, v) for _, k, v in evs], retired, started)
+        _, _, un, _ = attribute(d, vms, [t for t, _, _ in evs], set(), samples)
+        return len(un)
+    best, swaps = list(events), []
+    cur = unatt_count(best)
+    while cur:
+        improved = False
+        for i in range(len(best) - 1):
+            a, b = best[i], best[i + 1]
+            if a[1] == b[1] == "restore" and a[0] == b[0]:
+                cand = best[:i] + [b, a] + best[i + 2:]
+                n = unatt_count(cand)
+                if n < cur:
+                    best, cur, improved = cand, n, True
+                    swaps.append((a[2], b[2], a[0]))
+                    break
+        if not improved:
+            break
+    return best, swaps
+
+
 def _nearest(series, t, tol):
     """Value of the sample of [(ts, val)] (sorted) closest to t, within tol; else None."""
     i = bisect.bisect_left(series, (t,))
@@ -189,10 +222,10 @@ def _nearest(series, t, tol):
     return None if best is None else best[1]
 
 
-def attribute(d, vms, times, keep):
+def attribute(d, vms, times, keep, samples=None):
     """Attribute each sample of each cgroup name to the VM that held the name then.
     Returns (obs {vm id: [(ts, val)]} for the VMs in `keep` only, seen {vm id: number of samples},
-    unattributed [(ts, name)], sample_ts sorted)."""
+    unattributed [(ts, name)], sample_ts sorted). `samples` (pre-read rows) saves re-reading samples.jsonl."""
     by_name = {}
     for v in vms:
         by_name.setdefault(v["name"], []).append(v)
@@ -202,7 +235,7 @@ def attribute(d, vms, times, keep):
     obs = {i: [] for i in keep}
     seen = {v["id"]: 0 for v in vms}
     unatt, rows = [], []
-    for r in V.read_samples(d):
+    for r in (V.read_samples(d) if samples is None else samples):
         ts = r.get("ts")
         if ts is None:
             continue
@@ -408,9 +441,20 @@ def analyse(d, sbx_median_ms=None, shmem=None, guest_ram_mib=None):
     except SystemExit as e:
         out["mapping_reasons"].append(str(e))
         return out
+    samples = list(V.read_samples(d))
     vms, problems, recycled = vm_table_lease([(k, v) for _, k, v in events], retired, started)
     times = [t for t, _, _ in events]
-    obs, seen, unatt, sample_ts = attribute(d, vms, times, {v["id"] for v in vms if v["lease"]})
+    obs, seen, unatt, sample_ts = attribute(d, vms, times, {v["id"] for v in vms if v["lease"]}, samples)
+    out["same_second_reorders"] = []
+    if unatt and not problems:
+        ev2, swaps = resolve_same_second(events, retired, started, d, samples)
+        vms2, problems2, recycled2 = vm_table_lease([(k, v) for _, k, v in ev2], retired, started)
+        times2 = [t for t, _, _ in ev2]
+        obs2, seen2, unatt2, ts2 = attribute(d, vms2, times2, {v["id"] for v in vms2 if v["lease"]}, samples)
+        if swaps and not unatt2 and not problems2:
+            events, vms, recycled, times = ev2, vms2, recycled2, times2
+            obs, seen, unatt, sample_ts = obs2, seen2, unatt2, ts2
+            out["same_second_reorders"] = [{"vms": [a, b], "at": t} for a, b, t in swaps]
     reasons = list(problems)
     known = {v["id"] for v in vms}
     for ev in WL.read_events(d).values():
