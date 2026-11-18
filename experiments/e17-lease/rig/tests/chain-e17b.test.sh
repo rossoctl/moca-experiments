@@ -219,7 +219,7 @@ test_chain_resumes_at_stage() {
   reset
   check "resume: a full sealed run goes stage by stage in the list's order (to the squeeze climb)" \
     "$(chain E17B_SQUEEZE_MEMMAX_MB=8192 -- --to squeeze-ship-300)/$(calls)" \
-    "0/${BRINGUP}baseline pycache-low sbx;baseline pycache-low ship-300;baseline pycache ship-30;baseline pycache ship-120;rung sbx 1 pycache;rung ship-300 1 pycache;rung sbx 1 pycache-low;rung ship-300 1 pycache-low;rung sbx 128 pycache;rung ship-300 128 pycache;rung sbx 128 pycache-low;rung ship-300 128 pycache-low;rung ship-30 128 pycache;rung ship-120 128 pycache;ladder default sbx;ladder default ship-300;baseline squeeze sbx;baseline squeeze ship-300;ladder squeeze ship-300;"
+    "0/${BRINGUP}baseline pycache-low sbx;baseline pycache-low ship-300;baseline pycache ship-30;baseline pycache ship-120;rung sbx 1 pycache;rung ship-300 1 pycache;rung sbx 1 pycache-low;rung ship-300 1 pycache-low;rung sbx 128 pycache;rung ship-300 128 pycache;rung sbx 128 pycache-low;rung ship-300 128 pycache-low;rung ship-30 128 pycache;rung ship-120 128 pycache;ladder default sbx 56;ladder default ship-300 80;baseline squeeze sbx;baseline squeeze ship-300;ladder squeeze ship-300;"
   check "resume: rung stages are tagged lat; the caller's E15_TAG, E15_SQUEEZE_MEMMAX_MB and E17B_GUEST_RAM_MB never reach a stage" \
     "$(chain E15_TAG=evil E15_SQUEEZE_MEMMAX_MB=1 E17B_GUEST_RAM_MB=256 -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(sed 's/.* tag=//' "$CLOG")" "0/lat memmax=unset e17b=1 ram=unset"
 }

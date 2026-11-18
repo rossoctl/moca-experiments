@@ -136,8 +136,10 @@ STAGES=(
   "lat-pycache-ship-30-n128|seal|rung ship-30 128 pycache"
   "lat-pycache-ship-120-n128|seal|rung ship-120 128 pycache"
   # Task 14 Step 2: capacity ladders at default, both arms at the new pin
-  "ladder-default-sbx|seal|ladder default sbx"
-  "ladder-default-ship-300|seal|ladder default ship-300"
+  # E17B-R50 (user, 2026-11-18): each starts two ladder steps below E15 metal's default N_max (sbx 80, resident-300
+  # 128), as E15 SPEC 10.3 does for its other points; the rungs below are assumed held (ladder.json says so)
+  "ladder-default-sbx|seal|ladder default sbx 56"
+  "ladder-default-ship-300|seal|ladder default ship-300 80"
   # Task 14 Step 3: squeeze (its own baselines, then the ship-300 climb, then sbx at its stop N). Every arm's committed
   # budget there is MemoryMax - 8192 (E17B-R20); the host-MemAvailable reclaim trigger is not exercised by the squeeze.
   "base-squeeze-sbx|seal|baseline squeeze sbx"
@@ -448,9 +450,9 @@ run_cmd() {
     preflight "$3" "$1"
     E17B_GUEST_RAM_MB=256 E15_TAG=ram256 bash "$RUNG" "$1" "$2" "$3"
     ;;
-  ladder)
+  ladder) # POINT ARM [START_N]
     preflight "$1" "$2"
-    bash "$LADDER" "$1" "$2"
+    bash "$LADDER" "$1" "$2" ${3:+"$3"}
     ;;
   baseline256)
     preflight "$1" "$2"

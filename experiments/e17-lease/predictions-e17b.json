@@ -289,6 +289,13 @@
       "by": "user",
       "what": "criterion 3's memory-guard events are judged WITHOUT memory_high (the squeezed e15.slice's memory.high): memory_floor, OOM kills and host_memory refusals only; memory_high is reported per rung and in total",
       "why": "decided before the climb's data: 5-7.5 GiB of page cache from destroyed VMs' cgroups sits in the slice outside every live VM and outside the worker's budget, and reaches memory.high at a tight squeeze (19 events in the 16384 check, no OOM, no wrong reclaim); production slices are MemoryMax=infinity, so the event cannot occur there"
+    },
+    {
+      "id": "E17B-R50",
+      "at": "2026-11-18",
+      "by": "user",
+      "what": "the default ladders start two ladder steps below E15 metal's default N_max: sbx at N=56 (E15: 80), ship-300 at N=80 (E15 resident-300: 128); rungs below are assumed held (ladder.json records it), as E15 SPEC 10.3 does for its other points",
+      "why": "footprint-drift repeats roughly double rung time; saves ~8-9 rig hours so criterion 1 lands on 2026-11-18 for the v0.11.0 release; risk: a regression at the new pin below the start N goes unseen"
     }
   ]
 }
