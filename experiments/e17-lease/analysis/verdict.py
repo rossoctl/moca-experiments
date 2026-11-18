@@ -17,7 +17,9 @@ and nothing already fails. Criterion 5 keeps `pass` null until its thresholds ar
   2  ship-300's warm gain against sbx at pycache, N=1 and N=128: py_short >= 0.50 and py_import >= 0.30
      (gain = 1 - warm median / sbx median, latency_report.py).
   3  At each squeeze point whose climb ran (squeeze is required; squeeze-256 is judged when it ran), over the
-     climb's rungs: zero guard events (each rung's criterion3_guards_pass true), zero refusals while an idle lease
+     climb's rungs: zero guard events (memory_floor, OOM kills and host_memory refusals: lease_ends guards total
+     less memory_high, ruling E17B-R49; memory_high, the squeezed slice's memory.high, is reported, not judged), zero
+     refusals while an idle lease
      existed (memory-budget and host-memory, none unclassified), no wrong / unknown / victim_executing reclaim, and
      at least one reclaim at the point (E17B-R39: else false, "no reclaim happened", when every rung of the climb
      was read and valid). A rung without lease_ends.json, invalid, or with its guard or refusal reading unavailable
@@ -173,7 +175,7 @@ def reclaim(root, rungs):
             continue
         inputs.append(lp)
         rows, unread = [], 0
-        tot = {"guards": 0, "refusals_with_idle_lease": 0, "host_memory_with_idle_lease": 0, "reclaims": 0,
+        tot = {"guards": 0, "memory_high": 0, "refusals_with_idle_lease": 0, "host_memory_with_idle_lease": 0, "reclaims": 0,
                "wrong": 0, "unknown": 0, "victim_executing": 0}
         for sr in sq.get("rungs") or []:
             d = resolve(root, point, "ship-300", sr.get("dir"))
@@ -188,14 +190,22 @@ def reclaim(root, rungs):
                 continue
             inputs.append(ep)
             ref, rec = e.get("refusals") or {}, e.get("reclaim") or {}
-            row.update(guards=(e.get("guards") or {}).get("total"), guards_pass=e.get("criterion3_guards_pass"),
+            g = e.get("guards") or {}
+            # E17B-R49 (user, 2026-11-18): memory_high is the squeezed e15.slice's memory.high, reached by page cache
+            # that destroyed VMs' cgroups leave in the slice (the worker's budget does not see it; production slices
+            # are MemoryMax=infinity). Reported, not judged: the judged guards are total - memory_high.
+            judged_guards = None if g.get("total") is None else int(g["total"]) - int(g.get("memory_high") or 0)
+            guards_pass = None if not g.get("available") else judged_guards == 0
+            row.update(guards=judged_guards, memory_high=g.get("memory_high"), guards_pass=guards_pass,
+                       lease_ends_guards_pass=e.get("criterion3_guards_pass"),
                        refusals_with_idle_lease=ref.get("with_idle_lease"),
                        host_memory_with_idle_lease=ref.get("host_memory_with_idle_lease"),
                        refusals_unclassified=len(ref.get("unclassified") or []),
                        refusals_pass=e.get("criterion3_refusals_pass"), reclaims=rec.get("total"),
                        wrong=rec.get("wrong"), unknown=rec.get("unknown"), order_pass=e.get("criterion3_order_pass"),
                        valid=e.get("valid"))
-            for k, src in (("guards", row["guards"]), ("refusals_with_idle_lease", row["refusals_with_idle_lease"]),
+            for k, src in (("guards", row["guards"]), ("memory_high", row["memory_high"]),
+                           ("refusals_with_idle_lease", row["refusals_with_idle_lease"]),
                            ("host_memory_with_idle_lease", row["host_memory_with_idle_lease"]),
                            ("reclaims", rec.get("total")), ("wrong", rec.get("wrong")),
                            ("unknown", rec.get("unknown")), ("victim_executing", rec.get("victim_executing"))):

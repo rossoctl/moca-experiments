@@ -260,5 +260,35 @@
     "The 256 MiB stages (ram256-*: pycache-d64 N=1 both arms, the squeeze-256 baselines, climb and sbx rung) cannot measure what they were for: py_analyze is OOM-killed in a 256 MiB guest in BOTH arms (calibration.smoke_256), so every heavy turn fails, criterion 5's d64 reading has no heavy Exec, and a squeeze-256 climb stops on failed calls, not on memory. Options: (a) cut the ram256 stages from E17b and record the limit (recommended: they are reported-only, criteria 1-5 do not depend on them, saves ~3 rig h); (b) run them as is and report the OOMs; (c) build a 256-specific library with a smaller py_analyze (new workload + calibration, ~half a day)."
   ],
   "sealedAt": "2026-11-17T13:25:43Z",
-  "sealNote": "Sealed on the user's go-ahead (2026-11-17, 'go ahead with the recommendation'), before any measured E17b rung. Decisions at the seal: (1) criterion 5's first-half bar stays as written (criterion5_thresholds) and the rungs record the predicted miss; cache is not counted as working set. (2) The second-half bar is 1.5x sbx's median py_grep. (3) The ram256 stages are cut (ruling E17B-R45: needs kind ram256, run only with E17B_RAM256=1); pycache-d64 is not measured, and verdict.py's reported d64 reading stays empty. (4) Predictions 1-10 as drafted. The optional ship-30/ship-120 default ladders stay off (E17B_OPTIONAL unset) unless the user asks."
+  "sealNote": "Sealed on the user's go-ahead (2026-11-17, 'go ahead with the recommendation'), before any measured E17b rung. Decisions at the seal: (1) criterion 5's first-half bar stays as written (criterion5_thresholds) and the rungs record the predicted miss; cache is not counted as working set. (2) The second-half bar is 1.5x sbx's median py_grep. (3) The ram256 stages are cut (ruling E17B-R45: needs kind ram256, run only with E17B_RAM256=1); pycache-d64 is not measured, and verdict.py's reported d64 reading stays empty. (4) Predictions 1-10 as drafted. The optional ship-30/ship-120 default ladders stay off (E17B_OPTIONAL unset) unless the user asks.",
+  "deviations": [
+    {
+      "id": "E17B-R46",
+      "at": "2026-11-17",
+      "by": "user",
+      "what": "Task 14 stages reordered so the release-relevant criteria come first (squeeze, pycache latency, default ladders, probes, then the reported-only stages); same stages and commands",
+      "why": "moca v0.11.0 is due 2026-11-19"
+    },
+    {
+      "id": "E17B-R47",
+      "at": "2026-11-17",
+      "by": "controller",
+      "what": "pycache-low is not measured: its N=1 baseline is unattainable as specified (10 of 10 seeds empty_window at a 900 s window after a 1200 s warm-up); deferred to v0.12.0",
+      "why": "plan defect; no prediction or criterion uses pycache-low"
+    },
+    {
+      "id": "E17B-R48",
+      "at": "2026-11-18",
+      "by": "controller",
+      "what": "E17B_SQUEEZE_MEMMAX_MB = 24576, from three N=16 check rungs (24576, 20480, 16384; moved out of the runs)",
+      "why": "the only value with no memory.high in its check; reclaim every minute needs a higher N than 16 at any of the three"
+    },
+    {
+      "id": "E17B-R49",
+      "at": "2026-11-18",
+      "by": "user",
+      "what": "criterion 3's memory-guard events are judged WITHOUT memory_high (the squeezed e15.slice's memory.high): memory_floor, OOM kills and host_memory refusals only; memory_high is reported per rung and in total",
+      "why": "decided before the climb's data: 5-7.5 GiB of page cache from destroyed VMs' cgroups sits in the slice outside every live VM and outside the worker's budget, and reaches memory.high at a tight squeeze (19 events in the 16384 check, no OOM, no wrong reclaim); production slices are MemoryMax=infinity, so the event cannot occur there"
+    }
+  ]
 }
