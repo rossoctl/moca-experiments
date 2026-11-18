@@ -15,7 +15,9 @@
 # chain REFUSES to start (exit 1, each named) while any other stage-changing knob is set, even to "": the list is
 # STAGE_KNOBS below (everything lib.sh, rung.sh, ladder.sh, baseline.sh, classprobe.sh and sample.sh read from the
 # environment that changes a measurement, e.g. E15_RUNG, E15_MAX_COMMITTED_MB, E15_LADDER_EXTRA, as an E16 shell
-# leaves them). The operator's own inputs are E17B_OPTIONAL, E17B_RAM256, E17B_SQUEEZE_MEMMAX_MB, E17B_SQUEEZE256_MEMMAX_MB,
+# leaves them). The operator's own inputs are E17B_OPTIONAL, E17B_RAM256, E17B_SQUEEZE_START_N (E17B-R51: resume a
+# squeeze climb that a rig error stopped, at the rung that failed; its ladder.json is then assembled from both parts),
+# E17B_SQUEEZE_MEMMAX_MB, E17B_SQUEEZE256_MEMMAX_MB,
 # E17B_OVERHEAD_REF and E15_MANIFEST.
 #
 # THE SEAL. No measured rung runs before the predictions are sealed (spec §9): a stage marked "seal" runs only
@@ -433,6 +435,12 @@ sq_point() {
 run_cmd() {
   local kind=$1 n mm
   shift
+  # E17B-R51: the disk preflight's per-workspace estimate (lib.sh workspace_delta_kb: the template's allocated size
+  # less the dataset, 388 MiB at pycache-d768) refuses a squeeze N=24 repeat and the N=128 pycache rungs on this
+  # host's 300 GB; the measured cost is < 1 MiB per workspace (512 squeeze workspaces added 0.2 GiB; E17a: ~2 MiB).
+  # The chain sets 8 MiB for the pycache family and the squeeze points, as E17a's rungs ran. The operator still
+  # cannot set it (STAGE_KNOBS); run_cmd runs in a subshell, so the export is this stage's only.
+  case " $* " in *" pycache"* | *" squeeze"*) export E15_WS_DELTA_MB=8 ;; esac
   case "$kind" in
   smoke)
     preflight pycache sbx ship-30 ship-120 ship-300
@@ -462,7 +470,7 @@ run_cmd() {
     sq_point "$1"
     [ -n "$sq_mb" ] || die "the $1 climb needs $sq_var (MiB, from a first short climb: Task 14 Step 3)"
     preflight "$1" "$2"
-    env ${sq_ram:+E17B_GUEST_RAM_MB=$sq_ram} E15_SQUEEZE_MEMMAX_MB="$sq_mb" bash "$LADDER" "$1" "$2"
+    env ${sq_ram:+E17B_GUEST_RAM_MB=$sq_ram} E15_SQUEEZE_MEMMAX_MB="$sq_mb" bash "$LADDER" "$1" "$2" ${E17B_SQUEEZE_START_N:+"$E17B_SQUEEZE_START_N"}
     ;;
   squeeze-rung) # POINT ARM
     sq_point "$1"

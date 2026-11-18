@@ -296,6 +296,13 @@
       "by": "user",
       "what": "the default ladders start two ladder steps below E15 metal's default N_max: sbx at N=56 (E15: 80), ship-300 at N=80 (E15 resident-300: 128); rungs below are assumed held (ladder.json records it), as E15 SPEC 10.3 does for its other points",
       "why": "footprint-drift repeats roughly double rung time; saves ~8-9 rig hours so criterion 1 lands on 2026-11-18 for the v0.11.0 release; risk: a regression at the new pin below the start N goes unseen"
+    },
+    {
+      "id": "E17B-R51",
+      "at": "2026-11-18",
+      "by": "controller",
+      "what": "rig fixes after the squeeze climb's N=24 repeat was refused by the disk preflight (768 workspaces x the static 388 MiB estimate > 273 GiB free; measured < 1 MiB each): the chain sets E15_WS_DELTA_MB=8 at the pycache and squeeze points (as E17a ran); E17B_SQUEEZE_START_N resumes the climb at N=24, and its ladder.json is assembled from both parts (E15 metal precedent)",
+      "why": "a rig error, not a measurement change; without it the climb and the N=128 pycache rungs cannot run on this host"
     }
   ]
 }

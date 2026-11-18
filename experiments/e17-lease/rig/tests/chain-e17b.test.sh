@@ -65,6 +65,7 @@ mkstub() {
 #!/usr/bin/env bash
 line="$1 \$* tag=\${E15_TAG:-unset} memmax=\${E15_SQUEEZE_MEMMAX_MB:-unset} e17b=\${E17B:-unset} ram=\${E17B_GUEST_RAM_MB:-unset}"
 echo "\$line" >>"$CLOG"
+echo "$1 \$* ws=\${E15_WS_DELTA_MB:-unset}" >>"$TMP/ws.log"
 case "\$line" in "\${FAIL_ON:-NONE}"*) echo "stub failure: \$line" >&2; exit 1 ;; esac
 case "$1" in
 rung)
@@ -344,6 +345,18 @@ test_chain_preflight_and_guards() {
   echo '[1, 2]' >"$T/runs/pycache/sbx/N1-list/params.json"
   check "preflight: a check that fails (a params.json that is not an object) refuses the stage, not passes it" \
     "$(chain -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1)/$(grep -c 'preflight check failed' "$T/e17b/lat-pycache-sbx-n1.log")/$(grep -c . "$CLOG")" "1/1/0"
+  reset
+  : >"$TMP/ws.log"
+  chain E17B_SQUEEZE_MEMMAX_MB=8192 -- --from lat-pycache-sbx-n1 --to lat-pycache-sbx-n1 >/dev/null
+  chain -- --from ladder-default-sbx --to ladder-default-sbx >/dev/null
+  chain E17B_SQUEEZE_MEMMAX_MB=8192 -- --from squeeze-ship-300 --to squeeze-ship-300 >/dev/null
+  check "workspace delta (E17B-R51): 8 MiB at the pycache and squeeze points, unset at default" \
+    "$(tr '\n' ';' <"$TMP/ws.log")" \
+    "rung sbx 1 pycache ws=8;ladder default sbx 56 ws=unset;ladder squeeze ship-300 ws=8;"
+  reset
+  check "squeeze resume (E17B-R51): E17B_SQUEEZE_START_N is passed to the climb as its START_N" \
+    "$(chain E17B_SQUEEZE_MEMMAX_MB=8192 E17B_SQUEEZE_START_N=24 -- --from squeeze-ship-300 --to squeeze-ship-300)/$(cat "$CLOG")" \
+    "0/ladder squeeze ship-300 24 tag=unset memmax=8192 e17b=1 ram=unset"
   reset
   check "ram256 (E17B-R45): without E17B_RAM256=1 every ram256 stage is SKIPPED as cut, nothing run" \
     "$(chain -- --from ram256-pycache-sbx-n1 --to ram256-squeeze-sbx)/$(grep -c 'SKIP (cut, E17B-R45' "$TMP/c.out")/$(grep -c . "$CLOG")" "0/6/0"
