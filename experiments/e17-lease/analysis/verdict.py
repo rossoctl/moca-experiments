@@ -39,7 +39,8 @@ and nothing already fails. Criterion 5 keeps `pass` null until its thresholds ar
                and their totals; the sbx rungs there (tag sq) with their params memory_abort / oom_kills.
   4 notices    Every ship-* rung's lease_ends.json criterion4_pass and valid, combined by ruling E17B-R16: r16_met
                when no rung is false, every rung is valid (a ship rung without lease_ends.json is not), and at
-               least one rung is true. ended_after_sweep and live_at_stop totals reported (excluded by definition).
+               least one rung is true. ended_after_sweep, ended_by_run_cut (E17B-R54) and live_at_stop totals reported
+               (excluded by definition).
   5 memory     At pycache, every ship rung's vm_age_lease.json: first half the relative verdict (follows_true,
                follows_false, share_true, not_judged_low_growth; E17B-R29) and the absolute reading (pinned_share,
                pinned_share_of_judged, pinned_vm_share), per rung and pooled; second half each rung's
@@ -251,7 +252,7 @@ def reclaim(root, rungs):
 
 def notices(rungs):
     v = {"rungs": 0, "true": 0, "false": 0, "null": 0, "invalid": 0, "false_rungs": [], "invalid_rungs": [],
-         "ended_after_sweep": 0, "live_at_stop": 0, "r16_met": False,
+         "ended_after_sweep": 0, "ended_by_run_cut": 0, "live_at_stop": 0, "r16_met": False,
          "rule": "E17B-R16: met when no rung is false, every rung is valid, and at least one rung is true"}
     inputs, missing = [], []
     for r in rungs:
@@ -273,6 +274,7 @@ def notices(rungs):
             v["invalid_rungs"].append(r["dir"])
         n = e.get("notices") or {}
         v["ended_after_sweep"] += int(n.get("ended_after_sweep") or 0)
+        v["ended_by_run_cut"] += int(n.get("ended_by_run_cut") or 0)  # E17B-R54
         v["live_at_stop"] += int(n.get("live_at_stop") or 0)
     v["r16_met"] = v["false"] == 0 and v["invalid"] == 0 and not missing and v["true"] >= 1
     why = []

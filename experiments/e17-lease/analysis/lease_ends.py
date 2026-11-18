@@ -28,6 +28,11 @@ tolerance. Disagreements and anything unmatched are LISTED, never resolved (E17B
     time the status call was sent; the key was live then, so the end came later, even within the same log
     second) is `ended_after_sweep`: counted, listed, excluded from criterion 4 like live_at_stop. A key not
     live at the sweep, an end before the sweep second, or a tail row without swept_at_unix_ms stays unmatched.
+    ENDED BY THE RUN'S CUT (E17B-R54): at its end-of-run grace deadline the driver cuts the calls still running
+    (cause cut_at_end) and exits; a cut aborts the Exec, the worker ends a lease whose Exec ended without the guest's
+    answer as agent_dead (moca lease.go runLease), and no client is left to receive the notice. An unmatched end
+    line whose key's LAST call is cut_at_end, at or after the whole second that call was sent, is
+    `ended_by_run_cut`: counted, listed, excluded from criterion 4 like live_at_stop. Any other stays unmatched.
 (b) Reclaim order. Reference time: for each `memory_reclaim` end, the idle time of every lease alive at
     that log line is T - (that key's last Exec end at or before T+1 s), T being the end line's own
     whole-second timestamp. The ranking does not depend on a common reference, and measuring from the
@@ -182,7 +187,7 @@ def match_notices(log, calls, tails):
     out = {"ends_in_log": sum(len(v) for v in ends.values()), "paired": 0, "notices_seen": 0,
            "unmatched_ends": [], "unmatched_notices": [], "reason_mismatches": [], "duplicate_notices": [],
            "carryover_ends": carry, "live_at_stop": len(live), "live_at_stop_keys": live,
-           "ended_after_sweep": 0, "ended_after_sweep_ends": []}
+           "ended_after_sweep": 0, "ended_after_sweep_ends": [], "ended_by_run_cut": 0, "ended_by_run_cut_ends": []}
     for key in sorted(set(ends) | set(by_key) | set(tail_by_key)):
         notes, dups = key_notices(by_key.get(key, []), tail_by_key.get(key))
         for dd in dups:
@@ -195,15 +200,30 @@ def match_notices(log, calls, tails):
             if lines[i] != notes[i]:
                 out["reason_mismatches"].append({"key": key, "n": i + 1, "log": lines[i], "notice": notes[i]})
         swept = sweep_second(tail_by_key.get(key)) if key in live else None
+        cut = run_cut_second(by_key.get(key, []))
         for i in range(len(notes), len(lines)):
             ts = times[key][i]
-            if swept is not None and ts is not None and ts >= swept:
+            if cut is not None and i == len(lines) - 1 and ts is not None and ts >= cut:
+                out["ended_by_run_cut_ends"].append({"key": key, "n": i + 1, "reason": lines[i], "ts": ts})
+            elif swept is not None and ts is not None and ts >= swept:
                 out["ended_after_sweep_ends"].append({"key": key, "n": i + 1, "reason": lines[i], "ts": ts})
             else:
                 out["unmatched_ends"].append({"key": key, "n": i + 1, "reason": lines[i]})
         out["unmatched_notices"] += [{"key": key, "n": i + 1, "reason": notes[i]} for i in range(len(lines), len(notes))]
     out["ended_after_sweep"] = len(out["ended_after_sweep_ends"])
+    out["ended_by_run_cut"] = len(out["ended_by_run_cut_ends"])
     return out
+
+
+def run_cut_second(calls):
+    """The whole-second send time of a key's LAST call when the driver cut it at the end of the run (cause
+    cut_at_end), else None (E17B-R54)."""
+    if not calls:
+        return None
+    last = max(calls, key=lambda c: c.get("call") or 0)
+    if last.get("cause") != "cut_at_end" or not last.get("ts"):
+        return None
+    return float(calendar.timegm(time.strptime(last["ts"][:19], "%Y-%m-%dT%H:%M:%S")))
 
 
 def idle_times(candidates, spans, t, victim=None):
@@ -366,7 +386,8 @@ def analyse(d):
     guards = guard_events(samples, params, refusals)
     if why:
         c4 = False
-    elif notices["ends_in_log"] - notices["ended_after_sweep"] == 0 and notices["notices_seen"] == 0:
+    elif notices["ends_in_log"] - notices["ended_after_sweep"] - notices["ended_by_run_cut"] == 0 \
+            and notices["notices_seen"] == 0:
         c4 = None  # vacuous: no lease ended in this rung
     else:
         c4 = not (notices["unmatched_ends"] or notices["unmatched_notices"] or notices["reason_mismatches"])
@@ -393,10 +414,11 @@ def main(argv=None):
     with open(os.path.join(argv[0], "lease_ends.json"), "w") as f:
         json.dump(r, f, indent=2, sort_keys=True)
     n = r["notices"]
-    print("valid %s; ends %d paired %d unmatched %d+%d mismatched %d dup %d live_at_stop %d ended_after_sweep %d; "
-          "reclaim %d wrong %d unknown %d" % (
+    print("valid %s; ends %d paired %d unmatched %d+%d mismatched %d dup %d live_at_stop %d ended_after_sweep %d "
+          "ended_by_run_cut %d; reclaim %d wrong %d unknown %d" % (
         r["valid"], n["ends_in_log"], n["paired"], len(n["unmatched_ends"]), len(n["unmatched_notices"]),
         len(n["reason_mismatches"]), len(n["duplicate_notices"]), n["live_at_stop"], n["ended_after_sweep"],
+        n["ended_by_run_cut"],
         r["reclaim"]["total"], r["reclaim"]["wrong"], r["reclaim"]["unknown"]))
 
 

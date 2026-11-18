@@ -57,6 +57,10 @@ END_RE = re.compile(r'vmpool: lease end workspace_key="(?P<key>(?:[^"\\]|\\.)*)"
                     r'mode=(?P<mode>\S+) reason=(?P<reason>\S+)')
 SET_MODE_FAILED = "set_mode_failed"
 FAILED_NO_VM = "failed_no_vm"
+# E17B-R54: a call the driver cut at its end-of-run grace deadline (cause cut_at_end) whose Exec line follows its
+# lease's end: the cut aborted the Exec and the abort ended the lease (agent_dead). Not a warm/cold reading and not
+# unknown: counted apart, like failed_no_vm.
+CUT_AT_END = "cut_at_end"
 # driver exec.go configRefusal (E17B-R42)
 CONFIG_REFUSALS = ("stale-mode", "lease-unsupported", "permission-denied", "req-id-in-flight")
 
@@ -140,6 +144,8 @@ def tag_key(calls, seq):
         vm, live = mine[0]["vm"], mine[0]["live"]
         if not vm:
             rows.append(row(c, FAILED_NO_VM if failed else "unknown", None, prev_vm, "no-vm", live))
+        elif not live and c.get("cause") == CUT_AT_END:
+            rows.append(row(c, CUT_AT_END, vm, prev_vm, "cut-at-end", False))
         elif not live:
             rows.append(row(c, "unknown", vm, prev_vm, "no-live-lease", False))
         elif prev_vm is None:
@@ -191,6 +197,7 @@ def join(rung_dir):
                                     and r["warm"] != SET_MODE_FAILED),
         "unknown_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] == "unknown"),
         "failed_no_vm": sum(r["warm"] == FAILED_NO_VM for r in gated),
+        "cut_at_end": sum(r["warm"] == CUT_AT_END for r in gated),
         "failed_no_vm_by_reason": W.count_by(r["cold_reason"] for r in gated if r["warm"] == FAILED_NO_VM),
         "failed_no_vm_by_cause": W.count_by(r["refused"] or "other" for r in gated if r["warm"] == FAILED_NO_VM),
         "config_refusals": sum(r["refused"] in CONFIG_REFUSALS for r in rows),

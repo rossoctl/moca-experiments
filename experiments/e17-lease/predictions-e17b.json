@@ -317,6 +317,13 @@
       "by": "controller",
       "what": "vm_age_lease.py resolves restores logged in the same second from the samples (adjacent swaps kept only if every sample is then explained; listed in same_second_reorders); otherwise the mapping stays invalid",
       "why": "N128-lat ship-300 stopped the chain on mapping_valid false: vm-232 and vm-233 restored in the same second, logged in the other order than their cgroup names were issued; an analysis limit, not a measurement change"
+    },
+    {
+      "id": "E17B-R54",
+      "at": "2026-11-18",
+      "by": "controller",
+      "what": "lease ends caused by the driver's end-of-run cut are excluded from criterion 4 like live_at_stop and ended_after_sweep (ended_by_run_cut: an unmatched end whose key's last call is cut_at_end, at or after its send second); the cut call itself is tagged cut_at_end, not unknown, in the warm/cold join",
+      "why": "default ship-300 N96/N128 stopped the chain: at the end-of-run grace deadline the driver cut 3 long in-flight commands and exited; each abort ended its lease agent_dead (moca lease.go, by design for an Exec ended without the guest's answer) with no client left to notify. All 3 agent_dead ends of E17b lie within 1 s of their worker's stop; none mid-run"
     }
   ]
 }

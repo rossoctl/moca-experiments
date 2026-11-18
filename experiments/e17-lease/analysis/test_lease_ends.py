@@ -583,3 +583,32 @@ def test_host_memory_refusals_are_guard_events_whether_or_not_a_lease_was_idle()
     g = r["guards"]
     assert g["host_memory"] == 3 and g["total"] == 3 and r["criterion3_guards_pass"] is False
     assert r["criterion3_refusals_pass"] is True  # no idle lease: the refusal check itself passes
+
+
+# ---- E17B-R54: a lease ended by the driver's end-of-run cut ----
+
+def run_cut_rung(tmp_path, end_at, cut_at=100.2, last_cause="cut_at_end", name="cut"):
+    """Key a: its last call (sent cut_at s after BASE) is cut at the run's end; the lease ends agent_dead at log
+    second end_at with no notice. Key b: one paired idle end."""
+    d = tmp_path / name
+    d.mkdir()
+    return rung(d, log=[start_line("a", "vm-1", ts=logts(0)), start_line("b", "vm-2", ts=logts(0)),
+                        end_line("b", "vm-2", "idle", ts=logts(40)), end_line("a", "vm-1", "agent_dead", ts=logts(end_at))],
+                calls=[call("a", 1, 0), call("a", 2, cut_at, status="err", cause=last_cause), call("b", 1, 0)],
+                tails=[tail("a"), tail("b", "none", {"state": "end", "reason": "idle", "at_unix_ms": 1})])
+
+
+def test_end_after_the_run_cut_is_ended_by_run_cut(tmp_path):
+    r = run(run_cut_rung(tmp_path, end_at=730))
+    n = r["notices"]
+    assert n["ended_by_run_cut"] == 1 and n["unmatched_ends"] == []
+    assert n["ended_by_run_cut_ends"] == [{"key": "a", "n": 1, "reason": "agent_dead", "ts": BASE + 730}]
+    assert r["criterion4_pass"] is True and r["valid"]
+
+
+def test_end_before_the_cut_or_without_a_cut_stays_unmatched(tmp_path):
+    for name, kw in (("before", dict(end_at=99, cut_at=100.2)), ("nocut", dict(end_at=730, last_cause=""))):
+        r = run(run_cut_rung(tmp_path, name=name, **kw))
+        assert r["notices"]["ended_by_run_cut"] == 0, name
+        assert r["notices"]["unmatched_ends"] == [{"key": "a", "n": 1, "reason": "agent_dead"}], name
+        assert r["criterion4_pass"] is False, name

@@ -392,3 +392,21 @@ def test_failed_no_vm_without_a_recorded_cause_is_other(tmp_path):
              call("A", 2, status="err", cause="exec_error", msg="spawn-failure: x")]
     _, s = WL.join(rung(tmp_path, calls, log))
     assert s["failed_no_vm_by_cause"] == {"other": 1} and s["config_refusals"] == 0
+
+
+def test_call_cut_at_the_run_end_after_its_lease_ended_is_cut_at_end_not_unknown(tmp_path):
+    # E17B-R54: the driver cut call 2 at its end-of-run deadline; the abort ended the lease (agent_dead) before the
+    # Exec's own line. Counted apart, never warm/cold, and not unknown (the gate stops on unknown).
+    log = first() + [exec_line("A", "vm-1", req=2), end_line("A", "vm-1", "agent_dead"),
+                     exec_line("A", "vm-1", req=3, err="vmpool: aborted")]
+    calls = [call("A", 1, first_lease=True, lease_events=[ev("start")]), call("A", 2),
+             call("A", 3, status="err", cause="cut_at_end")]
+    rows, s = WL.join(rung(tmp_path, calls, log))
+    t = tags(rows)
+    assert t[("A", 3)] == ("cut_at_end", "cut-at-end")
+    assert s["unknown"] == 0 and s["cut_at_end"] == 1
+    # the same call without the driver's cut cause stays unknown
+    calls[2] = call("A", 3, status="err")
+    (tmp_path / "x").mkdir()
+    rows, s = WL.join(rung(tmp_path / "x", calls, log))
+    assert tags(rows)[("A", 3)] == ("unknown", "no-live-lease") and s["unknown"] == 1
