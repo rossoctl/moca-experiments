@@ -28,8 +28,9 @@ and nothing already fails. Criterion 5 keeps `pass` null until its thresholds ar
 
   1 capacity   RUNS/default/{ship-300,sbx}/ladder.json n_max (n_max_abs reported): ship_300_n_max, sbx_n_max and
                their difference.
-  2 latency    latency_report.build over the latency rungs (directory N1-lat or N128-lat: the chain's lat stages,
-               never a baseline seed N1-s<k>) of sbx and every ship arm at pycache and pycache-low. `gated` is
+  2 latency    latency_report.build over the latency rungs (directory N1-lat or N128-lat: the chain's lat stages;
+               at pycache N=1 also the baseline seeds N1-s<k>, E17B-R52) of sbx and every ship arm at pycache and
+               pycache-low. `gated` is
                ship-300's warm py_short and py_import gain against sbx at pycache, N 1 and 128; `groups` has every
                arm, point and class (py_grep, py_analyze, py_test reported).
   3 reclaim    At squeeze and squeeze-256: the ship-300 climb's ladder.json squeeze {stop_n, stopped_by} and, for
@@ -49,6 +50,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -56,6 +58,9 @@ sys.path.insert(0, HERE)
 import latency_report as LR  # noqa: E402  (sets up the E15 analysis path)
 
 LAT_NAMES = ("N1-lat", "N128-lat")
+# E17B-R52 (user, 2026-11-18): a single N=1 session leaves N1-lat with one in-window call, so the N=1 half pools the
+# pycache N=1 baseline seeds (baseline.sh N1-s<k>, the calibration the predictions were drafted from) with N1-lat.
+N1_SEED = re.compile(r"^N1-s[0-9]+$")
 LAT_POINTS = ("pycache", "pycache-low")
 GATED_CLASSES = ("py_short", "py_import")
 GAIN_BARS = {"py_short": 0.50, "py_import": 0.30}  # SPEC §7.5 criterion 2: at least 50% / 30% faster warm
@@ -126,7 +131,8 @@ def capacity(root):
 
 
 def latency(rungs):
-    dirs = [r["dir"] for r in rungs if r["point"] in LAT_POINTS and r["name"] in LAT_NAMES
+    dirs = [r["dir"] for r in rungs if r["point"] in LAT_POINTS
+            and (r["name"] in LAT_NAMES or (r["point"] == "pycache" and N1_SEED.match(r["name"])))
             and (r["arm"] == "sbx" or is_ship(r))]
     gated = {str(n): {c: None for c in GATED_CLASSES} for n in (1, 128)}
     value = {"gated": gated, "gated_arm": "ship-300", "gated_point": "pycache", "groups": [], "error": None}

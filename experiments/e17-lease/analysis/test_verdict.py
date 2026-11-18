@@ -102,15 +102,19 @@ def test_criterion_2_gains_against_sbx_at_pycache_n1_and_n128(tmp_path):
     for n in (1, 128):
         sbx_lat(root, "pycache", n, short_ms=400, import_ms=1000)
         ship_lat(root, "pycache", n, short_ms=100, import_ms=600)
-    # a seed rung of the baseline (N1-s1) is not a latency rung: never pooled into N=1
-    write_rung(root, "pycache", "sbx", "N1-s1", 1, [call("S", 1, cls="py_short", ms=99999)], [exec_line("S", "vm-9")])
+    # E17B-R52: a pycache N=1 baseline seed (N1-s<k>) is pooled into N=1; a probe rung and a pycache-low seed are not
+    write_rung(root, "pycache", "sbx", "N1-s1", 1, [call("S", 1, cls="py_short", ms=400)], [exec_line("S", "vm-9")])
+    write_rung(root, "pycache", "sbx", "N1-probe-py_short", 1, [call("P", 1, cls="py_short", ms=99999)],
+               [exec_line("P", "vm-8")])
+    write_rung(root, "pycache-low", "sbx", "N1-s1", 1, [call("L", 1, cls="py_short", ms=99999)], [exec_line("L", "vm-7")])
     c = crit(V.verdict(root), "2")
     g = c["value"]["gated"]
     assert g["1"]["py_short"] == pytest.approx(0.75) and g["1"]["py_import"] == pytest.approx(0.4)
     assert g["128"]["py_short"] == pytest.approx(0.75) and g["128"]["py_import"] == pytest.approx(0.4)
     rep = {(x["point"], x["n"], x["arm"]): x for x in c["value"]["groups"]}
     assert rep[("pycache", 1, "ship-300")]["classes"]["py_short"]["baseline_median_ms"] == 400
-    assert not any(p.endswith("N1-s1") for p in c["inputs"])
+    assert any(p.endswith("pycache/sbx/N1-s1") for p in c["inputs"])
+    assert not any(p.endswith("N1-probe-py_short") or p.endswith("pycache-low/sbx/N1-s1") for p in c["inputs"])
 
 
 def test_criterion_2_without_sbx_is_null(tmp_path):
