@@ -324,6 +324,13 @@
       "by": "controller",
       "what": "lease ends caused by the driver's end-of-run cut are excluded from criterion 4 like live_at_stop and ended_after_sweep (ended_by_run_cut: an unmatched end whose key's last call is cut_at_end, at or after its send second); the cut call itself is tagged cut_at_end, not unknown, in the warm/cold join",
       "why": "default ship-300 N96/N128 stopped the chain: at the end-of-run grace deadline the driver cut 3 long in-flight commands and exited; each abort ended its lease agent_dead (moca lease.go, by design for an Exec ended without the guest's answer) with no client left to notify. All 3 agent_dead ends of E17b lie within 1 s of their worker's stop; none mid-run"
+    },
+    {
+      "id": "E17B-R55",
+      "at": "2026-11-19",
+      "by": "controller",
+      "what": "the 500000-file ownership walk is not measured: its 4096 MiB workspace cannot be mounted by a guest restored from a snapshot whose workspace drive is 2 GiB (moca deploy/microvm/build-snapshot.sh WORKSPACE_IMAGE_BYTES is fixed at 2 GiB; the worker's startup probe fails 'mount /workspace exited 32' and the worker never attaches); prediction 9 is judged at 10000 and 100000 files",
+      "why": "a moca limit found by the run (SH_WORKSPACE_IMAGE_MB above the snapshot's 2 GiB drive leaves the worker unattached), not an E17b measurement choice"
     }
   ]
 }
