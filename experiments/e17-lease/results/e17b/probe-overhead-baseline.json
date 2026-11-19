@@ -1,0 +1,202 @@
+{
+  "baseline_p95_ms": 37.449,
+  "calls": 67,
+  "class_counts": {
+    "build": 20,
+    "file_ops": 20,
+    "host_infra": 20,
+    "interpreter": 20,
+    "lint_check": 20,
+    "network": 20,
+    "opaque": 20,
+    "other": 20,
+    "process": 20,
+    "read": 20,
+    "search": 20,
+    "shell_read": 20,
+    "test": 20,
+    "unparsed": 20,
+    "vcs": 20,
+    "wait": 20,
+    "write": 20
+  },
+  "class_medians": {
+    "build": -30.095999999999094,
+    "file_ops": -521.1135,
+    "host_infra": -5.205500000000036,
+    "interpreter": -0.042999999999835836,
+    "lint_check": -20.540999999999997,
+    "network": -78.44650000000007,
+    "opaque": -15.478500000000167,
+    "other": -52.995999999999995,
+    "process": -46.6129999999999,
+    "read": -7.019000000000002,
+    "search": -24.025499999999994,
+    "shell_read": -103.37,
+    "test": -34.352999999999895,
+    "unparsed": -106.26749999999993,
+    "vcs": -14.87149999999999,
+    "wait": -57.88299999999981,
+    "write": -5.6265
+  },
+  "corpus_class_counts": {
+    "build": 6485,
+    "file_ops": 7469,
+    "host_infra": 26751,
+    "interpreter": 55408,
+    "lint_check": 6697,
+    "network": 6790,
+    "opaque": 8954,
+    "other": 7154,
+    "process": 13891,
+    "read": 55085,
+    "search": 2807,
+    "shell_read": 216413,
+    "test": 5579,
+    "unparsed": 1629,
+    "vcs": 32986,
+    "wait": 6097,
+    "write": 73938
+  },
+  "corpus_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+  "driver_bin_sha256": "af058bb0f4710769af186322629aca44fc5aa2456717340c22b37f9f3831ebfd",
+  "evaluable": [
+    {
+      "dir": "/srv/e15/runs/default/ship-300/N1-s1",
+      "seed": 1
+    },
+    {
+      "dir": "/srv/e15/runs/default/ship-300/N1-s3",
+      "seed": 3
+    },
+    {
+      "dir": "/srv/e15/runs/default/ship-300/N1-s5",
+      "seed": 5
+    }
+  ],
+  "excess_p95_ms": 124.42850000000001,
+  "global_median_ms": -31.83099999999996,
+  "library_sha256": "3c8251383a81239366d5e9c4781af747f4c67cb18b75dc93de4db7045cce7b5f",
+  "n1_median_pace": -0.0009526807631289325,
+  "n1_pace_sessions": 4,
+  "overhead_ms": -30.095999999999094,
+  "point_sig": "0124f0509c32954356a90c6e5d9e7975069e2de4c0ccbb44e994cf829bc16db8",
+  "probe_failed": {},
+  "probe_runs": [
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-build",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-file_ops",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-host_infra",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-interpreter",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-lint_check",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-network",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-opaque",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-other",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-process",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-read",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-search",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-shell_read",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-test",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-unparsed",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-vcs",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-wait",
+      "ok": 20
+    },
+    {
+      "calls": 20,
+      "dir": "/srv/e15/runs/default/ship-300/N1-probe-write",
+      "ok": 20
+    }
+  ],
+  "runs": [
+    {
+      "calls": 14,
+      "dir": "/srv/e15/runs/default/ship-300/N1-s1",
+      "p95_added_ms": 69.62699999999995
+    },
+    {
+      "calls": 25,
+      "dir": "/srv/e15/runs/default/ship-300/N1-s3",
+      "p95_added_ms": 19.154000000000003
+    },
+    {
+      "calls": 28,
+      "dir": "/srv/e15/runs/default/ship-300/N1-s5",
+      "p95_added_ms": 69.17699999999968
+    }
+  ],
+  "skipped": [
+    {
+      "reason": "empty_window",
+      "seed": 2,
+      "tag": "s2"
+    },
+    {
+      "reason": "empty_window",
+      "seed": 4,
+      "tag": "s4"
+    }
+  ],
+  "undercovered": []
+}

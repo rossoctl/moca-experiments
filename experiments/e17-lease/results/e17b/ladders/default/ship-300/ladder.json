@@ -1,0 +1,78 @@
+{
+  "point": "default",
+  "arm": "ship-300",
+  "start_n": 80,
+  "ladder": [
+    1,
+    8,
+    16,
+    24,
+    32,
+    40,
+    48,
+    56,
+    64,
+    80,
+    96,
+    128,
+    160,
+    192,
+    256,
+    320,
+    384,
+    448,
+    512,
+    576,
+    640,
+    704,
+    768,
+    896,
+    1024
+  ],
+  "rungs_below_start_assumed_held": true,
+  "rungs": [
+    {
+      "n": 80,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 8.727278600173527e-05,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/ship-300/N80"
+    },
+    {
+      "n": 96,
+      "holds": true,
+      "holds_abs": true,
+      "repeated": false,
+      "median_class_pace": 0.00021977980588583357,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/ship-300/N96"
+    },
+    {
+      "n": 128,
+      "holds": true,
+      "holds_abs": false,
+      "repeated": false,
+      "median_class_pace": 0.00020138549129833372,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/ship-300/N128"
+    },
+    {
+      "n": 160,
+      "holds": false,
+      "holds_abs": false,
+      "repeated": false,
+      "median_class_pace": 0.00026870034348869254,
+      "rig_errors": [],
+      "dir": "/srv/e15/runs/default/ship-300/N160"
+    }
+  ],
+  "n_max": 128,
+  "stopped_at": 160,
+  "n_max_abs": 96,
+  "stopped_at_abs": 128,
+  "abs_rule": "condition 4 as p95(class excess) <= B + 250 ms (B = the arm's N=1 within-class excess p95; excess = added latency minus the per-class N=1 probe median)",
+  "n1_overhead_ms": -33.136499999999955,
+  "n1_median_pace": -0.0009400613416251646
+}

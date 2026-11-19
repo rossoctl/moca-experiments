@@ -1,6 +1,10 @@
 # E17 — lease mode: does a warm guest with an idle timeout pay, and does measured admission hold?
 
-Version: 0.6, 2026-11-12
+Version: 0.7, 2026-11-19
+2026-11-19: E17b is run and reported (`results/E17B-REPORT.md`): criteria 1–4 pass on the shipped lease mode
+(moca `c3adf490`); criterion 5 passes its second half (replacement leases read the host page cache) and misses its
+first (the page cache keeps a lease VM's charge near its ceiling), as predicted at the seal. Post-seal deviations
+R46–R55 are in `predictions-e17b.json`.
 2026-11-12 (later): E17a is built, run and reported — it misses (`experiments/e17-lease/results/E17A-REPORT.md`; §7.5).
 Criterion 2 fails at N = 1 and N = 128 (import ~40%, grep ~0%); criterion 1 holds (E15 metal:
 lease-300 128 against per-`Exec` 80). The miss went to the user, as sealed: on 2026-11-12 the user
@@ -29,8 +33,8 @@ Version: 0.2 (draft for review), 2026-11-10
 2026-11-10: E16's final result folded in (§1.1). The `lowduty` capacity ladder is dropped: E16 already
 answers question 2 at low duty, so E17's rig time goes to the cache-heavy points instead (§7.2, §8). The
 level-1 lease guest (moca plan 1, rossoctl/moca#706) is merged, so E17b's guest side exists.
-Status: **E17a complete (missed, §7.5). Plans 2–5 approved and in build (user, 2026-11-12); E17b not
-started.**
+Status: **E17a complete (missed, §7.5). Plans 2–5 built and merged. E17b complete (2026-11-19): criteria 1–4
+pass, criterion 5 split (§7.5; `results/E17B-REPORT.md`).**
 Parents: E15 (`experiments/e15-session-density/SPEC.md`, metal procedure in its §13; results in `experiments/e15-session-density/results/metal/RESULTS-METAL.md`)
 and E16 (`experiments/e16-low-duty/SPEC.md`, results under `experiments/e16-low-duty/results/`). E17 reuses their instrument, rig scripts and
 metal host unchanged except where this document says so. "E15 §n" and "E16 §n" refer to those specs.

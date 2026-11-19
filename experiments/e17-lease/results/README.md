@@ -24,6 +24,7 @@ controller copies the files listed below into this directory and commits them. `
 | `calibration/README.md` | how the calibration ran: the suite size chosen, re-stamped templates, the re-run smoke | controller |
 | `<point>/<arm>/N<N>[-<tag>]/` | the measured E17a rungs, after the predictions are sealed (spec §8). Files as for a smoke rung, plus `ladder.json` per point and arm | the run plan's `chain.sh`-style stages |
 | `latency/<point>-N<N>/latency.json`, `latency.md` | the latency report per point and N (spec §7.1): the gain per class, the warm share, and the first call after an idle teardown | `e17/analysis/latency_report.py` |
+| `E17B-REPORT.md`, `e17b/` | E17b: the report, and its summaries: `verdict.json` (`analysis/verdict.py` over the runs; criteria 1–5 values and inputs), `ladders/` (`default/{sbx,ship-300}`, `squeeze/ship-300` with `ladder.part2.json`, E17B-R51), `overhead.json` and `probe-overhead-baseline.json` (§7.4), `ownwalk/F<files>.json`, and `manifest.md` (the E17b part of the rig's `~/e17-manifest.md`). The raw rungs (calls, samples, worker logs) are for the next `data-v*` release, never in git | `rig/chain-e17b.sh` and the controller |
 
 `e17/predictions.json` (spec §9) lives in `e17/`, not here. It is written from `calibration/` and
 sealed by the user before the first measured rung.

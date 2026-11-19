@@ -1,0 +1,2474 @@
+{
+  "criteria": {
+    "1": {
+      "inputs": [
+        "/srv/e15/runs/default/sbx/ladder.json",
+        "/srv/e15/runs/default/ship-300/ladder.json"
+      ],
+      "missing": [],
+      "name": "capacity",
+      "pass": true,
+      "value": {
+        "n_max_abs": {
+          "sbx": 80,
+          "ship-300": 96
+        },
+        "sbx_n_max": 80,
+        "ship_300_minus_sbx": 48,
+        "ship_300_n_max": 128
+      },
+      "why": []
+    },
+    "2": {
+      "inputs": [
+        "/srv/e15/runs/pycache/sbx/N1-lat",
+        "/srv/e15/runs/pycache/sbx/N1-s1",
+        "/srv/e15/runs/pycache/sbx/N1-s2",
+        "/srv/e15/runs/pycache/sbx/N1-s3",
+        "/srv/e15/runs/pycache/sbx/N1-s4",
+        "/srv/e15/runs/pycache/sbx/N128-lat",
+        "/srv/e15/runs/pycache/ship-120/N1-s1",
+        "/srv/e15/runs/pycache/ship-120/N1-s2",
+        "/srv/e15/runs/pycache/ship-120/N1-s3",
+        "/srv/e15/runs/pycache/ship-120/N1-s4",
+        "/srv/e15/runs/pycache/ship-120/N128-lat",
+        "/srv/e15/runs/pycache/ship-30/N1-s1",
+        "/srv/e15/runs/pycache/ship-30/N1-s2",
+        "/srv/e15/runs/pycache/ship-30/N1-s3",
+        "/srv/e15/runs/pycache/ship-30/N1-s4",
+        "/srv/e15/runs/pycache/ship-30/N128-lat",
+        "/srv/e15/runs/pycache/ship-300/N1-lat",
+        "/srv/e15/runs/pycache/ship-300/N1-s1",
+        "/srv/e15/runs/pycache/ship-300/N1-s2",
+        "/srv/e15/runs/pycache/ship-300/N1-s3",
+        "/srv/e15/runs/pycache/ship-300/N1-s4",
+        "/srv/e15/runs/pycache/ship-300/N128-lat"
+      ],
+      "missing": [],
+      "name": "latency",
+      "pass": true,
+      "value": {
+        "bars": {
+          "py_import": 0.3,
+          "py_short": 0.5
+        },
+        "error": null,
+        "gated": {
+          "1": {
+            "py_import": 0.469340158819742,
+            "py_short": 0.8588360292366594
+          },
+          "128": {
+            "py_import": 0.4061012284455028,
+            "py_short": 0.8734446574185374
+          }
+        },
+        "gated_arm": "ship-300",
+        "gated_point": "pycache",
+        "groups": [
+          {
+            "arm": "sbx",
+            "classes": {
+              "py_analyze": {
+                "all": {
+                  "median_ms": 16733.224,
+                  "n": 7,
+                  "p95_ms": 18109.068
+                },
+                "cold": {
+                  "median_ms": 16733.224,
+                  "n": 7,
+                  "p95_ms": 18109.068
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              },
+              "py_grep": {
+                "all": {
+                  "median_ms": 399.8065,
+                  "n": 4,
+                  "p95_ms": 1536.046
+                },
+                "cold": {
+                  "median_ms": 399.8065,
+                  "n": 4,
+                  "p95_ms": 1536.046
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              },
+              "py_import": {
+                "all": {
+                  "median_ms": 943.5225,
+                  "n": 4,
+                  "p95_ms": 1134.454
+                },
+                "cold": {
+                  "median_ms": 943.5225,
+                  "n": 4,
+                  "p95_ms": 1134.454
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              },
+              "py_short": {
+                "all": {
+                  "median_ms": 54.589,
+                  "n": 13,
+                  "p95_ms": 100.362
+                },
+                "cold": {
+                  "median_ms": 54.589,
+                  "n": 13,
+                  "p95_ms": 100.362
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              },
+              "py_test": {
+                "all": {
+                  "median_ms": 63305.268,
+                  "n": 3,
+                  "p95_ms": 63444.545
+                },
+                "cold": {
+                  "median_ms": 63305.268,
+                  "n": 3,
+                  "p95_ms": 63444.545
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              }
+            },
+            "countable": null,
+            "excluded_rungs": null,
+            "first_lease": null,
+            "n": 1,
+            "point": "pycache",
+            "warm_share": 0.0
+          },
+          {
+            "arm": "ship-120",
+            "classes": {
+              "py_analyze": {
+                "all": {
+                  "median_ms": 15201.0275,
+                  "n": 6,
+                  "p95_ms": 17980.372
+                },
+                "baseline_median_ms": 16733.224,
+                "cold": {
+                  "median_ms": 15538.46,
+                  "n": 1,
+                  "p95_ms": 15538.46
+                },
+                "gain": 0.11173154677185937,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 14863.595,
+                  "n": 5,
+                  "p95_ms": 17980.372
+                }
+              },
+              "py_grep": {
+                "all": {
+                  "median_ms": 253.4035,
+                  "n": 4,
+                  "p95_ms": 1330.773
+                },
+                "baseline_median_ms": 399.8065,
+                "cold": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                },
+                "gain": 0.3661846418204807,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 253.4035,
+                  "n": 4,
+                  "p95_ms": 1330.773
+                }
+              },
+              "py_import": {
+                "all": {
+                  "median_ms": 527.241,
+                  "n": 4,
+                  "p95_ms": 905.496
+                },
+                "baseline_median_ms": 943.5225,
+                "cold": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                },
+                "gain": 0.4411993354689475,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 527.241,
+                  "n": 4,
+                  "p95_ms": 905.496
+                }
+              },
+              "py_short": {
+                "all": {
+                  "median_ms": 7.9505,
+                  "n": 12,
+                  "p95_ms": 98.123
+                },
+                "baseline_median_ms": 54.589,
+                "cold": {
+                  "median_ms": 92.5185,
+                  "n": 2,
+                  "p95_ms": 98.123
+                },
+                "gain": 0.8565003938522413,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 7.8335,
+                  "n": 10,
+                  "p95_ms": 24.299
+                }
+              },
+              "py_test": {
+                "all": {
+                  "median_ms": 61132.057,
+                  "n": 3,
+                  "p95_ms": 62908.454
+                },
+                "baseline_median_ms": 63305.268,
+                "cold": {
+                  "median_ms": 62908.454,
+                  "n": 1,
+                  "p95_ms": 62908.454
+                },
+                "gain": 0.03614973243616937,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 61016.7995,
+                  "n": 2,
+                  "p95_ms": 61132.057
+                }
+              }
+            },
+            "countable": true,
+            "excluded_rungs": [],
+            "first_lease": {
+              "all": {
+                "median_ms": 382.698,
+                "n": 1,
+                "p95_ms": 382.698
+              },
+              "by_class": {
+                "py_short": {
+                  "median_ms": 382.698,
+                  "n": 1,
+                  "p95_ms": 382.698
+                }
+              },
+              "calls": 6
+            },
+            "n": 1,
+            "point": "pycache",
+            "warm_share": 0.8620689655172413
+          },
+          {
+            "arm": "ship-30",
+            "classes": {
+              "py_analyze": {
+                "all": {
+                  "median_ms": 15026.026,
+                  "n": 6,
+                  "p95_ms": 17854.864
+                },
+                "baseline_median_ms": 16733.224,
+                "cold": {
+                  "median_ms": 16180.5445,
+                  "n": 2,
+                  "p95_ms": 16868.591
+                },
+                "gain": 0.13033937751625146,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 14552.225999999999,
+                  "n": 4,
+                  "p95_ms": 17854.864
+                }
+              },
+              "py_grep": {
+                "all": {
+                  "median_ms": 252.11849999999998,
+                  "n": 4,
+                  "p95_ms": 1317.614
+                },
+                "baseline_median_ms": 399.8065,
+                "cold": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                },
+                "gain": 0.36939869661948976,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 252.11849999999998,
+                  "n": 4,
+                  "p95_ms": 1317.614
+                }
+              },
+              "py_import": {
+                "all": {
+                  "median_ms": 529.0445,
+                  "n": 4,
+                  "p95_ms": 896.42
+                },
+                "baseline_median_ms": 943.5225,
+                "cold": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                },
+                "gain": 0.43928788131708574,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 529.0445,
+                  "n": 4,
+                  "p95_ms": 896.42
+                }
+              },
+              "py_short": {
+                "all": {
+                  "median_ms": 22.351999999999997,
+                  "n": 12,
+                  "p95_ms": 97.475
+                },
+                "baseline_median_ms": 54.589,
+                "cold": {
+                  "median_ms": 89.395,
+                  "n": 5,
+                  "p95_ms": 97.475
+                },
+                "gain": 0.8657055450731832,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 7.331,
+                  "n": 7,
+                  "p95_ms": 36.617
+                }
+              },
+              "py_test": {
+                "all": {
+                  "median_ms": 63107.658,
+                  "n": 3,
+                  "p95_ms": 63350.561
+                },
+                "baseline_median_ms": 63305.268,
+                "cold": {
+                  "median_ms": 63229.109500000006,
+                  "n": 2,
+                  "p95_ms": 63350.561
+                },
+                "gain": 0.036356990069136064,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 61003.679,
+                  "n": 1,
+                  "p95_ms": 61003.679
+                }
+              }
+            },
+            "countable": true,
+            "excluded_rungs": [],
+            "first_lease": {
+              "all": {
+                "median_ms": 376.011,
+                "n": 1,
+                "p95_ms": 376.011
+              },
+              "by_class": {
+                "py_short": {
+                  "median_ms": 376.011,
+                  "n": 1,
+                  "p95_ms": 376.011
+                }
+              },
+              "calls": 6
+            },
+            "n": 1,
+            "point": "pycache",
+            "warm_share": 0.6896551724137931
+          },
+          {
+            "arm": "ship-300",
+            "classes": {
+              "py_analyze": {
+                "all": {
+                  "median_ms": 15032.099,
+                  "n": 7,
+                  "p95_ms": 17733.174
+                },
+                "baseline_median_ms": 16733.224,
+                "cold": {
+                  "median_ms": 15234.7755,
+                  "n": 2,
+                  "p95_ms": 15289.222
+                },
+                "gain": 0.125947934480528,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 14625.709,
+                  "n": 5,
+                  "p95_ms": 17733.174
+                }
+              },
+              "py_grep": {
+                "all": {
+                  "median_ms": 199.9895,
+                  "n": 4,
+                  "p95_ms": 1352.246
+                },
+                "baseline_median_ms": 399.8065,
+                "cold": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                },
+                "gain": 0.49978427064092257,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 199.9895,
+                  "n": 4,
+                  "p95_ms": 1352.246
+                }
+              },
+              "py_import": {
+                "all": {
+                  "median_ms": 500.6895,
+                  "n": 4,
+                  "p95_ms": 898.924
+                },
+                "baseline_median_ms": 943.5225,
+                "cold": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                },
+                "gain": 0.469340158819742,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 500.6895,
+                  "n": 4,
+                  "p95_ms": 898.924
+                }
+              },
+              "py_short": {
+                "all": {
+                  "median_ms": 7.927,
+                  "n": 12,
+                  "p95_ms": 97.931
+                },
+                "baseline_median_ms": 54.589,
+                "cold": {
+                  "median_ms": 97.931,
+                  "n": 1,
+                  "p95_ms": 97.931
+                },
+                "gain": 0.8588360292366594,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 7.706,
+                  "n": 11,
+                  "p95_ms": 24.205
+                }
+              },
+              "py_test": {
+                "all": {
+                  "median_ms": 60924.999,
+                  "n": 3,
+                  "p95_ms": 60962.961
+                },
+                "baseline_median_ms": 63305.268,
+                "cold": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                },
+                "gain": 0.03759985661856757,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 60924.999,
+                  "n": 3,
+                  "p95_ms": 60962.961
+                }
+              }
+            },
+            "countable": true,
+            "excluded_rungs": [],
+            "first_lease": {
+              "all": {
+                "median_ms": 372.139,
+                "n": 1,
+                "p95_ms": 372.139
+              },
+              "by_class": {
+                "py_short": {
+                  "median_ms": 372.139,
+                  "n": 1,
+                  "p95_ms": 372.139
+                }
+              },
+              "calls": 7
+            },
+            "n": 1,
+            "point": "pycache",
+            "warm_share": 0.9
+          },
+          {
+            "arm": "sbx",
+            "classes": {
+              "py_analyze": {
+                "all": {
+                  "median_ms": 18942.837,
+                  "n": 192,
+                  "p95_ms": 21639.321
+                },
+                "cold": {
+                  "median_ms": 18942.837,
+                  "n": 192,
+                  "p95_ms": 21639.321
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              },
+              "py_grep": {
+                "all": {
+                  "median_ms": 1625.822,
+                  "n": 87,
+                  "p95_ms": 2386.197
+                },
+                "cold": {
+                  "median_ms": 1625.822,
+                  "n": 87,
+                  "p95_ms": 2386.197
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              },
+              "py_import": {
+                "all": {
+                  "median_ms": 917.094,
+                  "n": 86,
+                  "p95_ms": 2100.168
+                },
+                "cold": {
+                  "median_ms": 917.094,
+                  "n": 86,
+                  "p95_ms": 2100.168
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              },
+              "py_short": {
+                "all": {
+                  "median_ms": 61.562,
+                  "n": 326,
+                  "p95_ms": 114.315
+                },
+                "cold": {
+                  "median_ms": 61.562,
+                  "n": 326,
+                  "p95_ms": 114.315
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              },
+              "py_test": {
+                "all": {
+                  "median_ms": 68428.947,
+                  "n": 84,
+                  "p95_ms": 71381.685
+                },
+                "cold": {
+                  "median_ms": 68428.947,
+                  "n": 84,
+                  "p95_ms": 71381.685
+                },
+                "unknown": 0,
+                "warm": {
+                  "median_ms": null,
+                  "n": 0,
+                  "p95_ms": null
+                }
+              }
+            },
+            "countable": null,
+            "excluded_rungs": null,
+            "first_lease": null,
+            "n": 128,
+            "point": "pycache",
+            "warm_share": 0.0
+          },
+          {
+            "arm": "ship-120",
+            "classes": {
+              "py_analyze": {
+                "all": {
+                  "median_ms": 16626.586000000003,
+                  "n": 184,
+                  "p95_ms": 19653.84
+                },
+                "baseline_median_ms": 18942.837,
+                "cold": {
+                  "median_ms": 17934.454,
+                  "n": 31,
+                  "p95_ms": 19624.166
+                },
+                "gain": 0.1289043452150277,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 16501.023,
+                  "n": 153,
+                  "p95_ms": 19919.727
+                }
+              },
+              "py_grep": {
+                "all": {
+                  "median_ms": 348.1535,
+                  "n": 82,
+                  "p95_ms": 2020.093
+                },
+                "baseline_median_ms": 1625.822,
+                "cold": {
+                  "median_ms": 1476.94,
+                  "n": 12,
+                  "p95_ms": 2034.504
+                },
+                "gain": 0.8185336402139963,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 295.032,
+                  "n": 70,
+                  "p95_ms": 2011.709
+                }
+              },
+              "py_import": {
+                "all": {
+                  "median_ms": 563.951,
+                  "n": 83,
+                  "p95_ms": 1219.069
+                },
+                "baseline_median_ms": 917.094,
+                "cold": {
+                  "median_ms": 915.311,
+                  "n": 15,
+                  "p95_ms": 1665.495
+                },
+                "gain": 0.3985578359470241,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 551.579,
+                  "n": 68,
+                  "p95_ms": 975.835
+                }
+              },
+              "py_short": {
+                "all": {
+                  "median_ms": 7.9155,
+                  "n": 330,
+                  "p95_ms": 104.172
+                },
+                "baseline_median_ms": 61.562,
+                "cold": {
+                  "median_ms": 99.2975,
+                  "n": 54,
+                  "p95_ms": 141.018
+                },
+                "gain": 0.8743624313700009,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 7.734500000000001,
+                  "n": 276,
+                  "p95_ms": 27.16
+                }
+              },
+              "py_test": {
+                "all": {
+                  "median_ms": 66051.663,
+                  "n": 77,
+                  "p95_ms": 67990.288
+                },
+                "baseline_median_ms": 68428.947,
+                "cold": {
+                  "median_ms": 67453.386,
+                  "n": 12,
+                  "p95_ms": 68969.063
+                },
+                "gain": 0.03677059359104262,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 65912.774,
+                  "n": 65,
+                  "p95_ms": 67388.255
+                }
+              }
+            },
+            "countable": true,
+            "excluded_rungs": [],
+            "first_lease": {
+              "all": {
+                "median_ms": 2321.4555,
+                "n": 32,
+                "p95_ms": 71269.874
+              },
+              "by_class": {
+                "py_analyze": {
+                  "median_ms": 19408.194,
+                  "n": 9,
+                  "p95_ms": 21276.349
+                },
+                "py_grep": {
+                  "median_ms": 2294.455,
+                  "n": 7,
+                  "p95_ms": 2324.041
+                },
+                "py_import": {
+                  "median_ms": 2246.937,
+                  "n": 5,
+                  "p95_ms": 2255.447
+                },
+                "py_shmem": {
+                  "median_ms": 406.151,
+                  "n": 1,
+                  "p95_ms": 406.151
+                },
+                "py_short": {
+                  "median_ms": 395.6885,
+                  "n": 4,
+                  "p95_ms": 402.963
+                },
+                "py_test": {
+                  "median_ms": 70370.945,
+                  "n": 6,
+                  "p95_ms": 71373.654
+                }
+              },
+              "calls": 213
+            },
+            "n": 128,
+            "point": "pycache",
+            "warm_share": 0.8359788359788359
+          },
+          {
+            "arm": "ship-30",
+            "classes": {
+              "py_analyze": {
+                "all": {
+                  "median_ms": 16975.328500000003,
+                  "n": 184,
+                  "p95_ms": 19790.388
+                },
+                "baseline_median_ms": 18942.837,
+                "cold": {
+                  "median_ms": 17341.075,
+                  "n": 73,
+                  "p95_ms": 20163.536
+                },
+                "gain": 0.11272704294504565,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 16807.467,
+                  "n": 111,
+                  "p95_ms": 19746.088
+                }
+              },
+              "py_grep": {
+                "all": {
+                  "median_ms": 442.186,
+                  "n": 83,
+                  "p95_ms": 2017.954
+                },
+                "baseline_median_ms": 1625.822,
+                "cold": {
+                  "median_ms": 447.25649999999996,
+                  "n": 30,
+                  "p95_ms": 2033.332
+                },
+                "gain": 0.8161871348770038,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 298.847,
+                  "n": 53,
+                  "p95_ms": 2010.977
+                }
+              },
+              "py_import": {
+                "all": {
+                  "median_ms": 578.595,
+                  "n": 83,
+                  "p95_ms": 1180.069
+                },
+                "baseline_median_ms": 917.094,
+                "cold": {
+                  "median_ms": 882.9685,
+                  "n": 24,
+                  "p95_ms": 1275.316
+                },
+                "gain": 0.4062429805450696,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 544.531,
+                  "n": 59,
+                  "p95_ms": 1003.181
+                }
+              },
+              "py_short": {
+                "all": {
+                  "median_ms": 23.258000000000003,
+                  "n": 328,
+                  "p95_ms": 109.722
+                },
+                "baseline_median_ms": 61.562,
+                "cold": {
+                  "median_ms": 93.974,
+                  "n": 138,
+                  "p95_ms": 123.352
+                },
+                "gain": 0.8720964231181573,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 7.8740000000000006,
+                  "n": 190,
+                  "p95_ms": 36.011
+                }
+              },
+              "py_test": {
+                "all": {
+                  "median_ms": 66187.456,
+                  "n": 77,
+                  "p95_ms": 68319.354
+                },
+                "baseline_median_ms": 68428.947,
+                "cold": {
+                  "median_ms": 67003.296,
+                  "n": 27,
+                  "p95_ms": 68923.234
+                },
+                "gain": 0.035400559356846384,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 66006.524,
+                  "n": 50,
+                  "p95_ms": 67463.252
+                }
+              }
+            },
+            "countable": true,
+            "excluded_rungs": [],
+            "first_lease": {
+              "all": {
+                "median_ms": 2314.3014999999996,
+                "n": 32,
+                "p95_ms": 71380.004
+              },
+              "by_class": {
+                "py_analyze": {
+                  "median_ms": 19763.196,
+                  "n": 9,
+                  "p95_ms": 21302.808
+                },
+                "py_grep": {
+                  "median_ms": 2295.637,
+                  "n": 7,
+                  "p95_ms": 2318.758
+                },
+                "py_import": {
+                  "median_ms": 2209.716,
+                  "n": 5,
+                  "p95_ms": 2255.091
+                },
+                "py_shmem": {
+                  "median_ms": 413.668,
+                  "n": 1,
+                  "p95_ms": 413.668
+                },
+                "py_short": {
+                  "median_ms": 393.92600000000004,
+                  "n": 4,
+                  "p95_ms": 407.861
+                },
+                "py_test": {
+                  "median_ms": 69919.766,
+                  "n": 6,
+                  "p95_ms": 71408.174
+                }
+              },
+              "calls": 213
+            },
+            "n": 128,
+            "point": "pycache",
+            "warm_share": 0.6132450331125828
+          },
+          {
+            "arm": "ship-300",
+            "classes": {
+              "py_analyze": {
+                "all": {
+                  "median_ms": 16492.067,
+                  "n": 184,
+                  "p95_ms": 19979.205
+                },
+                "baseline_median_ms": 18942.837,
+                "cold": {
+                  "median_ms": 17612.908,
+                  "n": 16,
+                  "p95_ms": 21615.482
+                },
+                "gain": 0.13097742434251014,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 16461.752999999997,
+                  "n": 168,
+                  "p95_ms": 19979.205
+                }
+              },
+              "py_grep": {
+                "all": {
+                  "median_ms": 349.11,
+                  "n": 83,
+                  "p95_ms": 2009.775
+                },
+                "baseline_median_ms": 1625.822,
+                "cold": {
+                  "median_ms": 2010.8319999999999,
+                  "n": 4,
+                  "p95_ms": 2050.321
+                },
+                "gain": 0.8127660961655089,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 304.409,
+                  "n": 79,
+                  "p95_ms": 2009.085
+                }
+              },
+              "py_import": {
+                "all": {
+                  "median_ms": 558.479,
+                  "n": 83,
+                  "p95_ms": 1297.23
+                },
+                "baseline_median_ms": 917.094,
+                "cold": {
+                  "median_ms": 1226.166,
+                  "n": 11,
+                  "p95_ms": 1819.585
+                },
+                "gain": 0.4061012284455028,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 544.6610000000001,
+                  "n": 72,
+                  "p95_ms": 981.051
+                }
+              },
+              "py_short": {
+                "all": {
+                  "median_ms": 7.9045000000000005,
+                  "n": 328,
+                  "p95_ms": 106.524
+                },
+                "baseline_median_ms": 61.562,
+                "cold": {
+                  "median_ms": 104.038,
+                  "n": 41,
+                  "p95_ms": 142.075
+                },
+                "gain": 0.8734446574185374,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 7.791,
+                  "n": 287,
+                  "p95_ms": 25.255
+                }
+              },
+              "py_test": {
+                "all": {
+                  "median_ms": 66016.451,
+                  "n": 77,
+                  "p95_ms": 68084.463
+                },
+                "baseline_median_ms": 68428.947,
+                "cold": {
+                  "median_ms": 66845.79449999999,
+                  "n": 2,
+                  "p95_ms": 67434.366
+                },
+                "gain": 0.03537073279821179,
+                "unknown": 0,
+                "warm": {
+                  "median_ms": 66008.565,
+                  "n": 75,
+                  "p95_ms": 68084.463
+                }
+              }
+            },
+            "countable": true,
+            "excluded_rungs": [],
+            "first_lease": {
+              "all": {
+                "median_ms": 2331.444,
+                "n": 32,
+                "p95_ms": 71615.922
+              },
+              "by_class": {
+                "py_analyze": {
+                  "median_ms": 20338.98,
+                  "n": 9,
+                  "p95_ms": 21590.617
+                },
+                "py_grep": {
+                  "median_ms": 2300.186,
+                  "n": 7,
+                  "p95_ms": 2344.783
+                },
+                "py_import": {
+                  "median_ms": 2243.685,
+                  "n": 5,
+                  "p95_ms": 2318.105
+                },
+                "py_shmem": {
+                  "median_ms": 413.19,
+                  "n": 1,
+                  "p95_ms": 413.19
+                },
+                "py_short": {
+                  "median_ms": 396.1785,
+                  "n": 4,
+                  "p95_ms": 406.865
+                },
+                "py_test": {
+                  "median_ms": 70546.5515,
+                  "n": 6,
+                  "p95_ms": 71953.899
+                }
+              },
+              "calls": 213
+            },
+            "n": 128,
+            "point": "pycache",
+            "warm_share": 0.9019867549668874
+          }
+        ]
+      },
+      "why": []
+    },
+    "3": {
+      "inputs": [
+        "/srv/e15/runs/squeeze/ship-300/N1-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N16-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N24-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N32-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N40-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N8-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/ladder.json"
+      ],
+      "missing": [
+        "/srv/e15/runs/squeeze-256/ship-300/ladder.json (no squeeze climb)"
+      ],
+      "name": "reclaim",
+      "pass": true,
+      "value": {
+        "squeeze": {
+          "memmax_mb": 24576,
+          "rungs": [
+            {
+              "dir": "/srv/e15/runs/squeeze/ship-300/N1-repeat",
+              "guard": false,
+              "guards": 0,
+              "guards_pass": true,
+              "host_memory_with_idle_lease": 0,
+              "lease_ends_guards_pass": true,
+              "memory_high": 0,
+              "met": false,
+              "n": 1,
+              "order_pass": null,
+              "reclaims": 0,
+              "refusals_pass": true,
+              "refusals_unclassified": 0,
+              "refusals_with_idle_lease": 0,
+              "unknown": 0,
+              "valid": true,
+              "wrong": 0
+            },
+            {
+              "dir": "/srv/e15/runs/squeeze/ship-300/N8-repeat",
+              "guard": false,
+              "guards": 0,
+              "guards_pass": true,
+              "host_memory_with_idle_lease": 0,
+              "lease_ends_guards_pass": true,
+              "memory_high": 0,
+              "met": false,
+              "n": 8,
+              "order_pass": null,
+              "reclaims": 0,
+              "refusals_pass": true,
+              "refusals_unclassified": 0,
+              "refusals_with_idle_lease": 0,
+              "unknown": 0,
+              "valid": true,
+              "wrong": 0
+            },
+            {
+              "dir": "/srv/e15/runs/squeeze/ship-300/N16-repeat",
+              "guard": false,
+              "guards": 0,
+              "guards_pass": true,
+              "host_memory_with_idle_lease": 0,
+              "lease_ends_guards_pass": false,
+              "memory_high": 16,
+              "met": false,
+              "n": 16,
+              "order_pass": true,
+              "reclaims": 7,
+              "refusals_pass": true,
+              "refusals_unclassified": 0,
+              "refusals_with_idle_lease": 0,
+              "unknown": 0,
+              "valid": true,
+              "wrong": 0
+            },
+            {
+              "dir": "/srv/e15/runs/squeeze/ship-300/N24-repeat",
+              "guard": false,
+              "guards": 0,
+              "guards_pass": true,
+              "host_memory_with_idle_lease": 0,
+              "lease_ends_guards_pass": false,
+              "memory_high": 411,
+              "met": false,
+              "n": 24,
+              "order_pass": true,
+              "reclaims": 97,
+              "refusals_pass": true,
+              "refusals_unclassified": 0,
+              "refusals_with_idle_lease": 0,
+              "unknown": 0,
+              "valid": true,
+              "wrong": 0
+            },
+            {
+              "dir": "/srv/e15/runs/squeeze/ship-300/N32-repeat",
+              "guard": false,
+              "guards": 0,
+              "guards_pass": true,
+              "host_memory_with_idle_lease": 0,
+              "lease_ends_guards_pass": false,
+              "memory_high": 835,
+              "met": false,
+              "n": 32,
+              "order_pass": true,
+              "reclaims": 171,
+              "refusals_pass": true,
+              "refusals_unclassified": 0,
+              "refusals_with_idle_lease": 0,
+              "unknown": 0,
+              "valid": true,
+              "wrong": 0
+            },
+            {
+              "dir": "/srv/e15/runs/squeeze/ship-300/N40-repeat",
+              "guard": false,
+              "guards": 0,
+              "guards_pass": true,
+              "host_memory_with_idle_lease": 0,
+              "lease_ends_guards_pass": false,
+              "memory_high": 18026,
+              "met": true,
+              "n": 40,
+              "order_pass": true,
+              "reclaims": 276,
+              "refusals_pass": true,
+              "refusals_unclassified": 0,
+              "refusals_with_idle_lease": 0,
+              "unknown": 0,
+              "valid": true,
+              "wrong": 0
+            }
+          ],
+          "sbx_rungs": [
+            {
+              "dir": "/srv/e15/runs/squeeze/sbx/N40-sq",
+              "memory_abort": null,
+              "n": 40,
+              "oom_kills": 0
+            }
+          ],
+          "stop_n": 40,
+          "stopped_by": "reclaim_rate",
+          "totals": {
+            "guards": 0,
+            "host_memory_with_idle_lease": 0,
+            "memory_high": 19288,
+            "reclaims": 551,
+            "refusals_with_idle_lease": 0,
+            "unknown": 0,
+            "victim_executing": 0,
+            "wrong": 0
+          }
+        },
+        "squeeze-256": null
+      },
+      "why": []
+    },
+    "4": {
+      "inputs": [
+        "/srv/e15/runs/default/ship-300/N1-probe-build/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-file_ops/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-host_infra/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-interpreter/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-lint_check/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-network/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-opaque/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-other/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-process/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-read/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-search/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-shell_read/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-test/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-unparsed/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-vcs/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-wait/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-probe-write/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-s1/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-s2/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-s3/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-s4/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N1-s5/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N128/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N160/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N80/lease_ends.json",
+        "/srv/e15/runs/default/ship-300/N96/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-build/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-host_infra/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-opaque/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_analyze/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_grep/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_import/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_shmem/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_short/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_test/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-s1/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-s2/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-s3/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-s4/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N1-smoke/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-120/N128-lat/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-build/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-host_infra/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-opaque/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_analyze/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_grep/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_import/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_shmem/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_short/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_test/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-s1/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-s2/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-s3/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-s4/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N1-smoke/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-30/N128-lat/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-lat/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-build/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-host_infra/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-opaque/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_analyze/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_grep/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_import/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_shmem/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_short/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_test/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-s1/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-s2/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-s3/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-s4/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N1-smoke/lease_ends.json",
+        "/srv/e15/runs/pycache/ship-300/N128-lat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-probe-build/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-probe-host_infra/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-probe-opaque/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-probe-py_analyze/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-probe-py_grep/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-probe-py_import/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-probe-py_shmem/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-probe-py_short/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-probe-py_test/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-s1/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-s2/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-s3/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1-s4/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N1/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N16-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N16/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N24-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N24/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N32-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N32/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N40-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N40/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N8-repeat/lease_ends.json",
+        "/srv/e15/runs/squeeze/ship-300/N8/lease_ends.json"
+      ],
+      "missing": [],
+      "name": "notices",
+      "pass": true,
+      "value": {
+        "ended_after_sweep": 0,
+        "ended_by_run_cut": 2,
+        "false": 0,
+        "false_rungs": [],
+        "invalid": 0,
+        "invalid_rungs": [],
+        "live_at_stop": 425,
+        "null": 55,
+        "r16_met": true,
+        "rule": "E17B-R16: met when no rung is false, every rung is valid, and at least one rung is true",
+        "rungs": 97,
+        "true": 42
+      },
+      "why": []
+    },
+    "5": {
+      "inputs": [
+        "/srv/e15/runs/pycache/ship-120/N1-probe-build/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-host_infra/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-opaque/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_analyze/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_grep/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_import/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_shmem/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_short/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-probe-py_test/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-s1/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-s2/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-s3/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-s4/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N1-smoke/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-120/N128-lat/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-build/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-host_infra/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-opaque/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_analyze/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_grep/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_import/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_shmem/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_short/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-probe-py_test/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-s1/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-s2/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-s3/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-s4/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N1-smoke/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-30/N128-lat/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-lat/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-build/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-host_infra/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-opaque/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_analyze/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_grep/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_import/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_shmem/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_short/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-probe-py_test/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-s1/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-s2/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-s3/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-s4/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N1-smoke/vm_age_lease.json",
+        "/srv/e15/runs/pycache/ship-300/N128-lat/vm_age_lease.json"
+      ],
+      "missing": [],
+      "name": "memory returns and the workspace stays cached",
+      "pass": null,
+      "value": {
+        "first_half": {
+          "pooled": {
+            "absolute_pinned": 709,
+            "absolute_readings": 1323,
+            "follows_false": 0,
+            "follows_true": 78,
+            "judged_readings": 78,
+            "not_judged_low_growth": 253,
+            "pinned_share": 0.5359032501889645,
+            "share_true": 1.0
+          },
+          "rungs": [
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-build",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-host_infra",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-opaque",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_analyze",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_grep",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_import",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_shmem",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_short",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_test",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-s1",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-s2",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 1,
+              "pinned_share": 0.75,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-s3",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 1,
+              "pinned_share": 0.375,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 0.3333333333333333,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-s4",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 1,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-smoke",
+              "share_true": null
+            },
+            {
+              "arm": "ship-120",
+              "follows_false": 0,
+              "follows_true": 25,
+              "mapping_valid": true,
+              "n": 128,
+              "not_judged_low_growth": 87,
+              "pinned_share": 0.5339578454332553,
+              "pinned_share_of_judged": 0.76,
+              "pinned_vm_share": 0.5051903114186851,
+              "rung": "/srv/e15/runs/pycache/ship-120/N128-lat",
+              "share_true": 1.0
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-build",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-host_infra",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-opaque",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_analyze",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_grep",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_import",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_shmem",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_short",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_test",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-s1",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-s2",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-s3",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 0.25,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 0.25,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-s4",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 1,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-smoke",
+              "share_true": null
+            },
+            {
+              "arm": "ship-30",
+              "follows_false": 0,
+              "follows_true": 4,
+              "mapping_valid": true,
+              "n": 128,
+              "not_judged_low_growth": 63,
+              "pinned_share": 0.36533957845433257,
+              "pinned_share_of_judged": 0.5,
+              "pinned_vm_share": 0.35989717223650386,
+              "rung": "/srv/e15/runs/pycache/ship-30/N128-lat",
+              "share_true": 1.0
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-lat",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-build",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-host_infra",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-opaque",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_analyze",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_grep",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_import",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_shmem",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_short",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": null,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": null,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_test",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-s1",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-s2",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 0,
+              "pinned_share": 0.6666666666666666,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-s3",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 2,
+              "pinned_share": 0.875,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 0.6666666666666666,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-s4",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 0,
+              "mapping_valid": true,
+              "n": 1,
+              "not_judged_low_growth": 1,
+              "pinned_share": 1.0,
+              "pinned_share_of_judged": null,
+              "pinned_vm_share": 1.0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-smoke",
+              "share_true": null
+            },
+            {
+              "arm": "ship-300",
+              "follows_false": 0,
+              "follows_true": 49,
+              "mapping_valid": true,
+              "n": 128,
+              "not_judged_low_growth": 96,
+              "pinned_share": 0.6941176470588235,
+              "pinned_share_of_judged": 0.7755102040816326,
+              "pinned_vm_share": 0.6779661016949152,
+              "rung": "/srv/e15/runs/pycache/ship-300/N128-lat",
+              "share_true": 1.0
+            }
+          ]
+        },
+        "point": "pycache",
+        "reported": {},
+        "second_half": {
+          "ratio_to_sbx_max": 0.8803421251707306,
+          "ratio_to_sbx_min": 0.18723390383449112,
+          "rungs": [
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-build",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-host_infra",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-opaque",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_analyze",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_grep",
+              "sbx_median_py_grep_ms": 394.794
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_import",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_shmem",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_short",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-probe-py_test",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 2,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-s1",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": 1330.773,
+              "n": 1,
+              "ratio_to_sbx": 0.8663627261162751,
+              "replacement_leases": 1,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-s2",
+              "sbx_median_py_grep_ms": 1536.046
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": 252.853,
+              "n": 1,
+              "ratio_to_sbx": 0.629391500017424,
+              "replacement_leases": 1,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-s3",
+              "sbx_median_py_grep_ms": 401.742
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": 252.5335,
+              "n": 1,
+              "ratio_to_sbx": 0.6377793071226079,
+              "replacement_leases": 4,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-s4",
+              "sbx_median_py_grep_ms": 395.9575
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-120/N1-smoke",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-120",
+              "median_first_py_grep_ms": 305.024,
+              "n": 128,
+              "ratio_to_sbx": 0.18761217402643096,
+              "replacement_leases": 266,
+              "rung": "/srv/e15/runs/pycache/ship-120/N128-lat",
+              "sbx_median_py_grep_ms": 1625.822
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-build",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-host_infra",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-opaque",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_analyze",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_grep",
+              "sbx_median_py_grep_ms": 394.794
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_import",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_shmem",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_short",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-probe-py_test",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 4,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-s1",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": 1317.614,
+              "n": 1,
+              "ratio_to_sbx": 0.857795925382443,
+              "replacement_leases": 2,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-s2",
+              "sbx_median_py_grep_ms": 1536.046
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": 252.398,
+              "n": 1,
+              "ratio_to_sbx": 0.6282589323496174,
+              "replacement_leases": 1,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-s3",
+              "sbx_median_py_grep_ms": 401.742
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": 251.16649999999998,
+              "n": 1,
+              "ratio_to_sbx": 0.634326916398856,
+              "replacement_leases": 9,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-s4",
+              "sbx_median_py_grep_ms": 395.9575
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 1,
+              "rung": "/srv/e15/runs/pycache/ship-30/N1-smoke",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-30",
+              "median_first_py_grep_ms": 438.097,
+              "n": 128,
+              "ratio_to_sbx": 0.2694618476069336,
+              "replacement_leases": 753,
+              "rung": "/srv/e15/runs/pycache/ship-30/N128-lat",
+              "sbx_median_py_grep_ms": 1625.822
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 1,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-lat",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-build",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-host_infra",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-opaque",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_analyze",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_grep",
+              "sbx_median_py_grep_ms": 394.794
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_import",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_shmem",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_short",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-probe-py_test",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 1,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-s1",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": 1352.246,
+              "n": 1,
+              "ratio_to_sbx": 0.8803421251707306,
+              "replacement_leases": 1,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-s2",
+              "sbx_median_py_grep_ms": 1536.046
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": 251.934,
+              "n": 1,
+              "ratio_to_sbx": 0.6271039622444254,
+              "replacement_leases": 1,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-s3",
+              "sbx_median_py_grep_ms": 401.742
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 1,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-s4",
+              "sbx_median_py_grep_ms": 395.9575
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": null,
+              "n": 1,
+              "ratio_to_sbx": null,
+              "replacement_leases": 0,
+              "rung": "/srv/e15/runs/pycache/ship-300/N1-smoke",
+              "sbx_median_py_grep_ms": null
+            },
+            {
+              "arm": "ship-300",
+              "median_first_py_grep_ms": 304.409,
+              "n": 128,
+              "ratio_to_sbx": 0.18723390383449112,
+              "replacement_leases": 133,
+              "rung": "/srv/e15/runs/pycache/ship-300/N128-lat",
+              "sbx_median_py_grep_ms": 1625.822
+            }
+          ],
+          "rungs_without_sbx": 35
+        }
+      },
+      "why": []
+    }
+  },
+  "excluded_rungs": [],
+  "moca_commit": "c3adf4909df48aa9d167d366ee95278b3aff87ff",
+  "note": "criteria 1-4 apply SPEC 7.5's fixed bars (E17B-R40); criterion 5's pass stays null until its thresholds are sealed (Task 13)",
+  "runs": "/srv/e15/runs"
+}

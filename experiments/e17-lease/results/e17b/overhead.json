@@ -1,0 +1,160 @@
+{
+  "classes": {
+    "build": {
+      "added_ms": 3.904,
+      "reference_ms": -34.0,
+      "reference_n": 20,
+      "ship_ms": -30.096,
+      "ship_n": 20
+    },
+    "file_ops": {
+      "added_ms": 7.763,
+      "reference_ms": -528.876,
+      "reference_n": 20,
+      "ship_ms": -521.114,
+      "ship_n": 20
+    },
+    "host_infra": {
+      "added_ms": 8.6,
+      "reference_ms": -13.806,
+      "reference_n": 20,
+      "ship_ms": -5.206,
+      "ship_n": 20
+    },
+    "interpreter": {
+      "added_ms": 6.86,
+      "reference_ms": -6.902,
+      "reference_n": 20,
+      "ship_ms": -0.043,
+      "ship_n": 20
+    },
+    "lint_check": {
+      "added_ms": 5.455,
+      "reference_ms": -25.996,
+      "reference_n": 20,
+      "ship_ms": -20.541,
+      "ship_n": 20
+    },
+    "network": {
+      "added_ms": 10.891,
+      "reference_ms": -89.338,
+      "reference_n": 20,
+      "ship_ms": -78.447,
+      "ship_n": 20
+    },
+    "opaque": {
+      "added_ms": -1.873,
+      "reference_ms": -13.606,
+      "reference_n": 20,
+      "ship_ms": -15.479,
+      "ship_n": 20
+    },
+    "other": {
+      "added_ms": -5.492,
+      "reference_ms": -47.504,
+      "reference_n": 20,
+      "ship_ms": -52.996,
+      "ship_n": 20
+    },
+    "process": {
+      "added_ms": 1.603,
+      "reference_ms": -48.216,
+      "reference_n": 20,
+      "ship_ms": -46.613,
+      "ship_n": 20
+    },
+    "read": {
+      "added_ms": 6.655,
+      "reference_ms": -13.674,
+      "reference_n": 20,
+      "ship_ms": -7.019,
+      "ship_n": 20
+    },
+    "search": {
+      "added_ms": 1.891,
+      "reference_ms": -25.916,
+      "reference_n": 20,
+      "ship_ms": -24.025,
+      "ship_n": 20
+    },
+    "shell_read": {
+      "added_ms": 2.547,
+      "reference_ms": -105.917,
+      "reference_n": 20,
+      "ship_ms": -103.37,
+      "ship_n": 20
+    },
+    "test": {
+      "added_ms": -29.516,
+      "reference_ms": -4.837,
+      "reference_n": 20,
+      "ship_ms": -34.353,
+      "ship_n": 20
+    },
+    "unparsed": {
+      "added_ms": 0.585,
+      "reference_ms": -106.853,
+      "reference_n": 20,
+      "ship_ms": -106.267,
+      "ship_n": 20
+    },
+    "vcs": {
+      "added_ms": 3.413,
+      "reference_ms": -18.284,
+      "reference_n": 20,
+      "ship_ms": -14.871,
+      "ship_n": 20
+    },
+    "wait": {
+      "added_ms": 2.84,
+      "reference_ms": -60.722,
+      "reference_n": 20,
+      "ship_ms": -57.883,
+      "ship_n": 20
+    },
+    "write": {
+      "added_ms": 3.075,
+      "reference_ms": -8.701,
+      "reference_n": 20,
+      "ship_ms": -5.627,
+      "ship_n": 20
+    }
+  },
+  "comparable": true,
+  "comparable_reasons": [],
+  "global_median_ms": {
+    "added": 2.282,
+    "reference": -34.112,
+    "ship": -31.831
+  },
+  "median_added_ms": 3.075,
+  "note": "class medians: median added latency (observed - planned) of each class's probe calls at N=1; added_ms = ship - reference",
+  "only_reference": [],
+  "only_ship": [],
+  "overhead_ms": {
+    "added": -4.1,
+    "reference": -25.996,
+    "ship": -30.096
+  },
+  "probe_failed": {
+    "reference": {},
+    "ship": {}
+  },
+  "reference": {
+    "corpus_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+    "driver_bin_sha256": "4971f732ec037686f65b6f97ef5f3c06911d0eae8139b4624bbc82552fd3ff9d",
+    "library_sha256": "3c8251383a81239366d5e9c4781af747f4c67cb18b75dc93de4db7045cce7b5f",
+    "path": "/Users/paolo/gh/moca-experiments/.worktrees/e17b-bringup/experiments/e17-lease/analysis/../../e15-session-density/results/metal/baseline/default/resident-300/N1/baseline.json",
+    "point_sig": "0124f0509c32954356a90c6e5d9e7975069e2de4c0ccbb44e994cf829bc16db8"
+  },
+  "same_corpus": true,
+  "same_library": true,
+  "same_point_sig": true,
+  "ship": {
+    "corpus_sha256": "24050ae8ac96b4cd25e211ebaa961333009bdc6fa083b667909f1ae3ce8a3132",
+    "driver_bin_sha256": "af058bb0f4710769af186322629aca44fc5aa2456717340c22b37f9f3831ebfd",
+    "library_sha256": "3c8251383a81239366d5e9c4781af747f4c67cb18b75dc93de4db7045cce7b5f",
+    "path": "/tmp/kagenti/e17b-results/baseline.probe-overhead.json",
+    "point_sig": "0124f0509c32954356a90c6e5d9e7975069e2de4c0ccbb44e994cf829bc16db8"
+  }
+}
