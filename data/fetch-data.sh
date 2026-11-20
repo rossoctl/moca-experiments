@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Download the raw experiment archives from the data-v1/v3 releases, verify their sha256, and
+# Download the raw experiment archives from the data-v1/v3/v4/v5 releases, verify their sha256, and
 # unpack them into the experiment directories. See data/MANIFEST.md.
 #
 # The data-v1 archives were built before the 2026-11 experiments/ reorganization, so their
 # members still carry the old paths (e15/results/..., e16/results/...); dest_of/member_of map
 # them. data-v3 already uses the new layout.
-#   data/fetch-data.sh [name ...]     names: e15-metal e16-resident-inf e16-sbx e17-pycache baseline (default: all)
+#   data/fetch-data.sh [name ...]     names: e15-metal e16-resident-inf e16-sbx e17-pycache baseline e17b (default: all)
 set -euo pipefail
 
 REPO="${MOCA_EXPERIMENTS_REPO:-rossoctl/moca-experiments}"
@@ -20,6 +20,7 @@ sha_of() {
     e16-sbx) echo 3fc449e171882cf1eabd43c0006226387b4c91ad3938c812f410c5dc2a35df81 ;;
     e17-pycache) echo 773b8391594b3c6bd63d7cd887422a7988c9aeea5b6c47da13face7b8da36329 ;;
     baseline) echo cb878d9d4eca74189b2efc44413b586bb69813980b16f7ceb32f3923db6c223e ;;
+    e17b) echo c594c171edc54cf6382ac1c222eddac35566eac551c7654651d1eb797bcf7cba ;;
     *) return 1 ;;
   esac
 }
@@ -28,6 +29,7 @@ tag_of() {
     e15-metal|e16-resident-inf|e16-sbx) echo data-v1 ;;
     e17-pycache) echo data-v3 ;;
     baseline) echo data-v4 ;;
+    e17b) echo data-v5 ;;
     *) return 1 ;;
   esac
 }
@@ -37,7 +39,7 @@ dest_of() {
     e16-resident-inf) echo experiments/e16-low-duty/results/resident-inf ;;
     e16-sbx) echo experiments/e16-low-duty/results/sbx ;;
     e17-pycache) echo experiments/e17-lease/results/raw/pycache ;;
-    baseline) echo . ;;
+    baseline|e17b) echo . ;;
     *) return 1 ;;
   esac
 }
@@ -47,7 +49,7 @@ member_of() {
     e16-resident-inf) echo e16/results/resident-inf ;;
     e16-sbx) echo e16/results/sbx ;;
     e17-pycache) echo experiments/e17-lease/results/raw/pycache ;;
-    baseline) echo . ;;
+    baseline|e17b) echo . ;;
     *) return 1 ;;
   esac
 }
@@ -55,7 +57,7 @@ member_of() {
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
 names=("$@")
-[ ${#names[@]} -gt 0 ] || names=(e15-metal e16-resident-inf e16-sbx e17-pycache baseline)
+[ ${#names[@]} -gt 0 ] || names=(e15-metal e16-resident-inf e16-sbx e17-pycache baseline e17b)
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -75,7 +77,7 @@ for n in "${names[@]}"; do
   tar -xzf "$tmp/$f" -C "$tmp/x"
   dest="$(dest_of "$n")"; member="$(member_of "$n")"
   if [ "$member" = "." ]; then
-    # members already carry full repo-relative paths (baseline)
+    # members already carry full repo-relative paths (baseline, e17b)
     tar -xzf "$tmp/$f" -C "$ROOT"
     echo "extracted $n at the repo root"
   else
