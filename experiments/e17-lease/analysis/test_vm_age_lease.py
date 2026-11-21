@@ -48,15 +48,16 @@ def call(key, i, cls, send, ms, **kw):
                  "status": "ok", "in_window": True}, **kw)
 
 
-def rung(tmp_path, log, mem, calls=(), t_end=120, name="rung", params=None):
-    """mem(t) -> {cgroup: bytes} sampled at 1 Hz for t in 0..t_end."""
+def rung(tmp_path, log, mem, calls=(), t_end=120, name="rung", params=None, extra=None):
+    """mem(t) -> {cgroup: bytes} sampled at 1 Hz for t in 0..t_end. extra(t) -> more sample fields (E17c's
+    vm_fp / vm_dirty), merged into each line."""
     d = tmp_path / name
     d.mkdir()
     (d / "worker.log").write_text("microvm-worker: attached, serving execs\n" + "".join(log))
     (d / "calls.jsonl").write_text("".join(json.dumps(c) + "\n" for c in calls))
     with open(d / "samples.jsonl", "w") as f:
         for t in range(t_end + 1):
-            f.write(json.dumps({"ts": T0 + t + 0.3, "vm_mem": mem(t)}) + "\n")
+            f.write(json.dumps(dict({"ts": T0 + t + 0.3, "vm_mem": mem(t)}, **(extra(t) if extra else {}))) + "\n")
     if params is not None:
         (d / "params.json").write_text(json.dumps(params))
     return str(d)
@@ -515,3 +516,194 @@ def test_same_second_swap_that_does_not_explain_the_samples_stays_invalid(tmp_pa
     r = L.analyse(rung(tmp_path, log, mem, t_end=60))
     assert r["mapping_valid"] is False and r["same_second_reorders"] == []
     assert r["vms"] is None
+
+
+# ---- E17c (PLAN-E17C Task 6): the charge readings on the worker's footprint (vm_fp) ----------------
+
+GOLDEN_E17B = os.path.join(HERE, "testdata", "vm_age_lease-e17b-shaped.json")
+
+
+def e17b_shaped_rung(tmp_path, name="e17b"):
+    """An E17b rung (no vm_fp, no vm_dirty in its samples): lease A on vm-1 with a judged py_analyze (10-30 s)
+    and an idle end at 120 s, then a replacement lease on vm-2; lease B on vm-3 with a py_test whose next call
+    is within 15 s. Every reading path of the module runs on it."""
+    log = [restore(0, "vm-1"), lstart(0, "A", "vm-1"), restore(1, "vm-3"), lstart(1, "B", "vm-3"),
+           execl(10, "B", "vm-3"), execl(21, "B", "vm-3"), execl(30, "A", "vm-1"),
+           lend(120, "A", "vm-1", "idle"), destroy(120, "vm-1"), lend(150, "B", "vm-3", "memory_reclaim"),
+           destroy(150, "vm-3"), restore(125, "vm-4"), lstart(125, "A", "vm-4"), execl(127, "A", "vm-4"),
+           execl(131, "A", "vm-4")]
+
+    def mem(t):
+        m = {}
+        if t < 120:
+            m["pool-0"] = (100 if t < 10 else min(900, 100 + 80 * (t - 10)) if t <= 30 else 300) * MIB
+        if 1 <= t < 150:
+            m["pool-1"] = (200 if t < 5 else 1000) * MIB
+        if t >= 125:
+            m["pool-2"] = 150 * MIB
+        return m
+    calls = [call("A", 1, "py_analyze", 10, 20000), call("B", 1, "py_test", 5, 5000),
+             call("B", 2, "py_short", 20, 500), call("A", 2, "py_short", 126.5, 500),
+             call("A", 3, "py_grep", 130.5, 600)]
+    d = rung(tmp_path, log, mem, calls, t_end=200, name=name, params={"arm": "ship-300"})
+    with open(os.path.join(d, "shmem.json"), "w") as f:
+        json.dump({"calls": {"A:1": 0, "B:1": None}, "turns": {}, "unexpected_turns": {},
+                   "tolerance_bytes": 1 << 20}, f)
+    return d
+
+
+def main_bytes(d):
+    L.main([d, "--sbx-median-ms", "400"])
+    with open(os.path.join(d, "vm_age_lease.json")) as f:
+        return f.read().replace(json.dumps(d)[1:-1], "RUNDIR")
+
+
+def test_rung_without_vm_fp_is_byte_identical_to_e17b(tmp_path):
+    # the golden was written by vm_age_lease.py at e131f21, before the E17c readings existed
+    with open(GOLDEN_E17B) as f:
+        assert main_bytes(e17b_shaped_rung(tmp_path)) == f.read()
+
+
+def fp_fixture(tmp_path, name="rung", fp_after=300, fp_drop=150, next_send=None, end_t=150,
+               end_reason="idle", fp_gap=(), dirty_gap=(), t_end=200):
+    """heavy_fixture's lease VM (pool-0) with E17c samples. memory.current: 100 MiB, peak 900 MiB over the
+    py_analyze (10-30 s), then 880 MiB (the host's clean cache stays charged). vm_fp: 90 MiB, peak 800 MiB,
+    `fp_after` from 31 s, `fp_drop` from 60 s (the guest's drop). vm_dirty: 4 MiB, 1 MiB from 60 s. The lease
+    ends (`end_reason`) and the VM goes at `end_t`. fp_gap / dirty_gap: seconds whose line lacks the VM."""
+    log = [restore(0, "vm-1"), lstart(0, "A", "vm-1"), execl(30, "A", "vm-1")]
+    calls = [call("A", 1, "py_analyze", 10, 20000)]
+    if next_send is not None:
+        log.append(execl(next_send + 1, "A", "vm-1"))
+        calls.append(call("A", 2, "py_short", next_send, 500))
+    if end_t is not None:
+        log += [lend(end_t, "A", "vm-1", end_reason), destroy(end_t, "vm-1")]
+    live = lambda t: end_t is None or t < end_t
+
+    def mem(t):
+        if not live(t):
+            return {}
+        return {"pool-0": (100 if t < 10 else min(900, 100 + 80 * (t - 10)) if t <= 30 else 880) * MIB}
+
+    def extra(t):
+        if not live(t):
+            return {"vm_fp": {}, "vm_dirty": {}}
+        fp = 90 if t < 10 else min(800, 90 + 80 * (t - 10)) if t <= 30 else fp_after if t < 60 else fp_drop
+        return {"vm_fp": {} if t in fp_gap else {"pool-0": fp * MIB},
+                "vm_dirty": {} if t in dirty_gap else {"pool-0": (4 if t < 60 else 1) * MIB}}
+    d = rung(tmp_path, log, mem, calls, t_end=t_end, name=name, extra=extra)
+    with open(os.path.join(d, "shmem.json"), "w") as f:
+        json.dump({"calls": {"A:1": 0}, "turns": {}, "unexpected_turns": {}, "tolerance_bytes": 1 << 20}, f)
+    return d
+
+
+def test_fp_readings_at_15s_and_45s(tmp_path):
+    f = run_fpr(fp_fixture(tmp_path))
+    e = f["execs"][0]
+    # E17b's fields unchanged (memory.current)
+    assert e["after_15s_bytes"] == 880 * MIB and e["peak_bytes"] == 900 * MIB and e["follows"] is False
+    # the footprint, memory.current and dirty at +15 s (45 s) and +45 s (75 s)
+    assert e["fp_15s_bytes"] == 300 * MIB and e["fp_45s_bytes"] == 150 * MIB
+    assert e["mem_45s_bytes"] == 880 * MIB
+    assert e["dirty_15s_bytes"] == 4 * MIB and e["dirty_45s_bytes"] == 1 * MIB
+    assert e["why_null_45s"] is None
+    assert e["fp_ceiling_ratio_15s"] == pytest.approx(300 / 1024.0)
+    assert e["fp_ceiling_ratio_45s"] == pytest.approx(150 / 1024.0)
+
+
+def test_fp_45s_null_when_next_call_within_45s(tmp_path):
+    # the next call at 60 s is 30 s after the Exec's end: +15 s stands, +45 s is the next call's charge
+    e = run_fpr(fp_fixture(tmp_path, next_send=60))["execs"][0]
+    assert e["fp_15s_bytes"] == 300 * MIB and e["fp_ceiling_ratio_15s"] is not None
+    assert e["fp_45s_bytes"] is None and e["mem_45s_bytes"] is None and e["dirty_45s_bytes"] is None
+    assert e["fp_ceiling_ratio_45s"] is None and "next call" in e["why_null_45s"]
+
+
+def test_fp_45s_null_when_no_sample(tmp_path):
+    # the VM is gone at +45 s (destroyed at 70 s)
+    e = run_fpr(fp_fixture(tmp_path, end_t=70, end_reason="memory_reclaim"))["execs"][0]
+    assert e["fp_45s_bytes"] is None and e["mem_45s_bytes"] is None and "no sample" in e["why_null_45s"]
+
+
+def test_vm_missing_from_vm_fp_is_no_reading_never_zero(tmp_path):
+    # the sampler left the VM out of vm_fp around +15 s (a memory.stat field missing: no line within the 1 s
+    # tolerance has it) but kept its vm_dirty; around +45 s the other way round
+    f = run_fpr(fp_fixture(tmp_path, fp_gap=(44, 45, 46), dirty_gap=(74, 75, 76)))
+    e = f["execs"][0]
+    assert e["fp_15s_bytes"] is None and e["fp_ceiling_ratio_15s"] is None and e["follows_fp"] is None
+    assert e["dirty_15s_bytes"] == 4 * MIB
+    assert e["fp_45s_bytes"] == 150 * MIB and e["dirty_45s_bytes"] is None
+    assert f["fp_15s_readings"] == 0 and f["pinned_share_fp_15s"] is None
+    assert f["fp_45s_readings"] == 1
+
+
+def test_follow_rule_on_vm_fp(tmp_path):
+    # on vm_fp: start 90, peak 800, dShmem 0 -> freed 710; 300 <= 800 - 355 follows, while on memory.current
+    # (880 > 900 - 400) it does not: the host's clean cache is what stays
+    f = run_fpr(fp_fixture(tmp_path))
+    e = f["execs"][0]
+    assert (e["fp_start_bytes"], e["fp_peak_bytes"], e["fp_growth_bytes"], e["fp_freed_bytes"]) == (
+        90 * MIB, 800 * MIB, 710 * MIB, 710 * MIB)
+    assert e["follows_fp"] is True and e["why_null_fp"] is None
+    assert f["follows_fp_true"] == 1 and f["follows_fp_false"] == 0 and f["share_true_fp"] == 1.0
+    assert f["share_true"] == 0.0  # E17b's, on memory.current, unchanged
+    e = run_fpr(fp_fixture(tmp_path, fp_after=700, name="stays"))["execs"][0]
+    assert e["follows_fp"] is False  # 700 > 445
+
+
+def test_follow_rule_on_vm_fp_needs_growth_and_quiet_15s(tmp_path):
+    f = run_fpr(fp_fixture(tmp_path, next_send=40))
+    assert f["execs"][0]["follows_fp"] is None and "next call" in f["execs"][0]["why_null_fp"]
+    assert f["share_true_fp"] is None
+
+
+def test_pinned_shares_on_vm_fp(tmp_path):
+    # pinned at +15 s (950 of 1024 MiB), dropped by +45 s (150 MiB)
+    f = run_fpr(fp_fixture(tmp_path, fp_after=950))
+    assert f["fp_15s_readings"] == 1 and f["fp_15s_pinned"] == 1 and f["pinned_share_fp_15s"] == 1.0
+    assert f["fp_45s_readings"] == 1 and f["fp_45s_pinned"] == 0 and f["pinned_share_fp_45s"] == 0.0
+    # E17b's pinned share on memory.current at +15 s stays beside them (880/1024 < 0.9)
+    assert f["absolute"]["pinned_share"] == 0.0 and f["absolute"]["readings"] == 1
+    # the judged-only variants (judged on vm_fp's follow rule)
+    assert f["fp_15s_judged_readings"] == 1 and f["pinned_share_fp_15s_of_judged"] == 1.0
+    assert f["fp_45s_judged_readings"] == 1 and f["pinned_share_fp_45s_of_judged"] == 0.0
+
+
+def test_idle_tail_reading(tmp_path):
+    # idle end at 150 s: the last sample before it (149.3 s) is 119 s after the Exec's end (30 s)
+    f = run_fpr(fp_fixture(tmp_path))
+    assert f["idle_tail"] == [{"vm": "vm-1", "session": "A", "end": float(T0 + 150), "sample_ts": T0 + 149.3,
+                               "last_exec_end": float(T0 + 30), "fp_bytes": 150 * MIB,
+                               "fp_ceiling_ratio": pytest.approx(150 / 1024.0), "why_null": None}]
+    assert f["fp_idle_tail_readings"] == 1 and f["fp_idle_tail_pinned"] == 0
+    assert f["pinned_share_fp_idle_tail"] == 0.0 and f["idle_tail_leases"] == 1
+
+
+def test_idle_tail_needs_45s_after_the_last_exec(tmp_path):
+    # idle end at 70 s: the last sample (69.3 s) is 39.3 s after the Exec's end
+    f = run_fpr(fp_fixture(tmp_path, end_t=70))
+    t = f["idle_tail"][0]
+    assert t["fp_bytes"] is None and t["fp_ceiling_ratio"] is None and "45 s" in t["why_null"]
+    assert f["fp_idle_tail_readings"] == 0 and f["pinned_share_fp_idle_tail"] is None
+    assert f["idle_tail_leases"] == 1
+    # the last Exec is the lease's last, not its heavy one: a py_short ending at 120.5 s voids a 150 s tail
+    f = run_fpr(fp_fixture(tmp_path, next_send=120, name="late"))
+    assert f["idle_tail"][0]["last_exec_end"] == pytest.approx(T0 + 120.5)
+    assert f["idle_tail"][0]["fp_bytes"] is None
+
+
+def test_idle_tail_only_for_idle_ends(tmp_path):
+    f = run_fpr(fp_fixture(tmp_path, end_reason="memory_reclaim"))
+    assert f["idle_tail"] == [] and f["idle_tail_leases"] == 0 and f["pinned_share_fp_idle_tail"] is None
+    f = run_fpr(fp_fixture(tmp_path, end_t=None, name="no-end"))  # a lease still live at the window's end
+    assert f["idle_tail"] == []
+
+
+def test_idle_tail_vm_missing_from_vm_fp_is_null(tmp_path):
+    f = run_fpr(fp_fixture(tmp_path, fp_gap=(149,)))
+    t = f["idle_tail"][0]
+    assert t["fp_bytes"] is None and "vm_fp" in t["why_null"] and f["fp_idle_tail_readings"] == 0
+
+
+def test_idle_tail_pinned(tmp_path):
+    f = run_fpr(fp_fixture(tmp_path, fp_drop=1000))
+    assert f["fp_idle_tail_pinned"] == 1 and f["pinned_share_fp_idle_tail"] == 1.0

@@ -18,9 +18,10 @@ TS = "2026/11/16 10:00:00 "
 
 
 def phases(acq, res, run, dest=0, cold="restore", normalise=None):
+    # normalise=None: the worker at E17b's pin (no normalise_us); else moca #966's line, normalise_us after mount_us
     extra = "" if normalise is None else " normalise_us=%d" % normalise
-    return (TS + "vmpool: exec phases acquire_us=%d resume_us=%d vmresume_us=1 vsockdial_us=2 mount_us=3 run_us=%d "
-            'destroy_us=%d cold="%s"%s' % (acq, res, run, dest, cold, extra))
+    return (TS + "vmpool: exec phases acquire_us=%d resume_us=%d vmresume_us=1 vsockdial_us=2 mount_us=3%s run_us=%d "
+            'destroy_us=%d cold="%s"' % (acq, res, extra, run, dest, cold))
 
 
 def exec_line(key, vm, req=7):
@@ -73,6 +74,8 @@ def test_this_pins_worker_logs_no_normalise_phase(tmp_path):
     assert run["phase_corrected_walk_ms"] == 375.5
     assert r["phase_corrected_walk_median_ms"] == 375.5
     assert r["walk_observed_median_ms"] is None
+    # no normalise_us anywhere: none of the observed-walk keys is written (E17b's ownwalk.json is unchanged)
+    assert not [k for k in r if k.startswith("normalise_us")]
 
 
 def test_an_observed_normalise_phase_is_reported_and_checked(tmp_path):
@@ -86,6 +89,42 @@ def test_an_observed_normalise_phase_is_reported_and_checked(tmp_path):
     # repeat 2: A did not walk -> invalid, and the report's medians are withheld
     assert r["runs"][2]["valid"] is False and "A did not walk" in "; ".join(r["runs"][2]["invalid_reasons"])
     assert r["valid"] is False and r["median_walk_ms"] is None and r["walk_observed_median_ms"] is None
+    # the observed walk's median is withheld with the others; B's maximum stays, it is what B did
+    assert r["normalise_us_median_a"] is None and r["normalise_us_b_max"] == 0
+
+
+def test_the_walk_from_the_workers_own_phase(tmp_path):
+    # moca #966: normalise_us on the phase line, the lease start's ownership walk; 0 on B (a reset, known clean)
+    keys = ["ow-0", "ow-1", "ow-2"]
+    lines = repeat_lines("ow-0", 380000, 0) + repeat_lines("ow-1", 400000, 0) + repeat_lines("ow-2", 390000, 0)
+    d = rundir(tmp_path, keys, lines)
+    r = P.annotate(str(d))
+    assert r["valid"] is True
+    assert r["normalise_us_median_a"] == 390000 and r["normalise_us_b_max"] == 0
+    assert r["walk_observed_median_ms"] == 390.0
+    # the A - B inference stays beside it
+    assert r["median_walk_ms"] == 400.0 and r["phase_corrected_walk_median_ms"] == 375.5
+    assert all(x["walk_observed"]["reason"] is None for x in r["runs"])
+    p = subprocess.run([sys.executable, SCRIPT, str(d)], capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert "no normalise_us" not in p.stdout
+    j = json.loads((d / "ownwalk.json").read_text())
+    assert j["normalise_us_median_a"] == 390000 and j["normalise_us_b_max"] == 0
+
+
+def test_e17b_shaped_output_is_byte_identical(tmp_path):
+    # testdata/ownwalk-e17b-shaped: E17b's F10000 driver output and a worker.log in its pin's formats (no
+    # normalise_us); expected.json and expected.stdout are what this script wrote before moca #966's field existed
+    # (expected.json equals results/e17b/ownwalk/F10000.json)
+    src = os.path.join(HERE, "testdata", "ownwalk-e17b-shaped")
+    d = tmp_path / "F10000"
+    d.mkdir()
+    for n in ("ownwalk.json", "worker.log"):
+        (d / n).write_bytes(open(os.path.join(src, n), "rb").read())
+    p = subprocess.run([sys.executable, SCRIPT, str(d)], capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert (d / "ownwalk.json").read_bytes() == open(os.path.join(src, "expected.json"), "rb").read()
+    assert p.stdout == open(os.path.join(src, "expected.stdout")).read()
 
 
 def test_b_that_walked_is_invalid(tmp_path):
@@ -93,6 +132,7 @@ def test_b_that_walked_is_invalid(tmp_path):
     r = P.annotate(str(d))
     assert r["runs"][0]["walk_observed"]["B"] is True and r["runs"][0]["valid"] is False
     assert "B walked" in "; ".join(r["runs"][0]["invalid_reasons"])
+    assert r["normalise_us_b_max"] == 5000 and r["normalise_us_median_a"] is None
 
 
 def test_b_without_its_own_lease_start_is_invalid(tmp_path):

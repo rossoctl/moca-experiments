@@ -55,7 +55,7 @@ E15_RIG=$HERE/../../e15/rig
 
 POINT=pycache
 usage() {
-  echo "usage: reprobe.sh ARM   (ARM: one of point $POINT's: sbx resident-300 lease-30 lease-120 with E17B unset; with E17B=1: sbx ship-30 ship-120 ship-300 only)" >&2
+  echo "usage: reprobe.sh ARM   (ARM: one of point $POINT's: sbx resident-300 lease-30 lease-120 with E17B unset; with E17B=1: sbx ship-30 ship-120 ship-300 only; with E17C=1: sbx ship-300 ship-300-nd, E17c's arms, the E17b ones still accepted)" >&2
   exit 2
 }
 [ "$E15_HOST_PROFILE" = fresh-metal ] || die "E15_HOST_PROFILE=$E15_HOST_PROFILE: E17 runs on fresh-metal only"

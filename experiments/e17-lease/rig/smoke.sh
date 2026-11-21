@@ -11,7 +11,7 @@
 #        E15_WARMUP_S=60 E15_WINDOW_S=120 E15_TAG=smoke E15_START_ZERO=1 bash experiments/e15-session-density/rig/rung.sh ARM 1 pycache
 #      for ARM in sbx resident-300 lease-30 lease-120 -> /srv/e15/runs/pycache/ARM/N1-smoke/
 #      (E17B=1: sbx and the shipped-lease arms instead; the resident and E17a lease arms need the resident
-#      build, which the E17b profile skips)
+#      build, which the E17b profile skips; E17C=1: sbx ship-300 ship-300-nd, E17c's arms)
 #      (other E15_* environment passes through to rung.sh; E15_RUNG overrides the rung command)
 #   2. the sbx rung: every py_analyze call in calls.jsonl has status ok and exit 0, except a call
 #      the run's end cut (cause cut_at_end: not a failure, experiments/e15-session-density/driver/exec.go), and at least one
@@ -50,6 +50,8 @@ ARMS=(sbx resident-300 lease-30 lease-120)
 # arms listed, but e15_is_arm and worker_bin refuse resident-* and lease-* under E17B=1: their worker,
 # microvm-worker-resident, is the old-pin build (setup.sh does not build it under E17B=1).
 [ "${E17B:-}" != 1 ] || ARMS=(sbx ship-30 ship-120 ship-300)
+# E17c (E17C=1, which implies E17B=1 in lib.sh; PLAN-E17C Task 4): E17c's arms, sbx ship-300 ship-300-nd.
+[ "${E17C:-}" != 1 ] || ARMS=(sbx ship-300 ship-300-nd)
 RUNG=${E15_RUNG:-$E15_SRC/rig/rung.sh}
 START_ZERO=${E15_START_ZERO:-1}
 # Never preempt a rung someone else started (each rung.sh and the analyze check below stop E15's

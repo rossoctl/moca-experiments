@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E17b ownership walk (spec §7.4, PLAN-E17B Task 11 fix round 1): what the worker log shows of each ownwalk repeat.
+"""E17b/E17c ownership walk (spec §7.4, PLAN-E17B Task 11 fix round 1, PLAN-E17C Task 8): what the worker log shows of each ownwalk repeat.
 
   python3 experiments/e17-lease/analysis/ownwalk_phases.py RUNDIR   (RUNDIR/ownwalk.json and RUNDIR/worker.log)
 
@@ -16,14 +16,19 @@ back into RUNDIR/ownwalk.json, per repeat (key):
   lease_starts      the VMs of the key's `vmpool: lease start` lines: A's and B's, two different VMs. Fewer than
                     two means B did not start its own lease (not cold): the repeat is invalid.
   walk_observed     {"A", "B", "a_normalise_ms", "b_normalise_ms", "reason"}: whether A walked and B did not, from
-                    a `normalise_us=` field on the phase line. The worker at moca 8b787250 (and upstream/main
-                    0df74c38) measures Phases.Normalise but logs it on no line (logPhases and exec-timing omit it),
-                    so on that worker every value is null and `reason` says so; nothing is invalidated on a null.
+                    the `normalise_us=` field on the phase line. From moca #966 the phase line carries it (the
+                    lease start's ownership walk, 0 on an Exec that started no lease or needed no walk). The worker
+                    at moca 8b787250 (E17b's pin) measures Phases.Normalise but logs it on no line, so on that
+                    worker every value is null and `reason` says so (NO_FIELD); nothing is invalidated on a null.
                     When the field is there, a repeat whose A did not walk or whose B did is invalid.
 
-Top level: phase_corrected_walk_median_ms, walk_observed_median_ms (the median of A's normalise phase when every
-repeat observed it) and, when this invalidates a repeat, valid false with the median_* fields withheld (null), as
-the driver does. Exit 0, 1 when a repeat is invalid after this, 2 when an input is unreadable.
+Top level: phase_corrected_walk_median_ms, walk_observed_median_ms (the median of A's normalise phase, in ms, when
+every repeat observed it). When any phase line carries normalise_us (moca #966 on), also the walk as the worker
+itself timed it: normalise_us_median_a (the median of A's normalise_us over the repeats, null unless every A logged
+it) and normalise_us_b_max (the largest of B's, which must be 0; null unless every B logged it), beside the A - B
+inference (median_walk_ms, phase_corrected_walk_median_ms). Without the field neither key is written and the output
+is what E17b's was. When this invalidates a repeat: valid false with the median_* fields and
+normalise_us_median_a withheld (null), as the driver does; normalise_us_b_max stays. Exit 0, 1 when a repeat is invalid after this, 2 when an input is unreadable.
 """
 import json
 import os
@@ -112,6 +117,13 @@ def observe(run, execs, starts):
         run["invalid_reasons"] = (run.get("invalid_reasons") or []) + ["worker log: " + b_ for b_ in bad]
 
 
+def normalise_us(run):
+    """(A's, B's) normalise_us from the run's phase lines, each None when not logged."""
+    wp = run.get("worker_phases") or {}
+    return tuple(p.get("normalise_us") if isinstance((p or {}).get("normalise_us"), int) else None
+                 for p in (wp.get("a"), wp.get("b")))
+
+
 def annotate(rundir):
     with open(os.path.join(rundir, "ownwalk.json")) as f:
         rep = json.load(f)
@@ -123,6 +135,11 @@ def annotate(rundir):
     rep["phase_corrected_walk_median_ms"] = median(pc) if pc and len(pc) == len(runs) else None
     an = [r["walk_observed"]["a_normalise_ms"] for r in runs]
     rep["walk_observed_median_ms"] = median(an) if runs and None not in an else None
+    nus = [normalise_us(r) for r in runs]
+    if any(a is not None or b is not None for a, b in nus):  # moca #966 on; absent, the report is as before
+        a_us, b_us = [a for a, _ in nus], [b for _, b in nus if b is not None]
+        rep["normalise_us_median_a"] = median(a_us) if None not in a_us else None
+        rep["normalise_us_b_max"] = max(b_us) if len(b_us) == len(runs) else None
     newly = ["repeat %s: %s" % (r.get("rep"), "; ".join(x for x in r["invalid_reasons"] if x.startswith("worker log: ")))
              for r in runs if any(x.startswith("worker log: ") for x in r.get("invalid_reasons") or [])]
     if newly:
@@ -130,6 +147,8 @@ def annotate(rundir):
         rep["invalid_reasons"] = (rep.get("invalid_reasons") or []) + newly
         for k in ("median_a_ms", "median_b_ms", "median_walk_ms", "walk_observed_median_ms"):
             rep[k] = None
+        if "normalise_us_median_a" in rep:
+            rep["normalise_us_median_a"] = None
     return rep
 
 

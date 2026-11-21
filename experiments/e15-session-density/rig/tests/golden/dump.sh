@@ -13,6 +13,15 @@
 #   E15_ROOT=$R E15_TEST_ROOT=$R bash -c '. experiments/e15-session-density/rig/lib.sh; . experiments/e15-session-density/rig/points.sh; . experiments/e15-session-density/rig/tests/golden/dump.sh;
 #     e15_golden_point default' >experiments/e15-session-density/rig/tests/golden/point-default.txt
 #   (R ending in /e15-rig-test.root; arms.<profile>.txt with E15_HOST_PROFILE=<profile> e15_golden_arms "$R/env")
+#
+#   e15_golden_profile       every E15_*, E17B* and E17C* variable lib.sh leaves defined: its declare flags (export,
+#                            array) and value(s), one element per line, independent of the bash version;
+#                            $E15_ROOT is printed as <ROOT> and $HOME as <HOME>
+# profile-e17b-off.txt (E17B and E17C unset) and profile-e17b-on.txt (E17B=1, E17C unset) were written from the
+# tree BEFORE E17c touched lib.sh (e17c/plan, deb53c3), so the E17c profile is pinned off without a git ref:
+#   env -u E17B -u E17C E15_ROOT=$R E15_TEST_ROOT=$R bash -c '. experiments/e15-session-density/rig/lib.sh;
+#     . experiments/e15-session-density/rig/tests/golden/dump.sh; e15_golden_profile' >.../golden/profile-e17b-off.txt
+#   (the same with E17B=1 for profile-e17b-on.txt)
 
 E15_GOLDEN_ARMS="sbx resident-inf resident-300 control"
 
@@ -34,4 +43,19 @@ e15_golden_arms() {
     worker_env "$a" "$1"
     sed "s#$E15_ROOT#<ROOT>#g" "$1"
   done
+}
+
+e15_golden_profile() {
+  local v flags x vals
+  for v in $( (compgen -v E15_; compgen -v E17B; compgen -v E17C) | sort -u); do
+    flags=$(declare -p "$v" | cut -d' ' -f2)
+    case "$flags" in
+    *a*)
+      eval "vals=(\"\${${v}[@]}\")"
+      printf '%s %s (%s)\n' "$flags" "$v" "${#vals[@]}"
+      for x in "${vals[@]}"; do printf '  %s\n' "$x"; done
+      ;;
+    *) printf '%s %s=%s\n' "$flags" "$v" "${!v}" ;;
+    esac
+  done | sed -e "s#$E15_ROOT#<ROOT>#g" -e "s#$HOME#<HOME>#g"
 }

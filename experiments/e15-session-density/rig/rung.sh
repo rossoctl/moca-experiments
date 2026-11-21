@@ -4,6 +4,7 @@
 #
 #   ARM    sbx | resident-inf | resident-300 | control | lease-30 | lease-120   (lease-*: E17, fresh-metal)
 #          | ship-30 | ship-120 | ship-300   (E17b: E17B=1, fresh-metal; the shipped lease at that idle timeout)
+#          | ship-300-nd   (E17c: E17C=1, fresh-metal; ship-300 with the idle page-cache drop off)
 #   N      session population (>= 1)
 #   POINT  default | short | long | no-infra | no-chains | smoke | mem512 | lowduty   (points.sh: corpus
 #          /srv/e15/corpora/<its corpus>, library, workspace template, image size)
@@ -16,6 +17,9 @@
 #   E15_CORPUS_OVERRIDE  a probe corpus.jsonl to replay instead of POINT's (classprobe.sh)
 #   E15_START_ZERO     1: every session starts at its first call (probe runs)
 #   E15_MAX_SESSIONS   start at most this many sessions, then end the run early (probe runs)
+#   E17C_GATE_LIBRARY  E17c's gate-256 only (experiments/e17-lease/rig/chain-e17c.sh; E17C=1, POINT pycache-d64, with
+#                      E15_CORPUS_OVERRIDE): the gate library replayed instead of the point's, and py_analyze's stdout
+#                      (its peak RSS line) recorded too
 #   E15_SQUEEZE_MEMMAX_MB  POINT squeeze or squeeze-256 only (E17b): lower e15.slice to MemoryMax=MB MiB, MemoryHigh 1 GiB below,
 #                      with `systemctl set-property --runtime` before the worker starts; the slice's own values
 #                      (read with `systemctl show` first) are restored at the rung's end and on any error or signal
@@ -52,6 +56,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
 # shellcheck source=points.sh
 . "$HERE/points.sh"
+# E17c profile (E17C=1, which implies E17B=1): the same for E17C_MOCA_PIN, first.
+[ "${E17C:-}" != 1 ] || e17c_require_pin
 # E17b profile: refuse the placeholder or a malformed E17B_MOCA_PIN before any host change.
 [ "${E17B:-}" != 1 ] || { e17b_require_pin && e17b_require_build; }
 
@@ -103,6 +109,17 @@ if e15_is_squeeze "$POINT"; then
     exit 2
   }
 fi
+# E17c (PLAN-E17C Task 10): under E17C=1 pycache-d64 replays the 256 MiB library (points.sh), so it runs in 256 MiB
+# guests only. gate-256's rungs replay a gate library (E17C_GATE_LIBRARY) there, from a probe corpus.
+if [ "${E17C:-}" = 1 ] && [ "$POINT" = pycache-d64 ] && [ "$(worker_guest_ram_mb)" != 256 ]; then
+  echo "rung.sh: POINT pycache-d64 runs at E17B_GUEST_RAM_MB=256 under E17C=1 (its library is library-256.json, SPEC §13.5), got ${E17B_GUEST_RAM_MB:-1024}" >&2
+  exit 2
+fi
+if [ -n "${E17C_GATE_LIBRARY:-}" ] &&
+  { [ "${E17C:-}" != 1 ] || [ "$POINT" != pycache-d64 ] || [ -z "${E15_CORPUS_OVERRIDE:-}" ]; }; then
+  echo "rung.sh: E17C_GATE_LIBRARY is gate-256's (E17C=1, POINT pycache-d64, with E15_CORPUS_OVERRIDE): refusing" >&2
+  exit 2
+fi
 
 WARMUP=${E15_WARMUP_S:-$(e15_default_warmup "$ARM")}
 K_MULT=${E15_K_MULT:-1}
@@ -131,6 +148,7 @@ scan_flag=()
 [ -z "$E15_P_SCAN_CMD" ] || scan_flag=(--scan-cmd "$E15_P_SCAN_CMD" --scan-classes "$E15_P_SCAN_CLASSES")
 [ -n "${E15_MAX_SESSIONS:-}" ] && start_flag+=(--max-sessions "$E15_MAX_SESSIONS")
 LIBRARY=$E15_P_LIBRARY
+[ -z "${E17C_GATE_LIBRARY:-}" ] || LIBRARY=$E17C_GATE_LIBRARY # checked above: gate-256's rungs only
 TEMPLATE=$E15_P_TEMPLATE
 DRIVER=$E15_BIN/e15-driver
 # E16 supplementary: E15_END_SESSION_DEFER=1 runs e15-driver-defer (the same source plus the opt-in
@@ -369,6 +387,9 @@ if [ "$ARM" != control ]; then
   fi
   log "relay restarted ($E15_UNIT_RELAY)"
 fi
+# E17c (E17C=1, ship-* arms): the worker banner's lease_cache_drop= value, recorded in params.json (below).
+lease_cache_drop=""
+lease_cache_drop_rec=0
 if [ "$ARM" = control ]; then
   start_null "$DIR"
   TARGET=127.0.0.1:$E15_PORT_NULL
@@ -388,6 +409,30 @@ else
     *" lease=off "*) die "the worker's banner says lease=off: the snapshot $E15_SNAPDIR/$(worker_snapimg) does not advertise lease-v1 (or the VMM is not firecracker); E17b arms need the snapshot-e17b.sh leaf. The driver was not started. Banner: $banner" ;;
     *) die "the worker's banner has no lease= field (a worker without lease mode?): $banner; the driver was not started" ;;
     esac
+    # E17c (E17C=1, ruling R-a): a ship arm's banner must carry lease_cache_drop= (moca #974) and match the arm:
+    # ship-300-nd needs off (SH_LEASE_CACHE_DROP_S=0), ship-300 exactly 30s (the worker's default: 5a's +45 s reading,
+    # R-o, assumes it; final review M3), any other ship arm a drop that is on.
+    if [ "${E17C:-}" = 1 ] && e17b_lease_arm "$ARM"; then
+      case " $banner " in
+      *" lease_cache_drop="*)
+        lease_cache_drop=${banner#* lease_cache_drop=}
+        lease_cache_drop=${lease_cache_drop%% *}
+        ;;
+      esac
+      [ -n "$lease_cache_drop" ] ||
+        die "the worker's banner has no lease_cache_drop= field (a worker before moca #974?): $banner; E17c arm $ARM cannot be confirmed. The driver was not started"
+      if [ "$ARM" = ship-300-nd ]; then
+        [ "$lease_cache_drop" = off ] ||
+          die "the worker's banner says lease_cache_drop=$lease_cache_drop but $ARM needs off (SH_LEASE_CACHE_DROP_S=0 in $DIR/worker.env). The driver was not started. Banner: $banner"
+      else
+        [ "$lease_cache_drop" != off ] ||
+          die "the worker's banner says lease_cache_drop=off but $ARM needs the drop on (SH_LEASE_CACHE_DROP_S unset: the worker's default). The driver was not started. Banner: $banner"
+        [ "$ARM" != ship-300 ] || [ "$lease_cache_drop" = 30s ] ||
+          die "the worker's banner says lease_cache_drop=$lease_cache_drop but $ARM needs exactly 30s (the default 5a's +45 s reading assumes; SH_LEASE_CACHE_DROP_S unset). The driver was not started. Banner: $banner"
+      fi
+      lease_cache_drop_rec=1
+      log "worker banner: lease_cache_drop=$lease_cache_drop ($ARM)"
+    fi
   fi
   # Attach check: the worker's own "attached" line is not enough (a refused duplicate Hello still
   # logs it). One probe Exec through the relay must reach this worker within E15_ATTACH_TIMEOUT_S
@@ -425,6 +470,8 @@ fi
 stdout_flag=()
 if [ "${E17B:-}" = 1 ]; then
   stdout_flag=(--record-stdout py_shmem)
+  # gate-256 (E17c Task 10): py_analyze's stdout carries the gate library's peak_rss_kb line
+  [ -z "${E17C_GATE_LIBRARY:-}" ] || stdout_flag=(--record-stdout "py_shmem,py_analyze")
 fi
 launch_ts=$(date +%s.%N)
 # The sampler starts with the driver, its origin the epoch just before the driver is exec'd
@@ -552,7 +599,10 @@ commit_file=$E15_ROOT/src/COMMIT
 # never calls worker_bin for an arm it does not have (no stderr lines; its params.json is unchanged).
 ship_wbin=""
 [ "${E17B:-}" != 1 ] || ship_wbin="\"ship-30\": \"$(worker_bin ship-30)\", \"ship-120\": \"$(worker_bin ship-120)\", \"ship-300\": \"$(worker_bin ship-300)\","
-E15_LEASE_BANNER=$(grep -m1 'microvm-worker: relay=' "$DIR/worker.log" 2>/dev/null || true) python3 - "$DIR" <<PY
+# E17c: ship-300-nd's entry, resolved only under E17C=1 (an E17b rung's params.json is unchanged).
+[ "${E17C:-}" != 1 ] || ship_wbin+=" \"ship-300-nd\": \"$(worker_bin ship-300-nd)\","
+E15_LEASE_BANNER=$(grep -m1 'microvm-worker: relay=' "$DIR/worker.log" 2>/dev/null || true) E15_LEASE_CACHE_DROP=$lease_cache_drop \
+  python3 - "$DIR" <<PY
 import hashlib, json, os, sys
 d = sys.argv[1]
 def sha(p):
@@ -627,6 +677,9 @@ p = {
     "disk_read_max_mbs": (lambda v: float(v) if v else None)(readf("$E15_STATE/disk_read_max_mbs")),
     "disk_read_single_mbs": (lambda v: float(v) if v else None)(readf("$E15_STATE/disk_read_single_mbs")),
     "library": "$LIBRARY",
+    # E17c (Task 10): which library the rung ran, by name beside its path and library_sha256 (a 256 MiB rung's is
+    # library-256.json; a gate-256 rung's its gate library)
+    **({"library_name": os.path.basename("$LIBRARY")} if "${E17C:-}" == "1" else {}),
     "moca_commit": "$E15_MOCA_PIN",
     "moca_experiments_commit": readf("$commit_file"),
     "resident_patch_sha256": sha("$E15_SRC/resident/resident.patch") if arm.startswith(("resident", "lease-")) else None,
@@ -643,6 +696,8 @@ p = {
         "set_mode_failed_calls": int("$set_mode_failed"), "rung_failed": json.loads('$rung_failed'),
         "token_issuer": "$(e17b_lease_arm "$ARM" && e17b_token_iss)"}
        if arm.startswith("ship-") else {}),
+    # E17c (E17C=1, ship-* arms; ruling R-a): the banner's lease_cache_drop= value as printed (the rung checked it).
+    **({"lease_cache_drop": os.environ.get("E15_LEASE_CACHE_DROP")} if "$lease_cache_drop_rec" == "1" else {}),
     **({"snapshot_image": "$(worker_snapimg)", "guest_ram_mb": int("$(worker_guest_ram_mb)")} if "${E17B:-}" == "1" else {}),
     **({"squeeze_memmax_mb": int("$SQUEEZE_MB"), "committed_mb": int(env.get("SH_MAX_COMMITTED_MB", "0")),
         "squeeze_slice": {"MemoryMax": int("${E15_SQUEEZE_MAX:-0}"), "MemoryHigh": int("${E15_SQUEEZE_HIGH:-0}"),

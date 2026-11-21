@@ -32,6 +32,12 @@ each D, e.g. the gain-against-D runs, in its own invocation).
     p95_ms}, split by the session's tmpfs flag (calls.jsonl `tmpfs`) into flagged and unflagged, so the
     report shows whether flagged sessions' bytecode recompiles slowed the gated classes. Only in a group
     with a flagged session (an E15/E16/E17a group keeps its exact shape).
+  - warm_by_cache (E17c, SPEC §13.3 criterion 2, ruling R-g; reported beside the gain, never in it): per
+    class, the warm calls split by warmcold_lease's `cache` tag into after_drop (the session's previous call
+    ended more than the rung's lease_cache_drop before: the guest had dropped its page cache) and kept, each
+    {n, median_ms, p95_ms}, and ratio = after_drop median / kept median (null when either group is empty).
+    The gain stays over all warm calls, as in E17b. Only in a group with a tagged row (ship-300-nd, sbx and
+    every E17b group keep their exact shape, latency.md included).
 """
 import argparse
 import json
@@ -118,6 +124,15 @@ def summarize(rows):
             after.append(r)
     classes = {k: {"warm": stats(v["warm"]), "cold": stats(v["cold"]), "all": stats(v["all"]),
                    "unknown": v["unknown"]} for k, v in sorted(by_class.items())}
+    if any("cache" in r for r in rows):  # E17c, ruling R-g: only a rung with the guest's drop on
+        for k, c in classes.items():
+            tagged = [r for r in rows if r["class"] == k and r["in_window"] and r["status"] == "ok"
+                      and r["warm"] is True]
+            wc = {t: stats([r["observed_ms"] for r in tagged if r.get("cache") == t])
+                  for t in (WL.AFTER_DROP, WL.KEPT)}
+            a, b = wc[WL.AFTER_DROP]["median_ms"], wc[WL.KEPT]["median_ms"]
+            wc["ratio"] = (a / float(b)) if (a is not None and b) else None
+            c["warm_by_cache"] = wc
     split = {}
     for r in rows:
         if r["class"] in BY_TMPFS_CLASSES and r["in_window"] and r["status"] == "ok":
@@ -239,6 +254,20 @@ def markdown(rep):
         out.append("| %s | %s | %s | %s | %d | %s | %s | %d | %d | %d | %d | %d |" % (
             g["point"], g["n"], g["arm"], fmt(g["warm_share"], "%.3f"), a["n"], fmt(a["median_ms"]),
             fmt(a["p95_ms"]), c["calls"], c["used"], c["unknown"], c["not_in_window"], c["not_ok"]))
+    split = [(g, cls, c["warm_by_cache"]) for g in rep["groups"] for cls, c in g["classes"].items()
+             if "warm_by_cache" in c]
+    if split:  # E17c (ruling R-g): only when a group has the guest's drop on
+        out += ["", "## Warm calls by the guest's page-cache drop", "",
+                "Warm calls whose session's previous call ended more than the rung's lease_cache_drop before "
+                "(after drop) and the rest (kept). Reported beside the gain, which stays over all warm calls.", "",
+                "| point | N | arm | class | after drop n | after drop median ms | kept n | kept median ms "
+                "| after drop / kept |",
+                "|---|---|---|---|---|---|---|---|---|"]
+        for g, cls, wc in split:
+            a, k = wc[WL.AFTER_DROP], wc[WL.KEPT]
+            out.append("| %s | %s | %s | %s | %d | %s | %d | %s | %s |" % (
+                g["point"], g["n"], g["arm"], cls, a["n"], fmt(a["median_ms"]), k["n"], fmt(k["median_ms"]),
+                fmt(wc["ratio"], "%.2f")))
     return "\n".join(out) + "\n"
 
 

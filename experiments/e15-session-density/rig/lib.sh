@@ -82,6 +82,11 @@ E15_MOCA_URL=${E15_MOCA_URL:-https://github.com/rossoctl/moca.git}
 # setup.sh's clone, build stamps, snapshot key, relay, microvm-worker and guest agent all follow it.
 # With E17B unset (or anything but 1) nothing here runs and the sealed E15/E16/E17a procedures resolve
 # as before. rig.test.sh only: a fixture pin file (E15_TEST_PINS) is applied last, as for pins.sh.
+# E17c profile (experiments/e17-lease/PLAN-E17C.md): E17C=1 is E17B=1 (ship-* arms, the lease worker, E17a arms
+# refused, resident build skipped; E17C=1 alone is E17C=1 E17B=1, exported to child scripts) except that the pin is
+# E17C_MOCA_PIN (experiments/e17-lease/rig/e17c-pins.sh) and the checkout $E15_ROOT/moca-e17c (set below).
+# With E17C unset (or anything but 1) nothing here runs and E17b and the sealed procedures resolve as before.
+[ "${E17C:-}" != 1 ] || export E17B=1
 if [ "${E17B:-}" = 1 ]; then
   _e17b_here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   # The repo layout (experiments/e17-lease) and the rig's staged one (/srv/e15/src/e17, sync.sh).
@@ -94,6 +99,17 @@ if [ "${E17B:-}" = 1 ]; then
   }
   # shellcheck disable=SC1090
   . "$_e17b_f"
+  if [ "${E17C:-}" = 1 ]; then
+    for _e17c_f in "$_e17b_here/../../e17-lease/rig/e17c-pins.sh" "$_e17b_here/../../e17/rig/e17c-pins.sh"; do
+      [ -f "$_e17c_f" ] && break
+    done
+    [ -f "$_e17c_f" ] || {
+      printf 'lib.sh: E17C=1 but no e17c-pins.sh at %s or %s\n' "$_e17b_here/../../e17-lease/rig/e17c-pins.sh" "$_e17b_here/../../e17/rig/e17c-pins.sh" >&2
+      exit 3
+    }
+    # shellcheck disable=SC1090
+    . "$_e17c_f"
+  fi
   case "$E15_ROOT" in
   */e15-rig-test.*)
     # shellcheck disable=SC1090
@@ -102,6 +118,8 @@ if [ "${E17B:-}" = 1 ]; then
   esac
   # shellcheck disable=SC2153 # assigned by the pin file sourced above
   E15_MOCA_PIN=$E17B_MOCA_PIN
+  # shellcheck disable=SC2153 # assigned by the pin file sourced above
+  [ "${E17C:-}" != 1 ] || E15_MOCA_PIN=$E17C_MOCA_PIN
 fi
 # e17b_require_pin: refuse an E17B_MOCA_PIN that is not a full 40-hex sha or is the all-zero placeholder.
 # setup.sh and rung.sh call it when E17B=1; teardown.sh does not (it must always be able to undo).
@@ -113,6 +131,17 @@ e17b_require_pin() {
   esac
   printf '%s' "${E17B_MOCA_PIN:-}" | grep -qE '^[0-9a-f]{40}$' ||
     die "E17B_MOCA_PIN '${E17B_MOCA_PIN:-}' is not a full 40-hex sha (e17b-pins.sh)"
+}
+# e17c_require_pin: the same for E17C_MOCA_PIN (e17c-pins.sh). setup.sh and rung.sh call it when E17C=1, before
+# the E17b checks; teardown.sh does not.
+e17c_require_pin() {
+  case "${E17C_MOCA_PIN:-}" in
+  0000000000000000000000000000000000000000)
+    die "E17C_MOCA_PIN is still the placeholder (all zeros) in e17c-pins.sh; replace it with the upstream/main sha (moca #974 merged) before any rig run"
+    ;;
+  esac
+  printf '%s' "${E17C_MOCA_PIN:-}" | grep -qE '^[0-9a-f]{40}$' ||
+    die "E17C_MOCA_PIN '${E17C_MOCA_PIN:-}' is not a full 40-hex sha (e17c-pins.sh)"
 }
 
 # Ports (SPEC §4): relay attach, relay exec, null-responder (control arm), worker /stats, Redis.
@@ -161,6 +190,9 @@ E15_ARMS=(sbx resident-inf resident-300 control)
 # E17b (E17B=1, fresh-metal only): ship-30/120/300 are the shipped lease at idle timeout 30/120/300 s (the stock worker at
 # E17B_MOCA_PIN, depth 0; worker_env). With E17B unset the arm list above stands.
 if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ "${E17B:-}" = 1 ]; then E15_ARMS+=(ship-30 ship-120 ship-300); fi
+# E17c (E17C=1, fresh-metal only): ship-300-nd is ship-300 with the idle page-cache drop off (SH_LEASE_CACHE_DROP_S=0;
+# worker_env). With E17C unset the arm list above stands.
+if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ "${E17C:-}" = 1 ]; then E15_ARMS+=(ship-300-nd); fi
 E15_LADDER=(1 8 16 24 32 40 48 56 64 80 96 128)
 # fresh-metal (SPEC §13, user decision 2026-11-04): the ladder extends past 128 until one arm fails,
 # resident arms warm up 1200 s (their VMs are still growing at 600 s), and footprint drift is judged
@@ -180,6 +212,7 @@ e15_default_warmup() {
   fresh-metal:sbx | fresh-metal:resident-inf | fresh-metal:resident-300) echo 1200 ;;
   fresh-metal:lease-30 | fresh-metal:lease-120) echo 1200 ;; # E17: as resident-300
   fresh-metal:ship-30 | fresh-metal:ship-120 | fresh-metal:ship-300) echo 1200 ;; # E17b: as the lease arms
+  fresh-metal:ship-300-nd) echo 1200 ;;                                              # E17c: as ship-300
   *) echo 600 ;;
   esac
 }
@@ -718,6 +751,7 @@ E15_STATE=$E15_ROOT/state
 E15_LOGS=$E15_ROOT/logs
 E15_MOCA=$E15_ROOT/moca
 [ "${E17B:-}" != 1 ] || E15_MOCA=$E15_ROOT/moca-e17b # E17b profile (above): its own checkout
+[ "${E17C:-}" != 1 ] || E15_MOCA=$E15_ROOT/moca-e17c # E17c profile (above): its own checkout
 E15_SNAPDIR=$E15_ROOT/snapshots
 E15_SNAPIMG=e15
 E15_TEMPLATE=$E15_ROOT/template/workspace.img
@@ -919,10 +953,12 @@ worker_env() {
   sbx) depth=2 ;;
   resident-inf | resident-300) depth=0 ;;
   lease-30 | lease-120) depth=0 ;; # E17 (fresh-metal only; E15_ARMS)
-  ship-30 | ship-120 | ship-300)
+  ship-30 | ship-120 | ship-300 | ship-300-nd)
     # E17b (E17B=1): the shipped lease. Admission is bounded by host RAM less 8 GiB (spec §6) and the slots sit above the
     # ladder's top N; the lease knobs (SH_LEASE_*) are left unset, so the worker's defaults stand and its banner prints them.
+    # E17c's ship-300-nd (E17C=1) is ship-300 plus SH_LEASE_CACHE_DROP_S=0 (the idle page-cache drop off; below).
     [ "${E17B:-}" = 1 ] || die "worker_env: arm $arm exists only under E17B=1"
+    [ "$arm" != ship-300-nd ] || [ "${E17C:-}" = 1 ] || die "worker_env: arm $arm exists only under E17C=1"
     # Standby depth 2, the worker's default (ruling E17B-R44): the stock microvm-worker refuses SH_STANDBY_DEPTH=0
     # ("must be a positive integer"; vmpool treats <= 0 as the default) and a shipped lease is promoted from a standby,
     # so depth 0 (the E15 resident patch's setting, E17a) is not a configuration the shipped worker has.
@@ -974,6 +1010,7 @@ worker_env() {
     resident-300) printf 'E15_RESIDENT=1\nE15_RESIDENT_IDLE_S=300\n' ;;
     lease-30) printf 'E15_RESIDENT=1\nE15_RESIDENT_IDLE_S=30\n' ;;
     lease-120) printf 'E15_RESIDENT=1\nE15_RESIDENT_IDLE_S=120\n' ;;
+    ship-300-nd) echo "SH_LEASE_CACHE_DROP_S=0" ;; # E17c: the idle page-cache drop off (moca #974; unset = 30 s)
     esac
   } >"$out"
 }
@@ -988,13 +1025,24 @@ e17b_require_build() {
   stamp_ok go-stock-e17b "$E15_MOCA_PIN" ||
     die "E17B=1 but the go-stock-e17b build stamp in $E15_STATE is not for $E15_MOCA_PIN; run setup.sh with E17B=1"
 }
-# e17b_lease_arm ARM: true for an E17b shipped-lease arm (ship-*) under E17B=1.
-e17b_lease_arm() { [ "${E17B:-}" = 1 ] && case "$1" in ship-30 | ship-120 | ship-300) true ;; *) false ;; esac; }
-# e17b_idle_timeout_s ARM: the lease idle timeout of a ship arm (the token's idle_timeout_s claim).
-e17b_idle_timeout_s() { e17b_lease_arm "$1" || die "e17b_idle_timeout_s: $1 is not a ship arm (E17B=1)"; echo "${1#ship-}"; }
+# e17b_lease_arm ARM: true for an E17b shipped-lease arm (ship-*) under E17B=1, and for E17c's ship-300-nd under E17C=1.
+e17b_lease_arm() {
+  [ "${E17B:-}" = 1 ] && case "$1" in
+  ship-30 | ship-120 | ship-300) true ;;
+  ship-300-nd) [ "${E17C:-}" = 1 ] ;;
+  *) false ;;
+  esac
+}
+# e17b_idle_timeout_s ARM: the lease idle timeout of a ship arm (the token's idle_timeout_s claim); ship-300-nd's is 300.
+e17b_idle_timeout_s() {
+  e17b_lease_arm "$1" || die "e17b_idle_timeout_s: $1 is not a ship arm (E17B=1)"
+  local s=${1#ship-}
+  echo "${s%-nd}"
+}
 # E17b snapshot leaf (ruling E17B-R17): under E17B=1 every arm's worker runs on snapshot-e17b.sh's leaf
 # e17b-<first 8 of E15_MOCA_PIN>-<E17B_GUEST_RAM_MB> (1024 by default; 256 for the 256 MiB stages) with that guest RAM,
-# never on the sealed e15 leaf. With E17B unset: $E15_SNAPIMG and 1024 MiB, as before.
+# never on the sealed e15 leaf; under E17C=1 the leaf is e17c-<first 8 of E15_MOCA_PIN (= E17C_MOCA_PIN)>-<ram>.
+# With E17B unset: $E15_SNAPIMG and 1024 MiB, as before.
 e17b_guest_ram_mb() {
   case "${E17B_GUEST_RAM_MB:-1024}" in
   1024 | 256) echo "${E17B_GUEST_RAM_MB:-1024}" ;;
@@ -1005,7 +1053,8 @@ worker_snapimg() {
   if [ "${E17B:-}" = 1 ]; then
     local ram
     ram=$(e17b_guest_ram_mb) || exit 1
-    echo "e17b-${E15_MOCA_PIN:0:8}-$ram"
+    # E17c (E17C=1, ruling R-i): its own leaves e17c-<E17C pin8>-<ram> (snapshot-e17b.sh under E17C=1)
+    if [ "${E17C:-}" = 1 ]; then echo "e17c-${E15_MOCA_PIN:0:8}-$ram"; else echo "e17b-${E15_MOCA_PIN:0:8}-$ram"; fi
   else
     echo "$E15_SNAPIMG"
   fi
@@ -1019,7 +1068,7 @@ e17b_require_snapshot() {
   leaf=$(worker_snapimg) || exit 1
   ram=$(e17b_guest_ram_mb) || exit 1
   [ -f "$E15_SNAPDIR/$leaf/manifest.json" ] ||
-    die "no E17b snapshot $E15_SNAPDIR/$leaf (manifest.json): build it with experiments/e17-lease/rig/snapshot-e17b.sh --ram-mb $ram --leaf $leaf"
+    die "no E17b snapshot $E15_SNAPDIR/$leaf (manifest.json): build it with $([ "${E17C:-}" = 1 ] && echo E17C=1 || echo E17B=1) experiments/e17-lease/rig/snapshot-e17b.sh --ram-mb $ram --leaf $leaf"
 }
 # e17b_token_iss: the token issuer the relay's SH_SANDBOX_TOKEN_ISSUER and the driver's --token-iss share.
 e17b_token_iss() { echo e17b-driver; }
@@ -1065,6 +1114,11 @@ worker_bin() {
     else
       die "worker_bin: no worker for arm $1"
     fi
+    ;;
+  ship-300-nd)
+    # E17c only (E17C=1): the same stock worker as ship-300
+    [ "${E17C:-}" = 1 ] || die "worker_bin: no worker for arm $1"
+    stock_worker_bin
     ;;
   resident-inf | resident-300) echo "$E15_BIN/microvm-worker-resident" ;;
   lease-30 | lease-120) echo "$E15_BIN/microvm-worker-resident" ;; # E17

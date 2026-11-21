@@ -1,0 +1,6 @@
+repeat 0 ownwalk-F10000-1795052061-0: A-B 89.34400000000001 ms, phase-corrected 93.859 ms, normalise A None B None ms, lease starts 2, valid True
+repeat 1 ownwalk-F10000-1795052061-1: A-B 93.22500000000001 ms, phase-corrected 95.314 ms, normalise A None B None ms, lease starts 2, valid True
+repeat 2 ownwalk-F10000-1795052061-2: A-B 94.90299999999999 ms, phase-corrected 93.046 ms, normalise A None B None ms, lease starts 2, valid True
+repeat 3 ownwalk-F10000-1795052061-3: A-B 87.57300000000001 ms, phase-corrected 93.252 ms, normalise A None B None ms, lease starts 2, valid True
+repeat 4 ownwalk-F10000-1795052061-4: A-B 91.464 ms, phase-corrected 94.666 ms, normalise A None B None ms, lease starts 2, valid True
+walk_observed: the worker logs no normalise_us on its phase line (moca vmpool diag.go logPhases measures Phases.Normalise but prints it nowhere): not observed

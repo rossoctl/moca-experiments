@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -9,7 +10,7 @@ sys.path.insert(0, HERE)
 
 import latency_report as L  # noqa: E402
 import warmcold_lease as WL  # noqa: E402
-from test_warmcold import call, rung  # noqa: E402
+from test_warmcold import T_LOG, call, rung  # noqa: E402
 
 TS = "2026-11-05T11:00:00Z"
 
@@ -410,3 +411,77 @@ def test_call_cut_at_the_run_end_after_its_lease_ended_is_cut_at_end_not_unknown
     (tmp_path / "x").mkdir()
     rows, s = WL.join(rung(tmp_path / "x", calls, log))
     assert tags(rows)[("A", 3)] == ("unknown", "no-live-lease") and s["unknown"] == 1
+
+
+# ---- E17c Task 5: the warm split by the guest's page-cache drop (ruling R-g) ----
+
+def stamp(off):
+    """The log's whole-second stamp at T_LOG + off."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(T_LOG + off))
+
+
+def drop_rung(tmp_path, drop="30s", name="ship-300", arm="ship-300"):
+    """Session A, every call ending at T_LOG + off + 0.5 (exec line stamped T_LOG + off):
+      1 first_lease (ends 0.5)
+      2 py_analyze 5 s, starts 41.5: 41 s after call 1 ended -> after_drop
+      3 py_analyze 7 s, starts 53.5: 7 s after -> kept
+      4 py_analyze 9 s, starts 90.5: exactly 30 s after -> kept (strictly greater is a drop)
+      5 py_analyze 15 s, starts 130.5: 31 s after -> after_drop
+      6 py_short 1 s, cold after an idle end (vm-2): never tagged
+      7 py_short 0.5 s, starts 241.5: 40 s after -> after_drop
+    `drop` is params.json's lease_cache_drop (None: the field is absent)."""
+    log = [start_line("A", "vm-1"), exec_line("A", "vm-1", ts=stamp(0)),
+           exec_line("A", "vm-1", req=2, ts=stamp(46)), exec_line("A", "vm-1", req=3, ts=stamp(60)),
+           exec_line("A", "vm-1", req=4, ts=stamp(99)), exec_line("A", "vm-1", req=5, ts=stamp(145)),
+           end_line("A", "vm-1"), start_line("A", "vm-2"), exec_line("A", "vm-2", req=6, ts=stamp(201)),
+           exec_line("A", "vm-2", req=7, ts=stamp(241))]
+    calls = [call("A", 1, ms=1000, end=T_LOG + 0.5, first_lease=True, lease_events=[ev("start")]),
+             call("A", 2, ms=5000, end=T_LOG + 46.5), call("A", 3, ms=7000, end=T_LOG + 60.5),
+             call("A", 4, ms=9000, end=T_LOG + 99.5), call("A", 5, ms=15000, end=T_LOG + 145.5),
+             call("A", 6, cls="py_short", ms=1000, end=T_LOG + 201.5, lease_events=[ev("end", "idle")]),
+             call("A", 7, cls="py_short", ms=500, end=T_LOG + 242.0)]
+    extra = {} if drop is None else {"lease_cache_drop": drop}
+    return params(rung(tmp_path, calls, log, name=name), arm, **extra)
+
+
+def test_warm_calls_split_by_the_gap_since_the_sessions_previous_call(tmp_path):
+    rows, s = WL.join(drop_rung(tmp_path))
+    cache = {r["call"]: r.get("cache") for r in rows}
+    assert cache == {1: None, 2: "after_drop", 3: "kept", 4: "kept", 5: "after_drop", 6: None, 7: "after_drop"}
+    assert "cache" not in rows[0] and "cache" not in rows[5]  # only warm rows carry the tag
+    assert s["warm"] == 5 and s["cold"] == 1  # the warm/cold counts are unchanged
+    assert s["cache_drop_s"] == 30.0
+    assert s["warm_by_cache"] == {"after_drop": 3, "kept": 2}
+
+
+def test_the_gap_counts_from_the_previous_call_whatever_its_class(tmp_path):
+    # Call 7's previous call is call 6 (py_short, cold): 40 s after it ended. A 45 s threshold keeps it,
+    # and call 2 (41 s after call 1) too; call 5 (31 s) is kept as well.
+    rows, s = WL.join(drop_rung(tmp_path, drop="45s"))
+    assert {r["call"]: r.get("cache") for r in rows if r["warm"] is True} == {
+        2: "kept", 3: "kept", 4: "kept", 5: "kept", 7: "kept"}
+    assert s["warm_by_cache"] == {"after_drop": 0, "kept": 5}
+
+
+@pytest.mark.parametrize("text,secs", [("30s", 30.0), ("1m0s", 60.0), ("2m30s", 150.0), ("1h0m0s", 3600.0),
+                                       ("1m30.5s", 90.5), ("off", None), ("", None), (None, None),
+                                       ("thirty", None), ("500ms", None), ("30", None)])
+def test_cache_drop_threshold_parses_the_banners_duration(text, secs):
+    assert WL.cache_drop_seconds(text) == secs
+
+
+@pytest.mark.parametrize("drop", ["off", None, "bogus"])
+def test_no_drop_tags_nothing_and_writes_todays_bytes(tmp_path, drop):
+    # ship-300-nd (off), a rung with no lease_cache_drop field (sbx, every E17b rung) or an unparseable value:
+    # no call is tagged, and warmcold.jsonl / warmcold-report.json are byte-identical to a rung with no params.json.
+    d = drop_rung(tmp_path, drop=drop, name="nd", arm="ship-300-nd")
+    rows, s = WL.join(d)
+    assert not any("cache" in r for r in rows)
+    assert "warm_by_cache" not in s and "cache_drop_s" not in s
+    (tmp_path / "plain").mkdir()
+    p = drop_rung(tmp_path / "plain", drop=None, name="p")
+    os.remove(os.path.join(p, "params.json"))
+    WL.main([d])
+    WL.main([p])
+    for f in ("warmcold.jsonl", "warmcold-report.json"):
+        assert open(os.path.join(d, f)).read() == open(os.path.join(p, f)).read()

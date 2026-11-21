@@ -37,6 +37,14 @@ guest's Shmem reading, PLAN-E17B Task 10): they are joined like any call (their 
 log, so the alignment needs them, and they enter the disagreement check), but counted only under
 `reported_only`, never in warm/cold/unknown. A `set_mode_failed` row is reported as
 such, never classified, and makes `valid` false.
+
+E17c (SPEC §13.3 criterion 2, ruling R-g): the warm split by the guest's page-cache drop. The threshold is the
+rung's params.json `lease_cache_drop` (the moca worker banner's value, recorded by rung.sh under E17C=1 for
+ship-* arms): a Go duration (`30s`, `1m0s`, `2m30s`, `1h0m0s`; h/m/s components). A warm row gets `cache`:
+`after_drop` when the session's previous call (calls.jsonl, any class) ended strictly more than the threshold
+before this call was sent, `kept` otherwise; a session's first call is never after_drop. The summary gains
+`cache_drop_s` and `warm_by_cache` (gated warm rows by tag). `off`, an unparseable value or no field (sbx,
+ship-300-nd, every E17b rung): nothing is tagged and both outputs are byte-identical to E17b's.
 """
 import calendar
 import json
@@ -63,6 +71,45 @@ FAILED_NO_VM = "failed_no_vm"
 CUT_AT_END = "cut_at_end"
 # driver exec.go configRefusal (E17B-R42)
 CONFIG_REFUSALS = ("stale-mode", "lease-unsupported", "permission-denied", "req-id-in-flight")
+# E17c (ruling R-g): a Go duration as the worker banner prints it, h/m/s components only.
+GO_DURATION_RE = re.compile(r"^(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+(?:\.\d+)?)s)?$")
+AFTER_DROP, KEPT = "after_drop", "kept"
+
+
+def cache_drop_seconds(text):
+    """params.json `lease_cache_drop` -> seconds, or None (off, missing, unparseable, or not above zero)."""
+    m = GO_DURATION_RE.match(text) if isinstance(text, str) and text else None
+    if not m or not any(m.groupdict().values()):
+        return None
+    secs = 3600 * int(m.group("h") or 0) + 60 * int(m.group("m") or 0) + float(m.group("s") or 0)
+    return secs if secs > 0 else None
+
+
+def read_cache_drop(d):
+    p = os.path.join(d, "params.json")
+    if not os.path.exists(p):
+        return None
+    with open(p) as f:
+        return cache_drop_seconds(json.load(f).get("lease_cache_drop"))
+
+
+def tag_cache(rows, calls, threshold):
+    """Tags each warm row after_drop or kept by the gap since its session's previous call ended. A session's
+    first call has no gap (kept). A gap that cannot be timed (either call's ts unparseable; the timestamp guard
+    already rules this out for any call with an exec line) is never guessed: the row stays untagged."""
+    prev_end, gap = {}, {}
+    for c in sorted(calls, key=lambda c: (str(c.get("session")), c.get("call"))):
+        start = W.call_epoch(c.get("ts"))
+        k = c.get("session")
+        if k not in prev_end:
+            gap[(k, c.get("call"))] = 0.0
+        elif start is not None and prev_end[k] is not None:
+            gap[(k, c.get("call"))] = start - prev_end[k]
+        prev_end[k] = None if start is None else start + float(c.get("observed_ms") or 0) / 1000.0
+    for r in rows:
+        g = gap.get((r["session"], r["call"]))
+        if r["warm"] is True and g is not None:
+            r["cache"] = AFTER_DROP if g > threshold else KEPT
 
 
 def read_events(d):
@@ -211,6 +258,11 @@ def join(rung_dir):
         "valid": n_smf == 0,
         "countable": n_smf == 0 and not dis,
     }
+    threshold = read_cache_drop(rung_dir)
+    if threshold is not None:  # E17c, ruling R-g: absent otherwise, so E17b's bytes are unchanged
+        tag_cache(rows, calls, threshold)
+        summary["cache_drop_s"] = threshold
+        summary["warm_by_cache"] = {t: sum(r.get("cache") == t for r in gated) for t in (AFTER_DROP, KEPT)}
     return rows, summary
 
 

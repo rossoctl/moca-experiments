@@ -77,6 +77,23 @@ leaves out: that is where a pinned VM shows. `pinned_share_of_judged` is the sam
 Execs only; `per_vm` has each lease VM's highest ratio. No pass threshold is set here: it is sealed with
 the predictions (Task 13), and this module reports the numbers.
 
+E17C FOOTPRINT READINGS (PLAN-E17C Task 6, spec §13.3 reading 1). An E17c sample line carries, beside
+`vm_mem`, `vm_fp` (the worker's footprint, LeaseBytes' formula) and `vm_dirty` (file_dirty), keyed by the same
+cgroup names and attributed by the same replay. A VM missing from `vm_fp` (or `vm_dirty`) in a line is no reading
+there (null), never 0; the two key sets may differ. Per heavy Exec, beside E17b's fields: fp_15s_bytes and
+dirty_15s_bytes at +15 s; fp_45s_bytes, mem_45s_bytes and dirty_45s_bytes at a FIXED +45 s after the Exec's end
+for every arm (ruling R-o), null when the session's next call began within 45 s (why_null_45s) or no sample is
+within 1 s; fp_ceiling_ratio_15s (null when the next call began within 15 s, as ceiling_ratio_15s) and
+fp_ceiling_ratio_45s. E17b-R29's relative rule runs again on vm_fp (fp_start/peak/growth/freed_bytes,
+follows_fp, why_null_fp; the same dShmem; share_true_fp beside share_true). IDLE TAIL: per lease ended by a
+`lease end ... reason=idle` line, its vm_fp in the last sample line before that end (the log's whole second),
+provided that line is at least 45 s after the end of the lease's last Exec (the latest of its calls' ends and its
+exec lines); otherwise its fp_bytes is null with why_null. Summaries: pinned_share_fp_15s, pinned_share_fp_45s,
+pinned_share_fp_idle_tail (share of readings at or above 0.9 of guest RAM, over every reading as E17b's
+absolute.pinned_share), with their readings and pinned counts, and the _of_judged variants of the first two
+(over the Execs follows_fp judged). A rung whose samples carry no vm_fp at all (every E17b rung) gets none of
+these fields: its output is E17b's, byte for byte.
+
 REPLACEMENT VM (criterion 5, second half). A lease whose first call is cold with reason `idle` (the key's
 previous lease ended by the idle timeout; warmcold_lease.py's cold_reason): its first ok `py_grep`
 observed_ms against the median ok `py_grep` of the `sbx` rung (--sbx) or --sbx-median-ms. Only calls with
@@ -111,6 +128,7 @@ TOL_S = 2.0
 MIN_LIFE_S = 5.0
 SAMPLE_TOL_S = 1.0
 AFTER_S = 15.0
+AFTER_DROP_S = 45.0  # ruling R-o: the post-drop reading, fixed for every arm (SH_LEASE_CACHE_DROP_S 30 + 15)
 HEAVY_CLASSES = ("py_analyze", "py_test")
 GROWTH_MIN_BYTES = 64 << 20  # E17B-R29: less growth than this has nothing to return; not judged
 PINNED_FRACTION = 0.9        # E17B-R29: a +15 s charge at or above this share of guest RAM is pinned
@@ -222,8 +240,9 @@ def _nearest(series, t, tol):
     return None if best is None else best[1]
 
 
-def attribute(d, vms, times, keep, samples=None):
-    """Attribute each sample of each cgroup name to the VM that held the name then.
+def attribute(d, vms, times, keep, samples=None, field="vm_mem"):
+    """Attribute each sample of each cgroup name (in the line's `field`, default vm_mem) to the VM that held
+    the name then.
     Returns (obs {vm id: [(ts, val)]} for the VMs in `keep` only, seen {vm id: number of samples},
     unattributed [(ts, name)], sample_ts sorted). `samples` (pre-read rows) saves re-reading samples.jsonl."""
     by_name = {}
@@ -240,7 +259,7 @@ def attribute(d, vms, times, keep, samples=None):
         if ts is None:
             continue
         rows.append(ts)
-        for name, val in (r.get("vm_mem") or {}).items():
+        for name, val in (r.get(field) or {}).items():
             if val is None:
                 continue
             i = bisect.bisect_right(borns.get(name, []), ts) - 1
@@ -317,7 +336,83 @@ def absolute_reading(out, guest_ram_bytes):
             "pinned_vm_share": (n_vpin / float(len(per_vm))) if per_vm else None}
 
 
-def fpr_reading(rows, calls, obs, vm_by_id, shmem, guest_ram_bytes=1024 << 20):
+def _fp_reading(e, end, start, fs, ds, obs_s, nxt, guest_ram_bytes):
+    """The E17c fields of one heavy Exec `e` (E17B-R29's rules, on vm_fp)."""
+    e["fp_15s_bytes"] = _nearest(fs, end + AFTER_S, SAMPLE_TOL_S)
+    e["dirty_15s_bytes"] = _nearest(ds, end + AFTER_S, SAMPLE_TOL_S)
+    near15 = nxt is not None and nxt < end + AFTER_S
+    near45 = nxt is not None and nxt < end + AFTER_DROP_S
+    if not near45:
+        e["fp_45s_bytes"] = _nearest(fs, end + AFTER_DROP_S, SAMPLE_TOL_S)
+        e["mem_45s_bytes"] = _nearest(obs_s, end + AFTER_DROP_S, SAMPLE_TOL_S)
+        e["dirty_45s_bytes"] = _nearest(ds, end + AFTER_DROP_S, SAMPLE_TOL_S)
+    if near45:
+        e["why_null_45s"] = "the session's next call began within 45 s"
+    elif e["fp_45s_bytes"] is None:
+        e["why_null_45s"] = ("no sample at +45 s (VM ended?)" if e["mem_45s_bytes"] is None else
+                             "the VM is not in vm_fp at +45 s (its memory.stat lacked a field)")
+    if e["fp_15s_bytes"] is not None and not near15:
+        e["fp_ceiling_ratio_15s"] = e["fp_15s_bytes"] / float(guest_ram_bytes)
+    if e["fp_45s_bytes"] is not None:
+        e["fp_ceiling_ratio_45s"] = e["fp_45s_bytes"] / float(guest_ram_bytes)
+    within = [val for ts, val in fs if start <= ts <= end]
+    e["fp_peak_bytes"] = max(within) if within else None
+    e["fp_start_bytes"] = _at_or_before(fs, start, SAMPLE_TOL_S)
+    if None not in (e["fp_peak_bytes"], e["fp_start_bytes"]):
+        e["fp_growth_bytes"] = e["fp_peak_bytes"] - e["fp_start_bytes"]
+        if e["delta_shmem_bytes"] is not None:
+            e["fp_freed_bytes"] = max(0, e["fp_growth_bytes"] - e["delta_shmem_bytes"])
+    if e["fp_15s_bytes"] is None or e["fp_peak_bytes"] is None:
+        e["why_null_fp"] = "no vm_fp at +15 s (VM ended, or not in vm_fp) or within the Exec"
+    elif near15:
+        e["why_null_fp"] = "the session's next call began within 15 s"
+    elif e["fp_start_bytes"] is None:
+        e["why_null_fp"] = "no vm_fp at or before the Exec's start"
+    elif e["fp_growth_bytes"] < GROWTH_MIN_BYTES:
+        e["why_null_fp"] = LOW_GROWTH
+    elif e["delta_shmem_bytes"] is None:
+        e["why_null_fp"] = "no dShmem (see why_null)"
+    else:
+        e["follows_fp"] = e["fp_15s_bytes"] <= e["fp_peak_bytes"] - e["fp_freed_bytes"] / 2.0
+
+
+FP_FIELDS = ("fp_15s_bytes", "fp_45s_bytes", "mem_45s_bytes", "dirty_15s_bytes", "dirty_45s_bytes",
+             "fp_ceiling_ratio_15s", "fp_ceiling_ratio_45s", "why_null_45s", "fp_start_bytes", "fp_peak_bytes",
+             "fp_growth_bytes", "fp_freed_bytes", "follows_fp", "why_null_fp")
+
+
+def _share(es, key):
+    got = [e for e in es if e[key] is not None]
+    n = sum(e[key] >= PINNED_FRACTION for e in got)
+    return len(got), n, (n / float(len(got))) if got else None
+
+
+def fp_summary(out, idle_tail):
+    """The E17c summaries over the heavy Execs `out` and the idle-tail list."""
+    judged = [e for e in out if e["follows_fp"] is not None]
+    n_t = sum(e["follows_fp"] is True for e in out)
+    n_f = sum(e["follows_fp"] is False for e in out)
+    s = {"fp_basis": "vm_fp (the worker's footprint) / guest RAM; pinned at or above pinned_fraction %.1f; +15 s "
+                     "readings need no next call within 15 s, +45 s (fixed, R-o) none within 45 s; idle tail: "
+                     "last sample before an idle lease end, at least 45 s after the lease's last Exec"
+                     % PINNED_FRACTION,
+         "after_drop_s": AFTER_DROP_S,
+         "follows_fp_true": n_t, "follows_fp_false": n_f, "follows_fp_null": len(out) - n_t - n_f,
+         "not_judged_low_growth_fp": sum(e["why_null_fp"] == LOW_GROWTH for e in out),
+         "share_true_fp": (n_t / float(n_t + n_f)) if n_t + n_f else None,
+         "idle_tail": idle_tail, "idle_tail_leases": len(idle_tail)}
+    for tag in ("15s", "45s"):
+        key = "fp_ceiling_ratio_" + tag
+        s["fp_%s_readings" % tag], s["fp_%s_pinned" % tag], s["pinned_share_fp_" + tag] = _share(out, key)
+        s["fp_%s_judged_readings" % tag], _, s["pinned_share_fp_%s_of_judged" % tag] = _share(judged, key)
+    s["fp_idle_tail_readings"], s["fp_idle_tail_pinned"], s["pinned_share_fp_idle_tail"] = \
+        _share(idle_tail, "fp_ceiling_ratio")
+    return s
+
+
+def fpr_reading(rows, calls, obs, vm_by_id, shmem, guest_ram_bytes=1024 << 20, fp_obs=None, dirty_obs=None,
+                idle_tail=None):
+    """E17b's reading; with fp_obs (a rung whose samples carry vm_fp) also the E17c fields and summaries."""
     by_key = {}
     for c in calls:
         by_key.setdefault(c.get("session"), []).append(c)
@@ -336,14 +431,20 @@ def fpr_reading(rows, calls, obs, vm_by_id, shmem, guest_ram_bytes=1024 << 20):
              "end_bytes": None, "after_15s_bytes": None, "peak_bytes": None, "start_bytes": None,
              "delta_shmem_bytes": None, "freed_bytes": None, "growth_bytes": None, "ceiling_ratio_15s": None,
              "follows": None, "why_null": None}
+        if fp_obs is not None:
+            e.update({k: None for k in FP_FIELDS})
         out.append(e)
         v = vm_by_id.get(r["vm"])
         if c.get("execs") != 1 or v is None or not v["lease"]:
             e["why_null"] = "not a single-Exec call on a lease VM"
+            if fp_obs is not None:
+                e["why_null_45s"] = e["why_null_fp"] = e["why_null"]
             continue
         start = W.call_epoch(c.get("ts"))
         if start is None or c.get("observed_ms") is None:
             e["why_null"] = "call has no usable send time or duration"
+            if fp_obs is not None:
+                e["why_null_45s"] = e["why_null_fp"] = e["why_null"]
             continue
         end = start + c["observed_ms"] / 1000.0
         s = obs[r["vm"]]
@@ -374,9 +475,12 @@ def fpr_reading(rows, calls, obs, vm_by_id, shmem, guest_ram_bytes=1024 << 20):
                             "without a usable delta or over 1 MiB; freed_from_shmem.py)"
         else:
             e["follows"] = e["after_15s_bytes"] <= e["peak_bytes"] - e["freed_bytes"] / 2.0
+        if fp_obs is not None:
+            _fp_reading(e, end, start, fp_obs.get(r["vm"], []), (dirty_obs or {}).get(r["vm"], []), s, nxt,
+                        guest_ram_bytes)
     n_t = sum(e["follows"] is True for e in out)
     n_f = sum(e["follows"] is False for e in out)
-    return {"definition": FREED_DEFINITION, "heavy_classes": list(HEAVY_CLASSES),
+    res = {"definition": FREED_DEFINITION, "heavy_classes": list(HEAVY_CLASSES),
             "growth_min_bytes": GROWTH_MIN_BYTES,
             "judged_when": "peak - start >= growth_min_bytes (E17B-R29), with dShmem, start, +15 s samples "
                            "and no next call within 15 s",
@@ -385,6 +489,72 @@ def fpr_reading(rows, calls, obs, vm_by_id, shmem, guest_ram_bytes=1024 << 20):
             "not_judged_low_growth": sum(e["why_null"] == LOW_GROWTH for e in out),
             "share_true": (n_t / float(n_t + n_f)) if n_t + n_f else None,
             "absolute": absolute_reading(out, guest_ram_bytes), "execs": out}
+    if fp_obs is not None:
+        res.update(fp_summary(out, idle_tail or []))
+    return res
+
+
+def read_lease_ends(d):
+    """[(epoch s, key, vm, reason)] of worker.log's `lease end` lines, in log order (the relay probe's key
+    left out)."""
+    out = []
+    with W.open_rung_file(d, "worker.log") as f:
+        for line in f:
+            m = WL.END_RE.search(line)
+            t = W.LOG_TS_RE.match(line) if m else None
+            if m and t and m.group("key") != W.PROBE_KEY:
+                out.append((float(calendar.timegm(time.strptime(t.group(1), "%Y-%m-%dT%H:%M:%S"))),
+                            m.group("key"), m.group("vm"), m.group("reason")))
+    return out
+
+
+def last_exec_ends(rows, calls, wl_events):
+    """{vm id: epoch s of the end of its last Exec}: the latest of its calls' ends (send + observed_ms, the
+    calls the join placed on it) and its exec lines' stamps."""
+    cmap = {(c.get("session"), c.get("call")): c for c in calls}
+    last = {}
+
+    def see(vm, t):
+        if vm and t is not None and (vm not in last or t > last[vm]):
+            last[vm] = float(t)
+    for r in rows:
+        c = cmap.get((r["session"], r["call"])) or {}
+        t = W.call_epoch(c.get("ts"))
+        if t is not None and c.get("observed_ms") is not None:
+            see(r["vm"], t + c["observed_ms"] / 1000.0)
+    for ev in wl_events.values():
+        for e in ev:
+            if e["kind"] == "exec":
+                see(e["vm"], e.get("ts"))
+    return last
+
+
+def idle_tail_reading(ends, lease_ids, last_end, fp_obs, sample_ts, guest_ram_bytes):
+    """Per lease ended `idle`: its vm_fp in the last sample line before the end, when that line is at least
+    AFTER_DROP_S after the lease's last Exec; else fp_bytes null with why_null."""
+    out = []
+    for t_end, key, vm, reason in ends:
+        if reason != "idle" or vm not in lease_ids:
+            continue
+        e = {"vm": vm, "session": key, "end": t_end, "sample_ts": None, "last_exec_end": last_end.get(vm),
+             "fp_bytes": None, "fp_ceiling_ratio": None, "why_null": None}
+        out.append(e)
+        i = bisect.bisect_left(sample_ts, t_end) - 1
+        if i < 0:
+            e["why_null"] = "no sample line before the end"
+            continue
+        e["sample_ts"] = sample_ts[i]
+        if e["last_exec_end"] is None:
+            e["why_null"] = "the lease has no Exec"
+        elif e["sample_ts"] - e["last_exec_end"] < AFTER_DROP_S:
+            e["why_null"] = "the last sample before the end is under 45 s after the lease's last Exec"
+        else:
+            e["fp_bytes"] = dict(fp_obs.get(vm, [])).get(e["sample_ts"])
+            if e["fp_bytes"] is None:
+                e["why_null"] = "the VM is not in vm_fp in the last sample line before the end"
+            else:
+                e["fp_ceiling_ratio"] = e["fp_bytes"] / float(guest_ram_bytes)
+    return out
 
 
 def sbx_median_grep(d):
@@ -457,7 +627,8 @@ def analyse(d, sbx_median_ms=None, shmem=None, guest_ram_mib=None):
             out["same_second_reorders"] = [{"vms": [a, b], "at": t} for a, b, t in swaps]
     reasons = list(problems)
     known = {v["id"] for v in vms}
-    for ev in WL.read_events(d).values():
+    wl_events = WL.read_events(d)
+    for ev in wl_events.values():
         for e in ev:
             if e["kind"] == "exec" and e["vm"] and e["vm"] not in known:
                 reasons.append("an Exec line names %s, which has no restore line" % e["vm"])
@@ -494,8 +665,16 @@ def analyse(d, sbx_median_ms=None, shmem=None, guest_ram_mib=None):
                    "samples": seen[v["id"]]} for v in vms]
     out["memory_vs_age"] = mem_vs_age(lease_vms, obs, born_ts)
     out["share_above"] = share_above(lease_vms, obs, guest_ram_mib)
-    out["fpr"] = fpr_reading(rows, W.read_calls(d), obs, {v["id"]: v for v in vms}, shmem,
-                             int(guest_ram_mib * (1 << 20)))
+    calls = W.read_calls(d)
+    ram = int(guest_ram_mib * (1 << 20))
+    fp_obs = dirty_obs = idle_tail = None
+    if any(isinstance(r.get("vm_fp"), dict) for r in samples):  # E17c; an E17b rung's output is unchanged
+        keep = {v["id"] for v in lease_vms}
+        fp_obs = attribute(d, vms, times, keep, samples, "vm_fp")[0]
+        dirty_obs = attribute(d, vms, times, keep, samples, "vm_dirty")[0]
+        idle_tail = idle_tail_reading(read_lease_ends(d), keep, last_exec_ends(rows, calls, wl_events), fp_obs,
+                                      sample_ts, ram)
+    out["fpr"] = fpr_reading(rows, calls, obs, {v["id"]: v for v in vms}, shmem, ram, fp_obs, dirty_obs, idle_tail)
     return out
 
 

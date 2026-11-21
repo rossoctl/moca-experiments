@@ -1,0 +1,479 @@
+{
+  "files": 10000,
+  "repeats": 5,
+  "run_id": "ownwalk-F10000-1795052061",
+  "sandbox_id": "e15",
+  "idle_timeout_s": 300,
+  "probe_cmd": "true",
+  "tree_dir": "/workspace/ownwalk-tree",
+  "build_script_sha256": "edde9f5e880129de0c50b4669e8d11a3122228fb5a8d98d8c31a4e61b18be738",
+  "runs": [
+    {
+      "rep": 0,
+      "key": "ownwalk-F10000-1795052061-0",
+      "build": {
+        "ms": 287.323,
+        "exit": 0,
+        "stdout": "build_tree: files=10000 dirs=10 dir=/workspace/ownwalk-tree\n"
+      },
+      "set_mode": {
+        "ms": 7.437
+      },
+      "a": {
+        "ms": 181.086,
+        "exit": 0,
+        "events": [
+          {
+            "state": "start",
+            "reason": "",
+            "at_unix_ms": 1795052067821,
+            "age_ms": 0,
+            "mode": "lease"
+          }
+        ]
+      },
+      "reset": {
+        "ms": 30.684,
+        "status": {
+          "mode": "lease",
+          "epoch_known": true,
+          "state": "none",
+          "pending": {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052067833,
+            "age_ms": 11,
+            "mode": "lease"
+          }
+        }
+      },
+      "b": {
+        "ms": 91.742,
+        "exit": 0,
+        "events": [
+          {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052067833,
+            "age_ms": 11,
+            "mode": "lease"
+          }
+        ]
+      },
+      "a_ms": 181.086,
+      "b_ms": 91.742,
+      "walk_ms": 89.34400000000001,
+      "valid": true,
+      "invalid_reasons": [],
+      "lease_starts": [
+        "vm-3",
+        "vm-4"
+      ],
+      "walk_observed": {
+        "A": null,
+        "B": null,
+        "a_normalise_ms": null,
+        "b_normalise_ms": null,
+        "reason": "the worker logs no normalise_us on its phase line (moca vmpool diag.go logPhases measures Phases.Normalise but prints it nowhere): not observed"
+      },
+      "worker_phases": {
+        "a": {
+          "acquire_us": 48026,
+          "resume_us": 27786,
+          "vmresume_us": 1445,
+          "vsockdial_us": 2613,
+          "mount_us": 23723,
+          "run_us": 3744,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        },
+        "b": {
+          "acquire_us": 48288,
+          "resume_us": 26575,
+          "vmresume_us": 1358,
+          "vsockdial_us": 2584,
+          "mount_us": 22630,
+          "run_us": 9208,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        }
+      },
+      "phase_corrected_walk_ms": 93.859
+    },
+    {
+      "rep": 1,
+      "key": "ownwalk-F10000-1795052061-1",
+      "build": {
+        "ms": 275.898,
+        "exit": 0,
+        "stdout": "build_tree: files=10000 dirs=10 dir=/workspace/ownwalk-tree\n"
+      },
+      "set_mode": {
+        "ms": 6.017
+      },
+      "a": {
+        "ms": 178.698,
+        "exit": 0,
+        "events": [
+          {
+            "state": "start",
+            "reason": "",
+            "at_unix_ms": 1795052068405,
+            "age_ms": 0,
+            "mode": "lease"
+          }
+        ]
+      },
+      "reset": {
+        "ms": 20.172,
+        "status": {
+          "mode": "lease",
+          "epoch_known": true,
+          "state": "none",
+          "pending": {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052068416,
+            "age_ms": 11,
+            "mode": "lease"
+          }
+        }
+      },
+      "b": {
+        "ms": 85.473,
+        "exit": 0,
+        "events": [
+          {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052068416,
+            "age_ms": 11,
+            "mode": "lease"
+          }
+        ]
+      },
+      "a_ms": 178.698,
+      "b_ms": 85.473,
+      "walk_ms": 93.22500000000001,
+      "valid": true,
+      "invalid_reasons": [],
+      "lease_starts": [
+        "vm-6",
+        "vm-7"
+      ],
+      "walk_observed": {
+        "A": null,
+        "B": null,
+        "a_normalise_ms": null,
+        "b_normalise_ms": null,
+        "reason": "the worker logs no normalise_us on its phase line (moca vmpool diag.go logPhases measures Phases.Normalise but prints it nowhere): not observed"
+      },
+      "worker_phases": {
+        "a": {
+          "acquire_us": 43688,
+          "resume_us": 28622,
+          "vmresume_us": 1359,
+          "vsockdial_us": 2582,
+          "mount_us": 24679,
+          "run_us": 3988,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        },
+        "b": {
+          "acquire_us": 43935,
+          "resume_us": 26369,
+          "vmresume_us": 1338,
+          "vsockdial_us": 2672,
+          "mount_us": 22357,
+          "run_us": 8083,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        }
+      },
+      "phase_corrected_walk_ms": 95.314
+    },
+    {
+      "rep": 2,
+      "key": "ownwalk-F10000-1795052061-2",
+      "build": {
+        "ms": 283.389,
+        "exit": 0,
+        "stdout": "build_tree: files=10000 dirs=10 dir=/workspace/ownwalk-tree\n"
+      },
+      "set_mode": {
+        "ms": 4.398
+      },
+      "a": {
+        "ms": 180.54,
+        "exit": 0,
+        "events": [
+          {
+            "state": "start",
+            "reason": "",
+            "at_unix_ms": 1795052068978,
+            "age_ms": 0,
+            "mode": "lease"
+          }
+        ]
+      },
+      "reset": {
+        "ms": 26.939,
+        "status": {
+          "mode": "lease",
+          "epoch_known": true,
+          "state": "none",
+          "pending": {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052068990,
+            "age_ms": 11,
+            "mode": "lease"
+          }
+        }
+      },
+      "b": {
+        "ms": 85.637,
+        "exit": 0,
+        "events": [
+          {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052068990,
+            "age_ms": 11,
+            "mode": "lease"
+          }
+        ]
+      },
+      "a_ms": 180.54,
+      "b_ms": 85.637,
+      "walk_ms": 94.90299999999999,
+      "valid": true,
+      "invalid_reasons": [],
+      "lease_starts": [
+        "vm-9",
+        "vm-10"
+      ],
+      "walk_observed": {
+        "A": null,
+        "B": null,
+        "a_normalise_ms": null,
+        "b_normalise_ms": null,
+        "reason": "the worker logs no normalise_us on its phase line (moca vmpool diag.go logPhases measures Phases.Normalise but prints it nowhere): not observed"
+      },
+      "worker_phases": {
+        "a": {
+          "acquire_us": 48765,
+          "resume_us": 27272,
+          "vmresume_us": 1333,
+          "vsockdial_us": 2570,
+          "mount_us": 23364,
+          "run_us": 3982,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        },
+        "b": {
+          "acquire_us": 43880,
+          "resume_us": 26501,
+          "vmresume_us": 1435,
+          "vsockdial_us": 2794,
+          "mount_us": 22270,
+          "run_us": 7781,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        }
+      },
+      "phase_corrected_walk_ms": 93.046
+    },
+    {
+      "rep": 3,
+      "key": "ownwalk-F10000-1795052061-3",
+      "build": {
+        "ms": 275.208,
+        "exit": 0,
+        "stdout": "build_tree: files=10000 dirs=10 dir=/workspace/ownwalk-tree\n"
+      },
+      "set_mode": {
+        "ms": 4.394
+      },
+      "a": {
+        "ms": 175.11,
+        "exit": 0,
+        "events": [
+          {
+            "state": "start",
+            "reason": "",
+            "at_unix_ms": 1795052069546,
+            "age_ms": 0,
+            "mode": "lease"
+          }
+        ]
+      },
+      "reset": {
+        "ms": 23.784,
+        "status": {
+          "mode": "lease",
+          "epoch_known": true,
+          "state": "none",
+          "pending": {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052069557,
+            "age_ms": 10,
+            "mode": "lease"
+          }
+        }
+      },
+      "b": {
+        "ms": 87.537,
+        "exit": 0,
+        "events": [
+          {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052069557,
+            "age_ms": 10,
+            "mode": "lease"
+          }
+        ]
+      },
+      "a_ms": 175.11,
+      "b_ms": 87.537,
+      "walk_ms": 87.57300000000001,
+      "valid": true,
+      "invalid_reasons": [],
+      "lease_starts": [
+        "vm-12",
+        "vm-13"
+      ],
+      "walk_observed": {
+        "A": null,
+        "B": null,
+        "a_normalise_ms": null,
+        "b_normalise_ms": null,
+        "reason": "the worker logs no normalise_us on its phase line (moca vmpool diag.go logPhases measures Phases.Normalise but prints it nowhere): not observed"
+      },
+      "worker_phases": {
+        "a": {
+          "acquire_us": 43872,
+          "resume_us": 27119,
+          "vmresume_us": 1351,
+          "vsockdial_us": 2577,
+          "mount_us": 23189,
+          "run_us": 3542,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        },
+        "b": {
+          "acquire_us": 45926,
+          "resume_us": 26276,
+          "vmresume_us": 1331,
+          "vsockdial_us": 2589,
+          "mount_us": 22354,
+          "run_us": 8010,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        }
+      },
+      "phase_corrected_walk_ms": 93.252
+    },
+    {
+      "rep": 4,
+      "key": "ownwalk-F10000-1795052061-4",
+      "build": {
+        "ms": 279.341,
+        "exit": 0,
+        "stdout": "build_tree: files=10000 dirs=10 dir=/workspace/ownwalk-tree\n"
+      },
+      "set_mode": {
+        "ms": 4.598
+      },
+      "a": {
+        "ms": 178.463,
+        "exit": 0,
+        "events": [
+          {
+            "state": "start",
+            "reason": "",
+            "at_unix_ms": 1795052070120,
+            "age_ms": 0,
+            "mode": "lease"
+          }
+        ]
+      },
+      "reset": {
+        "ms": 26.066,
+        "status": {
+          "mode": "lease",
+          "epoch_known": true,
+          "state": "none",
+          "pending": {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052070131,
+            "age_ms": 11,
+            "mode": "lease"
+          }
+        }
+      },
+      "b": {
+        "ms": 86.999,
+        "exit": 0,
+        "events": [
+          {
+            "state": "end",
+            "reason": "reset",
+            "at_unix_ms": 1795052070131,
+            "age_ms": 11,
+            "mode": "lease"
+          }
+        ]
+      },
+      "a_ms": 178.463,
+      "b_ms": 86.999,
+      "walk_ms": 91.464,
+      "valid": true,
+      "invalid_reasons": [],
+      "lease_starts": [
+        "vm-15",
+        "vm-16"
+      ],
+      "walk_observed": {
+        "A": null,
+        "B": null,
+        "a_normalise_ms": null,
+        "b_normalise_ms": null,
+        "reason": "the worker logs no normalise_us on its phase line (moca vmpool diag.go logPhases measures Phases.Normalise but prints it nowhere): not observed"
+      },
+      "worker_phases": {
+        "a": {
+          "acquire_us": 44431,
+          "resume_us": 27269,
+          "vmresume_us": 1339,
+          "vsockdial_us": 2606,
+          "mount_us": 23322,
+          "run_us": 4118,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        },
+        "b": {
+          "acquire_us": 44816,
+          "resume_us": 26432,
+          "vmresume_us": 1326,
+          "vsockdial_us": 2850,
+          "mount_us": 22251,
+          "run_us": 7772,
+          "destroy_us": 0,
+          "cold": "exhausted"
+        }
+      },
+      "phase_corrected_walk_ms": 94.666
+    }
+  ],
+  "median_a_ms": 178.698,
+  "median_b_ms": 86.999,
+  "median_walk_ms": 91.464,
+  "valid": true,
+  "invalid_reasons": [],
+  "phase_corrected_walk_median_ms": 93.859,
+  "walk_observed_median_ms": null
+}

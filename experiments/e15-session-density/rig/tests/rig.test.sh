@@ -831,6 +831,55 @@ if [ -f "$RIG/sample.sh" ]; then
     "$(head -1 "$OUTS" | python3 -c 'import json,sys; print(json.dumps(json.loads(sys.stdin.read())["e15_mem_events"], sort_keys=True))')" '{"high": 42, "max": 3, "oom_kill": 1}'
 fi
 
+# sample.sh under E17C=1 (PLAN-E17C Task 3, ruling R-d): each VM's footprint as the moca worker charges it
+# (readLeaseFootprint, moca #974): vm_fp = memory.current - max(file - file_mapped - shmem - file_dirty -
+# file_writeback, 0), clamped at 0; vm_dirty = file_dirty. A VM whose memory.stat is missing or lacks a field is
+# left out (never 0). With E17C unset the line is byte-identical to the pre-E17c sampler's (golden below).
+if [ -f "$RIG/sample.sh" ]; then
+  FV="$TMP/fcg17/e15-vms.slice"
+  mkvm() { # NAME PROCS CURRENT [STAT-LINES]: a fake VM cgroup; no STAT-LINES -> no memory.stat
+    mkdir -p "$FV/$1"
+    printf '%s' "$2" >"$FV/$1/cgroup.procs"
+    printf '%s\n' "$3" >"$FV/$1/memory.current"
+    [ $# -ge 4 ] && printf '%b' "$4" >"$FV/$1/memory.stat"
+    return 0
+  }
+  # vm-a: reclaimable 600000-100000-50000-20000-10000 = 420000 -> 1000000-420000; the *_thp decoys are not the fields
+  mkvm vm-a 11 1000000 'anon 300000\nfile 600000\nfile_mapped 100000\nfile_dirty 20000\nfile_writeback 10000\nshmem 50000\nfile_thp 999\nshmem_thp 7\n'
+  # vm-b: reclaimable < 0 -> 0, the footprint is memory.current
+  mkvm vm-b 12 500000 'file 100\nfile_mapped 200\nshmem 0\nfile_dirty 0\nfile_writeback 0\n'
+  # vm-c: no file_writeback -> out of vm_fp; its file_dirty is still a reading
+  mkvm vm-c 13 700000 'file 1000\nfile_mapped 0\nshmem 0\nfile_dirty 300\n'
+  # vm-d: reclaimable above memory.current -> clamped at 0
+  mkvm vm-d 14 1000 'file 5000\nfile_mapped 0\nshmem 0\nfile_dirty 0\nfile_writeback 0\n'
+  # vm-e: no memory.stat -> in vm_mem only
+  mkvm vm-e 15 2000
+  # vm-f: an idle pool cgroup (no process) and the worker's service cgroup: in nothing
+  mkvm vm-f '' 9 'file 1\nfile_mapped 0\nshmem 0\nfile_dirty 0\nfile_writeback 0\n'
+  mkvm microvm-worker.service 16 9 'file 1\nfile_mapped 0\nshmem 0\nfile_dirty 0\nfile_writeback 0\n'
+  s17() { # [VAR=VALUE...]: one sampler run over the fake tree -> its first line, t and ts normalised
+    rm -f "$OUTS"
+    env E15_PROC="$FP" E15_DISK_DEV=nosuch E15_DISK_PATH="$TMP/nodisk" E15_SLICE_DIR="$TMP/fcg17" \
+      E15_STATS_URL=http://127.0.0.1:1/x "$@" bash "$RIG/sample.sh" "$OUTS" "$(date +%s)" 1.2 >/dev/null 2>&1
+    head -1 "$OUTS" | sed -E 's/^\{"t":[0-9.-]+,"ts":[0-9.]+,/{"t":T,"ts":TS,/'
+  }
+  base='{"t":T,"ts":TS,"mem_available_kb":100,"page_cache_kb":5,"slice_mem_bytes":null,"slice_cpu_usec":null,"e15_mem_bytes":null,"e15_cpu_usec":null,"psi_cpu_some_avg10":null,"psi_mem_some_avg10":null,"psi_mem_full_avg10":null,"slice_psi_mem_some_avg10":null,"disk_used_pct":null,"disk_used_kb":null,"procs":3,"vm_mem":{"vm-a":1000000,"vm-b":500000,"vm-c":700000,"vm-d":1000,"vm-e":2000}'
+  check "sample.sh E17C=1: vm_fp and vm_dirty beside vm_mem, the line otherwise unchanged" \
+    "$(s17 E17C=1)" "$base"',"vm_fp":{"vm-a":580000,"vm-b":500000,"vm-d":0},"vm_dirty":{"vm-a":20000,"vm-b":0,"vm-c":300,"vm-d":0}}'
+  check "sample.sh E17C unset: the line is byte-identical to the pre-E17c sampler's" "$(s17)" "$base}"
+  check "sample.sh E17C=0 (anything but 1): unchanged" "$(s17 E17C=0)" "$base}"
+  check "sample.sh E17C=1: a VM missing memory.stat or a field is left out of vm_fp, never 0" \
+    "$(s17 E17C=1 >/dev/null; head -1 "$OUTS" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(",".join(sorted(set(d["vm_mem"]) - set(d["vm_fp"]))), ",".join(sorted(set(d["vm_mem"]) - set(d["vm_dirty"]))))')" "vm-c,vm-e vm-e"
+  # The switch reaches the sampler as rung.sh starts it: an E17C=1 environment, lib.sh sourced (its profile
+  # exports E17B=1 too), then a plain `bash sample.sh` child -- rung.sh's own launch line, pinned below.
+  rm -f "$OUTS"
+  E17C=1 E15_PROC="$FP" E15_DISK_DEV=nosuch E15_DISK_PATH="$TMP/nodisk" E15_SLICE_DIR="$TMP/fcg17" E15_STATS_URL=http://127.0.0.1:1/x \
+    bash -c 'source "$1"; bash "$2" "$3" "$(date +%s)" 1.2' _ "$RIG/lib.sh" "$RIG/sample.sh" "$OUTS" >/dev/null 2>&1
+  check "sample.sh: E17C=1 reaches the sampler through lib.sh as rung.sh starts it" "$(head -1 "$OUTS" | grep -c '"vm_fp":{"vm-a":580000,')" "1"
+  check "rung.sh: the sampler is a plain bash child (inherits E17C; no env -i, no unset)" \
+    "$(grep -c '^bash "\$HERE/sample.sh" "\$DIR/samples.jsonl" "\$launch_ts" "\$((WARMUP + WINDOW + 120))" &$' "$RIG/rung.sh")/$(grep -cE 'unset[^#]*E17C|export -n[^#]*E17C' "$RIG/rung.sh" "$RIG/lib.sh" | awk -F: '{s+=$NF} END{print s}')" "1/0"
+fi
+
 # setup.sh: the volume's read throughput, measured once (dd direct I/O), kept in state
 if [ -f "$RIG/lib.sh" ]; then
   ddout='2147483648 bytes (2.1 GB, 2.0 GiB) copied, 10.7374 s, 200 MB/s'
@@ -2272,9 +2321,14 @@ if [ -f "$E17D/rig/gen_corpora.sh" ]; then
   rm -rf "$GC"
   # gc: the E17b corpora (E17B=1); gcu: E17B unset (the sealed E17a command); gc0: E17_TMPFS_SHARE=0 explicitly
   gc() { E17B=1 E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" "$@" >"$TMP/gc.out" 2>&1; echo $?; }
-  gcu() { env -u E17B E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" >"$TMP/gc.out" 2>&1; echo $?; }
+  gcu() { env -u E17B E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" "$@" >"$TMP/gc.out" 2>&1; echo $?; }
+  E17C_FIXPIN_GC=2222222222222222222222222222222222222222
   gc0() { env -u E17B E17_TMPFS_SHARE=0 E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" >"$TMP/gc.out" 2>&1; echo $?; }
   gcr() { python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"r": r}))' "$GC/$1/corpus-report.json" "$2"; }
+  # gcc: E17C=1 alone (PLAN-E17C Task 4: E17C=1 implies E17B=1, so the E17b corpora)
+  gcc() { env -u E17B E17C=1 E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" >"$TMP/gc.out" 2>&1; echo $?; }
+  check "E17c gen_corpora: E17C=1 alone (E17B unset) is E17B=1: E17_TMPFS_SHARE defaults to 0.5" \
+    "$(gcc)/$(gcr pycache '(r["tmpfs_share"], r["tmpfs_sessions"])')/$(gcr pycache-low '(r["tmpfs_share"], r["tmpfs_sessions"])')" "0/(0.5, 200)/(0.5, 200)"
   gcd() { # POINT -> "class=dur_ms/work_ms" for every distinct pair in the corpus
     python3 -c 'import json,sys
 s=set()
@@ -2282,6 +2336,53 @@ for l in open(sys.argv[1]):
     for c in json.loads(l)["calls"]: s.add("%s=%d/%d" % (c["class"], c["dur_ms"], c["work_ms"]))
 print(" ".join(sorted(s)))' "$GC/$1/corpus.jsonl"
   }
+  # E17c Task 10 (SPEC §13.5, R45): --gate-256 GATE.json (a passing gate-256.json) also writes pycache-256, the 256 MiB
+  # points' corpus: pycache's arguments with py_analyze at the gate's measured ms, so it has its own corpus hash
+  # final review M5: the gate must match library-256.json's committed scale and E17C_MOCA_PIN (E17C_PINS_FILE and
+  # E17_LIBRARY_256 point the script at a fixture pin and a library at scale 8 here)
+  printf 'E17C_MOCA_PIN=%s\n' "$E17C_FIXPIN_GC" >"$TMP/gc-pins.sh"
+  gclib() { python3 -c 'import json,sys; sys.path.insert(0, sys.argv[3]); import gate256; l=json.load(open(sys.argv[1])); l["classes"]["py_analyze"][0]["cmd"]=gate256.analyze_cmd(int(sys.argv[2])); json.dump(l, open(sys.argv[4], "w"))' \
+    "$E17D/workload/library-256.json" "$1" "$E17D/analysis" "$TMP/gc-lib256.json"; }
+  gclib 8
+  gcg() { env -u E17B E17C=1 E17C_PINS_FILE="$TMP/gc-pins.sh" E17_LIBRARY_256="$TMP/gc-lib256.json" E17_CORPORA="$GC" E17_GAPS="$E17D/extract/testdata/gaps-20.jsonl" bash "$E17D/rig/gen_corpora.sh" "$@" >"$TMP/gc.out" 2>&1; echo $?; }
+  printf '{"stage": "gate-256", "pass": true, "chosen_scale": 8, "py_analyze_ms": 4321.5, "moca_commit": "%s"}\n' "$E17C_FIXPIN_GC" >"$TMP/g256.json"
+  rm -rf "$GC"
+  check "E17c gen_corpora: E17C=1 without --gate-256 writes no pycache-256, and says why" \
+    "$(gcg)/$([ -e "$GC/pycache-256" ] && echo there || echo none)/$(grep -c 'no pycache-256 corpus.*--gate-256' "$TMP/gc.out")" "0/none/1"
+  cp "$GC/pycache/corpus.jsonl" "$TMP/gc-p.jsonl"
+  cp "$GC/pycache-low/corpus.jsonl" "$TMP/gc-pl.jsonl"
+  check "E17c gen_corpora --gate-256: also pycache-256, pycache's arguments (duty 0.095, 400 sessions, seed 1, tmpfs share 0.5)" \
+    "$(gcg --gate-256 "$TMP/g256.json")/$(gcr pycache-256 '(r["duty_target"], r["sessions"], r["seed"], r["min_turns"], r["tmpfs_share"])')" "0/(0.095, 400, 1, 4, 0.5)"
+  check "E17c gen_corpora --gate-256: py_analyze at the gate's ms (rounded), the other classes as pycache's; the report names the input" \
+    "$(gcd pycache-256)/$(gcr pycache-256 'r["durations_from"]["file"]')" \
+    "py_analyze=4322/4322 py_grep=2200/2200 py_import=2000/2000 py_shmem=100/100 py_short=300/300 py_test=60000/60000/durations-256.json"
+  check "E17c gen_corpora --gate-256: its own corpus hash; pycache and pycache-low byte-identical to the run without it" \
+    "$([ "$(gcr pycache-256 'r["corpus_sha256"]')" != "$(gcr pycache 'r["corpus_sha256"]')" ] && echo own)/$([ "$(gcr pycache-256 'r["corpus_sha256"]')" = "$(sha256sum "$GC/pycache-256/corpus.jsonl" | cut -d' ' -f1)" ] && echo match)/$(cmp -s "$TMP/gc-p.jsonl" "$GC/pycache/corpus.jsonl" && cmp -s "$TMP/gc-pl.jsonl" "$GC/pycache-low/corpus.jsonl" && echo same)" \
+    "own/match/same"
+  printf '{"py_analyze": 18250.6, "py_test": 57100, "py_import": 1980.6, "py_grep": 2150, "py_short": 412}\n' >"$TMP/cal256.json"
+  check "E17c gen_corpora --gate-256 with --durations-from: the measured durations, py_analyze replaced by the gate's" \
+    "$(gcg --durations-from "$TMP/cal256.json" --gate-256 "$TMP/g256.json")/$(gcd pycache-256)/$(gcd pycache | cut -d' ' -f1)" \
+    "0/py_analyze=4322/4322 py_grep=2150/2150 py_import=1981/1981 py_shmem=100/100 py_short=412/412 py_test=57100/57100/py_analyze=18251/18251"
+  cp "$GC/pycache-256/corpus.jsonl" "$TMP/gc-256.jsonl"
+  printf '{"stage": "gate-256", "pass": false, "chosen_scale": null, "py_analyze_ms": null, "reason": "scale 1: OOM"}\n' >"$TMP/g256-fail.json"
+  check "E17c gen_corpora --gate-256: a gate that did not pass is refused (exit 1, naming it), pycache-256 left as it was" \
+    "$(gcg --gate-256 "$TMP/g256-fail.json")/$(grep -c 'g256-fail.json did not pass' "$TMP/gc.out")/$(cmp -s "$TMP/gc-256.jsonl" "$GC/pycache-256/corpus.jsonl" && echo kept)" "1/1/kept"
+  check "E17c gen_corpora --gate-256: the corpus report records the gate file's sha256, chosen scale and moca_commit" \
+    "$(gcg --gate-256 "$TMP/g256.json")/$(gcr pycache-256 'sorted(r["gate_256"].items())')" \
+    "0/[('chosen_scale', 8), ('file', 'g256.json'), ('moca_commit', '$E17C_FIXPIN_GC'), ('sha256', '$(sha256sum "$TMP/g256.json" | cut -d' ' -f1)')]"
+  cp "$GC/pycache-256/corpus.jsonl" "$TMP/gc-256.jsonl"
+  gclib 16
+  check "E17c gen_corpora --gate-256: refused (exit 1, nothing written) when library-256.json's scale is not the gate's chosen one" \
+    "$(gcg --gate-256 "$TMP/g256.json")/$(grep -c 'gc-lib256.json carries scale 16, but .*g256.json chose 8' "$TMP/gc.out")/$(cmp -s "$TMP/gc-256.jsonl" "$GC/pycache-256/corpus.jsonl" && echo kept)" "1/1/kept"
+  gclib 0
+  check "E17c gen_corpora --gate-256: refused while library-256.json carries the placeholder 0" \
+    "$(gcg --gate-256 "$TMP/g256.json")/$(grep -c 'carries scale 0, but' "$TMP/gc.out")" "1/1"
+  gclib 8
+  printf '{"stage": "gate-256", "pass": true, "chosen_scale": 8, "py_analyze_ms": 4321.5, "moca_commit": "%s"}\n' 3333333333333333333333333333333333333333 >"$TMP/g256-other.json"
+  check "E17c gen_corpora --gate-256: refused when the gate's moca_commit is not E17C_MOCA_PIN" \
+    "$(gcg --gate-256 "$TMP/g256-other.json")/$(grep -c 'moca_commit "3333333333333333333333333333333333333333", not E17C_MOCA_PIN '"$E17C_FIXPIN_GC" "$TMP/gc.out")/$(cmp -s "$TMP/gc-256.jsonl" "$GC/pycache-256/corpus.jsonl" && echo kept)" "1/1/kept"
+  check "E17c gen_corpora --gate-256: refused with E17C unset (E17B=1 or neither), and without a file" \
+    "$(gc --gate-256 "$TMP/g256.json")/$(gcu --gate-256 "$TMP/g256.json")/$(gcg --gate-256 "$TMP/nope.json")" "2/2/2"
   check "E17 gen_corpora: placeholders without --durations-from, and it says so" \
     "$(gc)/$(gcd pycache)/$(grep -c 'placeholder durations' "$TMP/gc.out")" "0/py_analyze=15000/15000 py_grep=2200/2200 py_import=2000/2000 py_shmem=100/100 py_short=300/300 py_test=60000/60000/1"
   check "E17b gen_corpora: under E17B=1 E17_TMPFS_SHARE defaults to 0.5 (200 of 400 sessions flagged tmpfs, both corpora)" \
@@ -2413,6 +2514,16 @@ SH
   rm -f "$SM/bin/microvm-worker-e17b"
   check "E17 smoke (stubbed): warmcold counts printed per rung, the pass line names the BUILD sha256" \
     "$(grep -c '^smoke pycache/[a-z0-9-]*/N1-smoke: warm [0-9]* cold [0-9]* unknown [0-9]* (holds=True)$' "$TMP/sm.out")/$(grep -c "analyze sha256 = BUILD dataset_sha256 ($SMSHA)" "$TMP/sm.out")" "4/1"
+  # E17c (PLAN-E17C Task 4, carried from Task 2): E17C=1 smokes E17c's arms, sbx ship-300 ship-300-nd
+  printf '#!/bin/sh\n' >"$SM/bin/microvm-worker-e17b"
+  chmod +x "$SM/bin/microvm-worker-e17b"
+  printf 'E17B_MOCA_PIN=%s\nE17C_MOCA_PIN=%s\n' 1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 >"$TMP/sm-e17c-pins.sh"
+  mkdir -p "$SM/snapshots/e17c-22222222-1024" && echo '{}' >"$SM/snapshots/e17c-22222222-1024/manifest.json"
+  check "E17c smoke (stubbed): under E17C=1 (E17B unset) the arms are sbx ship-300 ship-300-nd, in that order" \
+    "$(smoke E17C=1 E15_TEST_PINS="$TMP/sm-e17c-pins.sh")/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx ship-300 ship-300-nd "
+  check "E17c smoke (stubbed): E17B=1 alone keeps E17b's arms" \
+    "$(smoke E17B=1 E15_TEST_PINS="$TMP/sm-e17b-pins.sh")/$(cut -d' ' -f2 "$TMP/sm.rlog" | tr '\n' ' ')" "0/sbx ship-30 ship-120 ship-300 "
+  rm -f "$SM/bin/microvm-worker-e17b"
   check "E17 smoke (stubbed): analyze ran on its own key with the library's command; the copy removed after" \
     "$(grep -c '"workspace_key": "e17-smoke-analyze"' "$TMP/sm.glog")/$(grep -c 'cd project && ../venv/bin/python analyze.py' "$TMP/sm.glog")/$([ -e "$SM/workspaces/e17-smoke-analyze" ] && echo left || echo removed)" "1/1/removed"
   check "E17 smoke (stubbed): a printed sha256 that is not BUILD's fails" \
@@ -2618,6 +2729,8 @@ PY
   }
   RPR=$RP/runs/pycache/sbx
   rp_stage sbx
+  check "E17c reprobe: the usage text lists ship-300-nd under E17C=1" \
+    "$(grep -c 'usage: reprobe.sh ARM .*with E17C=1: sbx ship-300 ship-300-nd' "$RE17/rig/reprobe.sh")" "1"
   check "E17 5b reprobe: sbx passes" "$(rp sbx)" "0"
   grep -q 'reprobe.sh:' "$TMP/rp.out" && sed 's/^/    /' "$TMP/rp.out" | tail -5
   check "E17 5b reprobe: the old probe dirs and probe-corpora are renamed aside, contents kept" \
@@ -2812,6 +2925,78 @@ test_e17b_profile_on() {
 test_e17b_pin_is_a_full_sha
 test_e17b_profile_off_is_unchanged
 test_e17b_profile_on
+# --- E17c profile (E17C=1: E17B=1 with its own moca pin and checkout; with E17C unset nothing changes) ---
+e17c_pin_file="$RE17B/e17c-pins.sh"
+t17c() { # t17c E17C-value|unset E17B-value|unset EXPR [VAR=val ...]: evaluate EXPR after sourcing lib.sh at a scratch root
+  local cv=$1 bv=$2 expr=$3 ea=()
+  shift 3
+  if [ "$cv" = unset ]; then ea+=(-u E17C); else ea+=(E17C="$cv"); fi
+  if [ "$bv" = unset ]; then ea=(-u E17B "${ea[@]}"); else ea+=(E17B="$bv"); fi
+  env "${ea[@]}" "$@" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; eval "$2"' _ "$RIG/lib.sh" "$expr" 2>&1
+}
+E17C_FIXPIN=2222222222222222222222222222222222222222
+printf 'E17C_MOCA_PIN=%s\n' "$E17C_FIXPIN" >"$TMP/e17c-test-pins.sh"
+test_e17c_pin_is_a_full_sha() {
+  local want_pin
+  want_pin=$(grep -E '^E17C_MOCA_PIN=' "$e17c_pin_file" | cut -d= -f2)
+  check "e17c: pins file exists and sets E17C_MOCA_PIN to 40 hex digits (the placeholder until moca #974 merges)" "$(printf '%s' "$want_pin" | grep -cE '^[0-9a-f]{40}$')" "1"
+  check "e17c: the pins file says the placeholder must be replaced before any rig run" "$(grep -ci 'replace.*before any rig run' "$e17c_pin_file")" "1"
+  check "e17c: pins file is not sourced (E17C_MOCA_PIN undefined) with E17C unset, with or without E17B=1" \
+    "$(t17c unset unset 'echo "${E17C_MOCA_PIN:-none}"')/$(t17c unset 1 'echo "${E17C_MOCA_PIN:-none}"')" "none/none"
+  check "e17c: a real sha is accepted by e17c_require_pin" "$(t17c 1 unset 'e17c_require_pin && echo ok' E15_TEST_PINS="$TMP/e17c-test-pins.sh")" "ok"
+  printf 'E17C_MOCA_PIN=0000000000000000000000000000000000000000\n' >"$TMP/e17c-placeholder.sh"
+  check "e17c: the placeholder sha is refused, naming e17c-pins.sh" \
+    "$(t17c 1 unset '(e17c_require_pin)' E15_TEST_PINS="$TMP/e17c-placeholder.sh" 2>&1 | grep -c 'E17C_MOCA_PIN.*placeholder.*e17c-pins.sh')/$(t17c 1 unset '(e17c_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17c-placeholder.sh")" "1/1"
+  printf 'E17C_MOCA_PIN=abc123\n' >"$TMP/e17c-bad1.sh"
+  printf 'E17C_MOCA_PIN=ZZZ%s\n' "${E17C_FIXPIN:3}" >"$TMP/e17c-bad2.sh"
+  check "e17c: a short or non-hex pin is refused, naming e17c-pins.sh" \
+    "$(t17c 1 unset '(e17c_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17c-bad1.sh")/$(t17c 1 unset '(e17c_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17c-bad2.sh")/$(t17c 1 unset '(e17c_require_pin)' E15_TEST_PINS="$TMP/e17c-bad1.sh" | grep -c 'not a full 40-hex sha (e17c-pins.sh)')" "1/1/1"
+  check "e17c: setup.sh and rung.sh call e17c_require_pin when E17C=1, before the E17b checks" \
+    "$(grep -A2 '^\[ "\${E17C:-}" != 1 \] || e17c_require_pin$' "$RIG/setup.sh" | grep -c '^\[ "\${E17B:-}" != 1 \] || e17b_require_pin$')/$(grep -A2 '^\[ "\${E17C:-}" != 1 \] || e17c_require_pin$' "$RIG/rung.sh" | grep -c '^\[ "\${E17B:-}" != 1 \] || { e17b_require_pin && e17b_require_build; }$')" "1/1"
+  check "e17c: a rung with E17C=1 and the placeholder pin refuses to start (exit 1, names the pin file)" \
+    "$(env -u E17B E17C=1 E15_TEST_PINS="$TMP/e17c-placeholder.sh" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash "$RIG/rung.sh" sbx 1 default >"$TMP/e17c-rung.out" 2>&1; echo $?)/$(grep -c 'E17C_MOCA_PIN.*placeholder.*e17c-pins.sh' "$TMP/e17c-rung.out")" "1/1"
+  check "e17c: the pin-file-not-found error names both candidate paths" \
+    "$(grep -c "but no e17c-pins.sh at.*e17-lease/rig/e17c-pins.sh.*e17/rig/e17c-pins.sh" "$RIG/lib.sh")" "1"
+}
+test_e17c_profile_off_is_unchanged() {
+  check "e17c off: with E17C unset no E17C variable is defined (E17B unset / E17B=1)" \
+    "$(t17c unset unset 'compgen -v E17C | wc -l | tr -d " "')/$(t17c unset 1 'compgen -v E17C | wc -l | tr -d " "')" "0/0"
+  check "e17c off: E17B=1 alone keeps E17b's pin and checkout" \
+    "$(t17c unset 1 'echo $E15_MOCA_PIN $E15_MOCA' E15_TEST_PINS="$TMP/e17b-test-pins.sh")" "$E17B_FIXPIN $TROOT/moca-e17b"
+  check "e17c off: E17C=0 or empty is E17C unset" \
+    "$(t17c 0 1 'echo $E15_MOCA_PIN $E15_MOCA')/$(t17c '' unset 'echo $E15_MOCA_PIN $E15_MOCA')" "$(t17c unset 1 'echo $E15_MOCA_PIN $E15_MOCA')/$(t17c unset unset 'echo $E15_MOCA_PIN $E15_MOCA')"
+  # The goldens were written from the pre-E17c lib.sh (tests/golden/dump.sh says how), so no git ref is needed.
+  local b g ea
+  for b in unset 1; do
+    if [ "$b" = unset ]; then g="$GOLD/profile-e17b-off.txt"; else g="$GOLD/profile-e17b-on.txt"; fi
+    t17c unset "$b" '. "'"$GOLD/dump.sh"'"; e15_golden_profile' >"$TMP/gold.out"
+    check "e17c off: with E17C unset and E17B $b every E15_/E17B/E17C variable lib.sh defines (flags, values) equals the pre-E17c golden" \
+      "$(gsame "$g")" "same"
+    check "e17c off: with E17C unset and E17B $b sourcing lib.sh exports no new variable" \
+      "$(if [ "$b" = unset ]; then ea=(-u E17B); else ea=(E17B="$b"); fi
+        env -u E17C "${ea[@]}" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'b=$(env | cut -d= -f1 | sort); source "$1"; comm -13 <(echo "$b") <(env | cut -d= -f1 | sort) | tr "\n" " "' _ "$RIG/lib.sh" 2>&1)" ""
+  done
+  check "e17c: pins.sh and e17b-pins.sh are not touched by the profile (no E17C in them)" "$(grep -c 'E17C' "$RIG/pins.sh" "$RE17B/e17b-pins.sh" | cut -d: -f2 | tr '\n' ' ')" "0 0 "
+}
+test_e17c_profile_on() {
+  local p="E15_TEST_PINS=$TMP/e17c-test-pins.sh"
+  check "e17c on: E15_MOCA_PIN follows E17C_MOCA_PIN" "$(t17c 1 unset 'echo $E15_MOCA_PIN' "$p")" "$E17C_FIXPIN"
+  check "e17c on: E15_MOCA is \$E15_ROOT/moca-e17c" "$(t17c 1 unset 'echo $E15_MOCA' "$p")" "$TROOT/moca-e17c"
+  check "e17c on: E17C=1 implies E17B=1, exported to child processes" "$(t17c 1 unset 'echo $E17B; bash -c "echo \$E17B"' "$p" | tr '\n' ' ')" "1 1 "
+  check "e17c on: E17C=1 alone resolves exactly as E17C=1 E17B=1" \
+    "$([ "$(t17c 1 unset 'for v in $(compgen -v E15_; compgen -v E17B; compgen -v E17C); do declare -p "$v"; done' "$p" | sha256sum)" = "$(t17c 1 1 'for v in $(compgen -v E15_; compgen -v E17B; compgen -v E17C); do declare -p "$v"; done' "$p" | sha256sum)" ] && echo same || echo differ)" "same"
+  check "e17c on: the E17b semantics hold (ship-* arms on fresh-metal, a ship arm is a lease arm, E17a arms refused)" \
+    "$(t17c 1 unset 'case " ${E15_ARMS[*]} " in *" ship-300 "*) echo arms ;; *) echo noarms ;; esac; e17b_lease_arm ship-300 && echo lease; e15_e17a_arm_refused lease-300 2>/dev/null && echo refused' "$p" E15_HOST_PROFILE=fresh-metal | tr '\n' ' ')" "arms lease refused "
+  check "e17c on: every other pins.sh pin is unchanged" \
+    "$([ "$(t17c unset unset 'for n in "${E15_PINS[@]}"; do echo "$n=${!n}"; done' | sha256sum)" = "$(t17c 1 unset 'for n in "${E15_PINS[@]}"; do echo "$n=${!n}"; done' "$p" | sha256sum)" ] && echo same || echo differ)" "same"
+  check "e17c on: the snapshot leaf is e17c-<E17C pin8>-<ram> (ruling R-i) and the stock build stamp key carries the E17C pin" \
+    "$(t17c 1 unset 'worker_snapimg' "$p")/$(t17c 1 unset 'worker_snapimg' "$p" E17B_GUEST_RAM_MB=256)/$(t17c 1 unset 'stamp_set() { :; }; mkdir -p "$E15_STATE"; echo "$E15_MOCA_PIN" >"$E15_STATE/go-stock-e17b"; e17b_require_build && echo built' "$p")" "e17c-${E17C_FIXPIN:0:8}-1024/e17c-${E17C_FIXPIN:0:8}-256/built"
+  check "e17c off: E17B=1 alone keeps the e17b-<pin8>-<ram> leaf" "$(t17c unset 1 'worker_snapimg' E15_TEST_PINS="$TMP/e17b-test-pins.sh")" "e17b-${E17B_FIXPIN:0:8}-1024"
+  rm -rf "${TROOT:?}/state"
+}
+test_e17c_pin_is_a_full_sha
+test_e17c_profile_off_is_unchanged
+test_e17c_profile_on
 
 test_e17b_setup_never_deletes_the_sealed_snapshot() {
   local snip="$TMP/e17b-snapstep.sh"
@@ -3135,6 +3320,11 @@ systemd-run)
     case "\${STUB_BANNER:-on}" in
     off) b='2026/11/15 10:00:00 microvm-worker: relay=127.0.0.1:9643 sandbox_id=e15 tls=false vmm=firecracker D=0 guest=1024MiB budget=385024MiB slots=1792 standby_headroom=off mem_floor=1536MiB workspace_idle=24h0m0s lease=off labels=map[]' ;;
     none) b='' ;;
+    # a worker with moca #974 (E17c): the lease_cache_drop field after lease_reclaim_free, 30s (the default) or off (0)
+    drop30) b='2026/11/15 10:00:00 microvm-worker: relay=127.0.0.1:9643 sandbox_id=e15 tls=false vmm=firecracker D=0 guest=1024MiB budget=385024MiB slots=1792 standby_headroom=off mem_floor=1536MiB workspace_idle=24h0m0s lease=on lease_idle=5m0s/1h0m0s lease_max=8h0m0s/8h0m0s lease_grace=30s lease_start=192MiB lease_headroom=1.25 lease_pagecache=256MiB lease_reclaim_free=2048MiB lease_cache_drop=30s labels=map[]' ;;
+    dropoff) b='2026/11/15 10:00:00 microvm-worker: relay=127.0.0.1:9643 sandbox_id=e15 tls=false vmm=firecracker D=0 guest=1024MiB budget=385024MiB slots=1792 standby_headroom=off mem_floor=1536MiB workspace_idle=24h0m0s lease=on lease_idle=5m0s/1h0m0s lease_max=8h0m0s/8h0m0s lease_grace=30s lease_start=192MiB lease_headroom=1.25 lease_pagecache=256MiB lease_reclaim_free=2048MiB lease_cache_drop=off labels=map[]' ;;
+    # a pin whose drop default is not 30s (final review M3: 5a's +45 s reading assumes the 30 s drop)
+    drop45) b='2026/11/15 10:00:00 microvm-worker: relay=127.0.0.1:9643 sandbox_id=e15 tls=false vmm=firecracker D=0 guest=1024MiB budget=385024MiB slots=1792 standby_headroom=off mem_floor=1536MiB workspace_idle=24h0m0s lease=on lease_idle=5m0s/1h0m0s lease_max=8h0m0s/8h0m0s lease_grace=30s lease_start=192MiB lease_headroom=1.25 lease_pagecache=256MiB lease_reclaim_free=2048MiB lease_cache_drop=45s labels=map[]' ;;
     esac
     for a; do case "\$a" in StandardOutput=file:*)
       { [ -z "\$b" ] || printf '%s\n' "\$b"; printf '2026/11/15 10:00:01 microvm-worker: attached, serving execs\n'; } >"\${a#StandardOutput=file:}" ;; esac; done ;;
@@ -3654,6 +3844,162 @@ test_pr34_sealed_driver_rebuild_guard() {
 test_pr34_sealed_rung_has_no_worker_bin_errors
 test_pr34_e17a_arms_refused_under_e17b
 test_pr34_sealed_driver_rebuild_guard
+
+# --- E17c Task 2: ship-300-nd, the shipped lease without the idle page-cache drop (E17C=1 only) ---------------------
+printf 'E17B_MOCA_PIN=%s\nE17C_MOCA_PIN=%s\n' "$E17B_FIXPIN" "$E17C_FIXPIN" >"$TMP/e17c-rung-pins.sh"
+t17n() { t17m "$1" 1 "$2" E17C=1 E15_TEST_PINS="$TMP/e17c-rung-pins.sh" "${@:3}"; } # PROFILE EXPR [VAR=val ...]: E17C=1
+test_ship_nd_arm_known_under_e17c_only() {
+  local isarm='e15_is_arm ship-300-nd && echo yes || echo no'
+  check "ship-300-nd: known on fresh-metal under E17C=1; not under E17B=1 alone, E17B unset, or on aws-prelim" \
+    "$(t17n fresh-metal "$isarm")/$(t17m fresh-metal 1 "$isarm")/$(t17m fresh-metal unset "$isarm")/$(t17n aws-prelim "$isarm")" "yes/no/no/no"
+  check "ship-300-nd: E15_ARMS under E17C=1 appends it after the E17b ship arms" \
+    "$(t17n fresh-metal 'echo ${E15_ARMS[*]}')" "sbx resident-inf resident-300 control lease-30 lease-120 ship-30 ship-120 ship-300 ship-300-nd"
+  check "ship-300-nd: the points the ship arms run (default, smoke, pycache*) list it under E17C=1; squeeze does not" \
+    "$(t17n fresh-metal 'for p in default smoke pycache pycache-low pycache-d64 pycache-d768 squeeze squeeze-256 lowduty mem512; do e15_point $p; case " $E15_P_ARMS " in *" ship-300-nd "*) printf "%s " $p ;; esac; done')" \
+    "default smoke pycache pycache-low pycache-d64 pycache-d768 "
+  check "ship-300-nd: no point lists it under E17B=1 alone" \
+    "$(t17m fresh-metal 1 'for p in default smoke pycache pycache-low pycache-d64 pycache-d768 squeeze; do e15_point $p; case " $E15_P_ARMS " in *" ship-300-nd "*) printf "%s " $p ;; esac; done')" ""
+  check "ship-300-nd: the point signature is the same with or without it (the arm list is not in the settings)" \
+    "$([ "$(t17n fresh-metal 'e15_point_sig pycache')" = "$(t17m fresh-metal 1 'e15_point_sig pycache')" ] && echo same || echo differ)" "same"
+  check "ship-300-nd: the default warm-up is 1200 s (as ship-300)" "$(t17n fresh-metal 'e15_default_warmup ship-300-nd')" "1200"
+}
+test_ship_nd_worker_env() {
+  local a="$TMP/nd-wenv-300" b="$TMP/nd-wenv-nd" c="$TMP/nd-wenv-300b"
+  t17n fresh-metal 'worker_env ship-300 "'"$a"'"; worker_env ship-300-nd "'"$b"'"' >/dev/null
+  t17m fresh-metal 1 'worker_env ship-300 "'"$c"'"' >/dev/null
+  check "ship-300-nd worker_env: ship-300's plus SH_LEASE_CACHE_DROP_S=0, nothing else" \
+    "$(diff "$a" "$b" | grep '^[<>]' | tr '\n' ' ')" "> SH_LEASE_CACHE_DROP_S=0 "
+  check "ship-300 worker_env has no SH_LEASE_CACHE_DROP_S line (the worker's 30 s default stands), under E17C=1 and E17B=1" \
+    "$(grep -c '^SH_LEASE_CACHE_DROP_S' "$a")/$(grep -c '^SH_LEASE_CACHE_DROP_S' "$c")" "0/0"
+  check "ship-300-nd worker_env: refused under E17B=1 alone (E17C unset)" \
+    "$(t17m fresh-metal 1 '(worker_env ship-300-nd "'"$b.x"'") >/dev/null 2>&1; echo $?')" "1"
+}
+test_ship_nd_is_a_lease_arm() {
+  check "ship-300-nd: a lease arm under E17C=1 (e17b_lease_arm), not under E17B=1 alone or E17B unset" \
+    "$(t17n fresh-metal 'e17b_lease_arm ship-300-nd && echo y || echo n')/$(t17m fresh-metal 1 'e17b_lease_arm ship-300-nd && echo y || echo n')/$(t17m fresh-metal unset 'e17b_lease_arm ship-300-nd && echo y || echo n')" "y/n/n"
+  check "ship-300-nd: its token idle timeout is 300 s (ship-300's is still 300)" \
+    "$(t17n fresh-metal 'e17b_idle_timeout_s ship-300-nd; e17b_idle_timeout_s ship-300' | tr '\n' ' ')" "300 300 "
+  check "ship-300-nd: its worker is the stock -e17b build under E17C=1; refused under E17B=1 alone" \
+    "$(t17n fresh-metal 'worker_bin ship-300-nd')/$(t17m fresh-metal 1 '(worker_bin ship-300-nd) >/dev/null 2>&1; echo $?')" "$TROOT/bin/microvm-worker-e17b/1"
+  check "ship-300-nd: not an E17a arm (never refused as one)" "$(t17n fresh-metal 'e15_e17a_arm_refused ship-300-nd && echo refused || echo ok')" "ok"
+}
+crung() { # ARM [VAR=val ...]: srung under E17C=1 (the E17c pin's stamp and snapshot leaf in the harness root)
+  local arm=$1 rc
+  shift
+  printf '%s\n' "$E17C_FIXPIN" >"$RS/state/go-stock-e17b"
+  mkdir -p "$RS/snapshots/e17c-${E17C_FIXPIN:0:8}-1024"
+  printf '{"hash": "hc", "guest_ram_mb": 1024, "features": ["lease-v1", "balloon-fpr-v1"]}\n' >"$RS/snapshots/e17c-${E17C_FIXPIN:0:8}-1024/manifest.json"
+  srung "$arm" E17C=1 E15_TEST_PINS="$TMP/e17c-rung-pins.sh" "$@"
+  rc=$?
+  printf '%s\n' "$E17B_FIXPIN" >"$RS/state/go-stock-e17b"
+  return $rc
+}
+test_ship_nd_rung_checks_cache_drop_banner() {
+  crung ship-300-nd STUB_BANNER=dropoff
+  check "cache-drop banner: ship-300-nd on lease_cache_drop=off runs (exit 0), the driver at --idle-timeout-s 300 in lease mode" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c -- '--lease-mode --token-key [^ ]* --idle-timeout-s 300 ' "$SARGS")" "0/1/1"
+  check "cache-drop banner: ship-300-nd params.json records lease_cache_drop off, idle_timeout_s 300, its worker env and worker sha" \
+    "$(sparams ship-300-nd lease_cache_drop)/$(sparams ship-300-nd idle_timeout_s)/$(sparams ship-300-nd worker_env | grep -c "'SH_LEASE_CACHE_DROP_S': '0'")/$(sparams ship-300-nd worker_bin_sha256 | grep -cE '^[0-9a-f]{64}$')" "off/300/1/1"
+  check "cache-drop banner: the value is logged" "$(grep -c 'worker banner: lease_cache_drop=off' "$TMP/ship-rung.out")" "1"
+  crung ship-300 STUB_BANNER=drop30
+  check "cache-drop banner: ship-300 on lease_cache_drop=30s runs; params.json records it as printed" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(sparams ship-300 lease_cache_drop)" "0/1/30s"
+  crung ship-300-nd STUB_BANNER=drop30
+  check "cache-drop banner: ship-300-nd on lease_cache_drop=30s -> refused before the driver, naming the mismatch" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'lease_cache_drop=30s.*ship-300-nd needs off' "$TMP/ship-rung.out")" "1/0/1"
+  crung ship-300 STUB_BANNER=dropoff
+  check "cache-drop banner: ship-300 on lease_cache_drop=off -> refused before the driver, naming the mismatch" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'lease_cache_drop=off.*ship-300 needs the drop on' "$TMP/ship-rung.out")" "1/0/1"
+  crung ship-300 STUB_BANNER=drop45
+  check "cache-drop banner: ship-300 on lease_cache_drop=45s -> refused before the driver: E17c's ship-300 needs exactly 30s (M3)" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'lease_cache_drop=45s.*ship-300 needs exactly 30s' "$TMP/ship-rung.out")" "1/0/1"
+  crung ship-300-nd STUB_BANNER=drop45
+  check "cache-drop banner: ship-300-nd on lease_cache_drop=45s -> refused (it needs off), as before" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'lease_cache_drop=45s.*ship-300-nd needs off' "$TMP/ship-rung.out")" "1/0/1"
+  local a
+  for a in ship-300 ship-300-nd; do
+    crung $a STUB_BANNER=on
+    check "cache-drop banner: $a on a banner without lease_cache_drop (a worker before moca #974) -> refused before the driver" \
+      "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'no lease_cache_drop= field' "$TMP/ship-rung.out")" "1/0/1"
+  done
+  crung ship-300-nd STUB_BANNER=dropoff
+  check "cache-drop banner: the check comes before the relay attach probe" \
+    "$(awk '/worker banner: lease_cache_drop=/{b=NR} /relay attach check passed/{p=NR} END{print (b && p && b < p) ? "before" : "after"}' "$TMP/ship-rung.out")" "before"
+  crung sbx STUB_BANNER=drop30
+  check "cache-drop banner: sbx under E17C=1 is not checked and its params.json has no lease_cache_drop" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(sparams sbx lease_cache_drop | grep -c KeyError)" "0/1/1"
+  srung ship-300 STUB_BANNER=drop30
+  check "cache-drop banner: with E17C unset a ship-300 rung is not checked and its params.json has no lease_cache_drop" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(sparams ship-300 lease_cache_drop | grep -c KeyError)" "0/1/1"
+  srung ship-300 STUB_BANNER=on
+  check "cache-drop banner: with E17C unset a banner without the field still runs (E17b unchanged)" "$?/$(grep -c '^driver$' "$SORD")" "0/1"
+  check "cache-drop banner: params.json gets lease_cache_drop only from the E17C=1 ship branch (sbx and E17C unset unchanged)" \
+    "$(grep -c 'lease_cache_drop' "$RIG/rung.sh" | awk '{print ($1 > 0) ? "present" : "absent"}')/$(grep -c 'if "\$lease_cache_drop_rec" == "1" else {}' "$RIG/rung.sh")" "present/1"
+}
+test_ship_nd_arm_known_under_e17c_only
+test_ship_nd_worker_env
+test_ship_nd_is_a_lease_arm
+test_ship_nd_rung_checks_cache_drop_banner
+
+# --- E17c Task 10 (SPEC §13.5, R45): the 256 MiB points' library and corpus; gate-256's rungs ----------------------
+c256rung() { # ARM [VAR=val ...]: crung at pycache-d64 (the e17c 256 MiB leaf and the 256 inputs in the harness root)
+  mkdir -p "$RS/snapshots/e17c-${E17C_FIXPIN:0:8}-256" "$RS/corpora/pycache-256" "$RS/template-pycache-d64"
+  printf '{"hash": "hc256", "guest_ram_mb": 256, "features": ["lease-v1", "balloon-fpr-v1"]}\n' >"$RS/snapshots/e17c-${E17C_FIXPIN:0:8}-256/manifest.json"
+  printf '{"session":"s","calls":[]}\n' >"$RS/corpora/pycache-256/corpus.jsonl"
+  printf '{"table": {"mean_span_min": 30}}\n' >"$RS/corpora/pycache-256/corpus-report.json"
+  cp "$RIG/../../e17-lease/workload/library-256.json" "$RS/src/e17/workload/library-256.json"
+  head -c 4096 /dev/zero >"$RS/template-pycache-d64/workspace.img"
+  SRUNG_POINT=pycache-d64 crung "$@"
+}
+d64params() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$RS/runs/pycache-d64/$1/N1/params.json" "$2" 2>&1; }
+test_e17c_256_library() {
+  local f='e15_point P && echo "$E15_P_CORPUS|${E15_P_LIBRARY#"$E15_ROOT"/}"' p out=""
+  check "E17c 256: under E17C=1 pycache-d64 and squeeze-256 replay library-256.json and their own corpus, pycache-256" \
+    "$(t17n fresh-metal "${f/P/pycache-d64}")/$(t17n fresh-metal "${f/P/squeeze-256}")" \
+    "pycache-256|src/e17/workload/library-256.json/pycache-256|src/e17/workload/library-256.json"
+  for p in pycache pycache-low pycache-d768 squeeze; do out+="$p=$(t17n fresh-metal "${f/P/$p}") "; done
+  check "E17c 256: the 1024 MiB points keep the E17 library and their corpora under E17C=1" "$out" \
+    "pycache=pycache|src/e17/workload/library.json pycache-low=pycache-low|src/e17/workload/library.json pycache-d768=pycache|src/e17/workload/library.json squeeze=pycache|src/e17/workload/library.json "
+  check "E17c 256: with E17C unset pycache-d64 and squeeze-256 resolve as before (E17B=1; pycache-d64 with E17B unset too)" \
+    "$(t17m fresh-metal 1 "${f/P/pycache-d64}")/$(t17m fresh-metal 1 "${f/P/squeeze-256}")/$(t17m fresh-metal unset "${f/P/pycache-d64}")" \
+    "pycache|src/e17/workload/library.json/pycache|src/e17/workload/library.json/pycache|src/e17/workload/library.json"
+  check "E17c 256: pycache-d64's point signature under E17C=1 is not E17b's (its library and corpus are in the settings)" \
+    "$([ "$(t17n fresh-metal 'e15_point_sig pycache-d64')" != "$(t17m fresh-metal 1 'e15_point_sig pycache-d64')" ] && echo own)" "own"
+  c256rung sbx E17B_GUEST_RAM_MB=256
+  check "E17c 256: a pycache-d64 rung at 256 MiB runs with library-256.json (the driver's --library)" \
+    "$?/$(grep -c -- "--library $RS/src/e17/workload/library-256.json " "$SARGS")/$(grep -c -- '--record-stdout py_shmem$' "$SARGS")" "0/1/1"
+  check "E17c 256: params.json records which library the rung ran: its path, name and sha256" \
+    "$(d64params sbx library)/$(d64params sbx library_name)/$([ "$(d64params sbx library_sha256)" = "$(sha_f "$RS/src/e17/workload/library-256.json")" ] && echo sha)/$([ "$(d64params sbx library_sha256)" != "$(sha_f "$RS/src/e17/workload/library.json")" ] && echo not-1024)" \
+    "$RS/src/e17/workload/library-256.json/library-256.json/sha/not-1024"
+  c256rung sbx
+  check "E17c 256: under E17C=1 pycache-d64 is refused at 1024 MiB (exit 2, nothing started): its library is the 256 MiB one" \
+    "$?/$(grep -c . "$SSYS")/$(grep -c 'POINT pycache-d64 runs at E17B_GUEST_RAM_MB=256 under E17C=1' "$TMP/ship-rung.out")" "2/0/1"
+  SRUNG_POINT=pycache-d64 srung sbx
+  check "E17c 256: with E17C unset pycache-d64 runs at 1024 MiB on library.json as before, and params has no library_name" \
+    "$?/$(grep -c -- "--library $RS/src/e17/workload/library.json " "$SARGS")/$(d64params sbx library_name | grep -c KeyError)" "0/1/1"
+  # gate-256's rungs: E17C_GATE_LIBRARY (the chain's only), with a probe corpus, at pycache-d64
+  mkdir -p "$RS/probe"
+  printf '{"session":"probe-py_analyze","calls":[]}\n' >"$RS/probe/corpus.jsonl"
+  printf '{"table": {"mean_span_min": 6}}\n' >"$RS/probe/corpus-report.json"
+  echo '{"classes": {}}' >"$RS/gate-lib.json"
+  c256rung ship-300 E17B_GUEST_RAM_MB=256 STUB_BANNER=drop30 E17C_GATE_LIBRARY="$RS/gate-lib.json" E15_CORPUS_OVERRIDE="$RS/probe/corpus.jsonl"
+  check "E17c gate rung: E17C_GATE_LIBRARY replaces the library and records py_analyze's stdout (the peak RSS line)" \
+    "$?/$(grep -c -- "--corpus $RS/probe/corpus.jsonl --library $RS/gate-lib.json " "$SARGS")/$(grep -c -- '--record-stdout py_shmem,py_analyze$' "$SARGS")/$(d64params ship-300 library_name)" "0/1/1/gate-lib.json"
+  local why
+  for why in "point:SRUNG_POINT=pycache" "override:E15_CORPUS_OVERRIDE=" "e17c:E17C="; do
+    case "$why" in
+    point*) SRUNG_POINT=pycache crung sbx E17C_GATE_LIBRARY="$RS/gate-lib.json" E15_CORPUS_OVERRIDE="$RS/probe/corpus.jsonl" ;;
+    override*) c256rung sbx E17B_GUEST_RAM_MB=256 E17C_GATE_LIBRARY="$RS/gate-lib.json" ;;
+    e17c*) SRUNG_POINT=pycache-d64 srung sbx E17B_GUEST_RAM_MB=256 E17C_GATE_LIBRARY="$RS/gate-lib.json" E15_CORPUS_OVERRIDE="$RS/probe/corpus.jsonl" ;;
+    esac
+    printf '%s=%s:%s:%s ' "${why%%:*}" "$?" "$(grep -c . "$SSYS")" "$(grep -c 'E17C_GATE_LIBRARY is gate-256' "$TMP/ship-rung.out")"
+  done >"$TMP/gl.out"
+  check "E17c gate rung: E17C_GATE_LIBRARY is refused (exit 2, nothing started) at another point, without a probe corpus, or with E17C unset" \
+    "$(cat "$TMP/gl.out")" "point=2:0:1 override=2:0:1 e17c=2:0:1 "
+}
+test_e17c_256_library
+check "ship-300-nd: record.py judges its footprint drift as the other lease arms (RESIDENT)" \
+  "$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import record; print("ship-300-nd" in record.RESIDENT)' "$RIG/../analysis" 2>&1)" "True"
 rm -rf "$RS" "$RSS"
 echo
 if [ "$fails" -eq 0 ]; then

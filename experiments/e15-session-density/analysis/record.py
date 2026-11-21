@@ -23,7 +23,8 @@ REFUSAL_RE = re.compile(
 BANNER = "microvm-worker: relay="
 TS_RE = re.compile(r"^\[?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?")
 RESIDENT = ("resident-inf", "resident-300", "lease-30", "lease-120",  # lease-*: E17, the resident worker
-            "ship-30", "ship-120", "ship-300")  # ship-*: E17b, the shipped lease (footprint drift is judged as for them)
+            "ship-30", "ship-120", "ship-300",  # ship-*: E17b, the shipped lease (footprint drift is judged as for them)
+            "ship-300-nd")  # E17c: ship-300 without the idle page-cache drop
 
 
 def read_jsonl(path):

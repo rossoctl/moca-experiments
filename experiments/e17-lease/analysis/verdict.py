@@ -131,10 +131,13 @@ def capacity(root):
                       "n_max_abs": abs_}, inputs, missing, judged(why, diff is None), why)
 
 
-def latency(rungs):
-    dirs = [r["dir"] for r in rungs if r["point"] in LAT_POINTS
+def latency(rungs, select=None):
+    """Criterion 2 over the latency rungs: E17b's (LAT_NAMES and the pycache N1-s<k> seeds), or `select`'s
+    (verdict_e17c.py passes the seal stages' rungs, ruling R-z2)."""
+    dirs = [r["dir"] for r in rungs if (select(r) if select else (
+            r["point"] in LAT_POINTS
             and (r["name"] in LAT_NAMES or (r["point"] == "pycache" and N1_SEED.match(r["name"])))
-            and (r["arm"] == "sbx" or is_ship(r))]
+            and (r["arm"] == "sbx" or is_ship(r))))]
     gated = {str(n): {c: None for c in GATED_CLASSES} for n in (1, 128)}
     value = {"gated": gated, "gated_arm": "ship-300", "gated_point": "pycache", "groups": [], "error": None}
     if not dirs:
@@ -168,9 +171,10 @@ def resolve(root, point, arm, d):
     return os.path.join(root, point, arm, os.path.basename(str(d or "").rstrip("/")))
 
 
-def reclaim(root, rungs):
+def reclaim(root, rungs, points=SQUEEZE_POINTS):
+    """Criterion 3 over `points` (E17b: both squeeze points; verdict_e17c.py judges squeeze alone)."""
     value, inputs, missing, why, unknown = {}, [], [], [], []
-    for point in SQUEEZE_POINTS:
+    for point in points:
         lp = os.path.join(root, point, "ship-300", "ladder.json")
         lj = load(lp)
         sq = (lj or {}).get("squeeze")

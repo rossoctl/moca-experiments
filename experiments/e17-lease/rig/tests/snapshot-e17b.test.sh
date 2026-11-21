@@ -182,6 +182,43 @@ check "no features at all: fails, leaf removed" "$(flow 1024 "$L" '')/$([ -e "$S
 check "a failing build-snapshot leaves no partial leaf" "$(flow 1024 "$L" '' 1)/$([ -e "$SNAP/$L" ] && echo left || echo removed)/$([ -e "$STAGE/$L" ] && echo left || echo clean)" "1/removed/clean"
 check "after all of it e15 is untouched and no other leaf exists" "$(snapls)/$(cat "$SNAP/e15/manifest.json")" "e15/keep"
 
+# --- 5. the E17c profile (PLAN-E17C Task 4): E17C=1 implies E17B=1; leaves e17c-<E17C pin8>-{1024|256} only ----
+# The E17c checkout (moca-e17c) is at the fixture commit; E17C_MOCA_PIN is that commit, E17B_MOCA_PIN another.
+cp -R "$MOCA" "$TROOT/moca-e17c"
+printf 'E17B_MOCA_PIN=%s\nE17C_MOCA_PIN=%s\n' 1111111111111111111111111111111111111111 "$PIN" >"$TMP/pins-c.sh"
+printf 'E17B_MOCA_PIN=%s\nE17C_MOCA_PIN=%s\n' "$PIN" 2222222222222222222222222222222222222222 >"$TMP/pins-c-other.sh"
+# run_c BODY [ENV...]: run_in, but E17C=1 with E17B unset (lib.sh implies E17B=1)
+run_c() {
+  local body=$1
+  shift
+  env -u E17B E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_TEST_PINS="${PINS_FILE:-$TMP/pins-c.sh}" E15_HOST_PROFILE=fresh-metal E17C=1 \
+    E15_MANIFEST="$TMP/m.md" PATH="$STUB:$PATH" "$@" bash -c 'source "$1"; '"$body" _ "$SCRIPT"
+}
+gate_c() { run_c 'leaf_new_ok "$T_LEAF" "$T_RAM"' T_LEAF="$1" T_RAM="$2" >"$TMP/g.out" 2>&1 && echo accepted || echo refused; }
+check "E17C=1 alone (E17B unset) is not refused as 'E17B=1 is required'" \
+  "$(run_c 'echo sourced' 2>&1 | grep -c 'is required')/$(run_c 'echo "$E17B"' 2>/dev/null)" "0/1"
+check "E17C=1: the guard accepts e17c-<E17C pin8>-1024 and -256" "$(gate_c "e17c-$P8-1024" 1024)/$(gate_c "e17c-$P8-256" 256)" "accepted/accepted"
+check "E17C=1: the guard refuses e17b-<pin8>-* leaves (E17b's), naming the e17c grammar" \
+  "$(gate_c "e17b-$P8-1024" 1024)/$(grep -c 'is not e17c-<8 hex>-{1024|256}' "$TMP/g.out")/$(gate_c "e17b-$P8-256" 256)" "refused/1/refused"
+check "E17C=1: the guard refuses an e17c leaf for the E17B pin, the wrong RAM, or a bad name" \
+  "$(gate_c "e17c-11111111-1024" 1024)/$(gate_c "e17c-$P8-1024" 256)/$(gate_c "e17c-$P8-512" 512)/$(gate_c "e15" 1024)/$(gate_c "x-e17c-$P8-1024" 1024)" \
+  "refused/refused/refused/refused/refused"
+check "E17B=1 alone: the guard refuses e17c-* leaves (E17c's)" "$(gate "e17c-$P8-1024" 1024)/$(grep -c 'is not e17b-<8 hex>-{1024|256}' "$TMP/g.out")" "refused/1"
+out=$(env -u E17B E17C=0 E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" PATH="$STUB:$PATH" bash "$SCRIPT" --ram-mb 1024 --leaf "e17c-$P8-1024" 2>&1)
+check "E17C=0 with E17B unset is still refused (E17B=1 is required)" "$?/$(printf '%s' "$out" | grep -c 'E17B=1 is required')" "1/1"
+flow_c() { run_c "$FLOW main --ram-mb $1 --leaf $2" FEATS="$3" >"$TMP/flow.out" 2>&1 && echo 0 || echo $?; }
+LC=e17c-$P8-1024
+check "E17C=1: a build publishes e17c-<E17C pin8>-1024 from the moca-e17c checkout" \
+  "$(flow_c 1024 "$LC" '"lease-v1", "balloon-fpr-v1"')/$([ -f "$SNAP/$LC/manifest.json" ] && echo published)" "0/published"
+check "E17C=1: main refuses an e17b leaf, nothing created" "$(run_c "$FLOW main --ram-mb 1024 --leaf e17b-$P8-1024" FEATS='"lease-v1", "balloon-fpr-v1"' >/dev/null 2>&1 && echo 0 || echo 1)/$([ -e "$SNAP/e17b-$P8-1024" ] && echo created || echo none)" "1/none"
+check "E17C=1: a moca-e17c checkout not at E17C_MOCA_PIN is refused" \
+  "$(PINS_FILE=$TMP/pins-c-other.sh run_c "$FLOW main --ram-mb 256 --leaf e17c-22222222-256" FEATS='"lease-v1", "balloon-fpr-v1"' >"$TMP/flow.out" 2>&1 && echo 0 || echo 1)/$(grep -c 'is not at E17C_MOCA_PIN' "$TMP/flow.out")" "1/1"
+printf 'E17B_MOCA_PIN=%s\nE17C_MOCA_PIN=%s\n' "$PIN" 0000000000000000000000000000000000000000 >"$TMP/pins-c-zero.sh"
+check "E17C=1: the placeholder E17C pin is refused (e17c_require_pin)" \
+  "$(PINS_FILE=$TMP/pins-c-zero.sh run_c "$FLOW main --ram-mb 1024 --leaf e17c-00000000-1024" FEATS='"lease-v1", "balloon-fpr-v1"' >"$TMP/flow.out" 2>&1 && echo 0 || echo 1)/$(grep -c 'E17C_MOCA_PIN is still the placeholder' "$TMP/flow.out")" "1/1"
+rm -rf "${SNAP:?}/$LC"
+check "after the E17c cases e15 is untouched and no other leaf exists" "$(snapls)/$(cat "$SNAP/e15/manifest.json")" "e15/keep"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "snapshot-e17b.test.sh: all checks passed"; else echo "snapshot-e17b.test.sh: $fails FAILED"; fi
 exit "$([ "$fails" -eq 0 ] && echo 0 || echo 1)"

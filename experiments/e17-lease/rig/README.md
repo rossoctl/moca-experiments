@@ -29,7 +29,7 @@ loop is E15's, unchanged. Where each script's output lands: `experiments/e17-lea
 
 | file | what |
 |---|---|
-| `gen_corpora.sh [--durations-from CAL.json]` | laptop: `pycache_corpus.py` into `$E17_CORPORA/pycache/` (duty 0.095) and `pycache-low/` (0.015), 400 sessions, seed 1, min-turns 4, gaps from the E15 default corpus. `--durations-from`: each class's measured N=1 median `run_ms` replaces the placeholder `dur_ms`/`work_ms`. `E17_TMPFS_SHARE` (default 0.5 under `E17B=1`, 0 with `E17B` unset): the share of sessions flagged `tmpfs` (their `py_analyze`/`py_test` caches in guest `/tmp`), and a `py_shmem` reading at the end of every turn; `0` writes the E17a corpora byte for byte. Generate the E17b corpora with `E17B=1` |
+| `gen_corpora.sh [--durations-from CAL.json] [--gate-256 GATE.json]` | laptop: `pycache_corpus.py` into `$E17_CORPORA/pycache/` (duty 0.095) and `pycache-low/` (0.015), 400 sessions, seed 1, min-turns 4, gaps from the E15 default corpus. `--durations-from`: each class's measured N=1 median `run_ms` replaces the placeholder `dur_ms`/`work_ms`. `E17_TMPFS_SHARE` (default 0.5 under `E17B=1`, 0 with `E17B` unset): the share of sessions flagged `tmpfs` (their `py_analyze`/`py_test` caches in guest `/tmp`), and a `py_shmem` reading at the end of every turn; `0` writes the E17a corpora byte for byte. Generate the E17b corpora with `E17B=1`. `--gate-256` (`E17C=1` only, PLAN-E17C Task 10): a passing `gate-256.json`; also writes `pycache-256/`, the corpus of E17c's 256 MiB points (`pycache-d64`, `squeeze-256`, which replay `workload/library-256.json`): pycache's arguments with `py_analyze` at the gate's measured ms, so its own corpus hash. It is refused unless the gate's `chosen_scale` is the one `library-256.json` carries and its `moca_commit` is `E17C_MOCA_PIN`; the corpus report records the gate (`gate_256`: file name, sha256, chosen scale, moca_commit) |
 | `sync.sh` | laptop: rsync `experiments/e15-session-density/`, `experiments/e16-low-duty/` and `experiments/e17-lease/` to `/srv/e15/src/`, and install the metal library. Stage the corpora `$E17_CORPORA/{pycache,pycache-low}/` to `/srv/e15/corpora/<point>/`, and the wheels `$E17_WHEELS/` to `/srv/e15/wheels-pycache/` |
 | `bringup.sh` | host, idempotent, after `setup.sh`: check the corpora and the wheels against `wheels.lock`; loop-mount the snapshot rootfs that `state/artifacts` records, read-only; build `template-pycache-d{64,256,768}` (and `d192`, point `squeeze-256`, under `E17B=1`); stamp each image's sha256 in `state/template-pycache-d<D>`. Each template is skipped while its inputs stamp matches. Manifest `~/e17-manifest.md` |
 | `smoke.sh` | host: `rung.sh ARM 1 pycache` per arm (60 s warm-up, 120 s window, tag `smoke`; under `E17B=1` the arms are `sbx` and `ship-30/120/300` only). On `sbx`: the `py_analyze` calls exit 0, and one `py_analyze` Exec through the relay prints the D=256 `BUILD`'s `dataset_sha256`. Then `warmcold.py` on each rung (`warmcold_lease.py` on the `ship-*` rungs: E17a's join cannot read the shipped worker) |
@@ -72,6 +72,27 @@ On a fresh rig, in this order. No step is expected to exit non-zero.
 Task 12 carry (ruling E17B-R29): read `py_shmem` on a fresh lease VM (a lease's first turn, an unflagged session) and
 record its baseline Shmem. If it is stable at 1 MiB or less, R24 (a lease's first turn is never judged) may be
 relaxed for unflagged sessions; that needs a new ruling.
+
+## E17c bring-up: move E17b's runs aside first (PLAN-E17C Task 11; ruling R-z5)
+
+E17c writes to the same `/srv/e15/runs/` as E17b, under the same points and arm names (`pycache/sbx`,
+`pycache/ship-300`, `pycache-d64/*`, `squeeze/*`, `default/*`, ...). `chain-e17c.sh`'s commit preflight refuses a
+stage while its run directories hold another commit's `params.json`, and a `.prev-*` rung under the arm still counts,
+so E17b's arm directories have to leave `runs/` whole. Task 11 Step 1 therefore starts with this controller step,
+before the first `E17C=1` stage (`chain-e17c.sh`'s `smoke`):
+
+- For each `/srv/e15/runs/<point>/<arm>` that an E17c stage writes (`chain-e17c.sh --list`) and that holds a
+  `params.json` from another commit than `E17C_MOCA_PIN` (E17b's, or older):
+  `mkdir -p /srv/e15/runs-e17b/<point> && mv /srv/e15/runs/<point>/<arm> /srv/e15/runs-e17b/<point>/`, and one
+  manifest line per move in `~/e17-manifest.md`:
+  `- <UTC> E17c Task 11: moved E17b's runs/<point>/<arm> aside to runs-e17b/<point>/<arm> | UNDO: mv /srv/e15/runs-e17b/<point>/<arm> /srv/e15/runs/<point>/`.
+  Nothing is deleted. Points and arms that E17c never runs stay where they are.
+- `verdict_e17c.py`'s `--moca-commit` filter (the chain passes `E17C_MOCA_PIN`) stays the guard: a rung from another
+  commit that is still under `runs/` is listed under `excluded_rungs`, never read.
+
+Then the rest of Task 11 Step 1 (`E17C=1 setup.sh`, the two `snapshot-e17b.sh` leaves `e17c-<pin8>-{1024|256}` under
+`E17C=1`, `E17C=1 setup.sh` again, `E17C=1 bringup.sh`) and `chain-e17c.sh --to gate-256` (the stages allowed before
+the seal).
 
 ## Reproducing E17a (final review M3)
 

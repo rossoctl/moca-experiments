@@ -1,0 +1,45 @@
+2026/11/17 12:53:00 vmpool: exec phases acquire_us=51000 resume_us=28000 vmresume_us=1445 vsockdial_us=2613 mount_us=23723 run_us=287000 destroy_us=1200 cold="exhausted"
+2026/11/17 12:53:00 vmpool: exec req=101 workspace_key="ownwalk-F10000-1795052061-0" kind=command vm=vm-p0 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:00 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-0" vm=vm-3 mode=lease
+2026/11/17 12:53:00 vmpool: exec phases acquire_us=48026 resume_us=27786 vmresume_us=1445 vsockdial_us=2613 mount_us=23723 run_us=3744 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:00 vmpool: exec req=102 workspace_key="ownwalk-F10000-1795052061-0" kind=command vm=vm-3 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:00 vmpool: lease end workspace_key="ownwalk-F10000-1795052061-0" vm=vm-3 mode=lease reason=reset age=11ms
+2026/11/17 12:53:00 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-0" vm=vm-4 mode=lease
+2026/11/17 12:53:00 vmpool: exec phases acquire_us=48288 resume_us=26575 vmresume_us=1358 vsockdial_us=2584 mount_us=22630 run_us=9208 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:00 vmpool: exec req=103 workspace_key="ownwalk-F10000-1795052061-0" kind=command vm=vm-4 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:01 vmpool: exec phases acquire_us=51000 resume_us=28000 vmresume_us=1359 vsockdial_us=2582 mount_us=24679 run_us=287000 destroy_us=1200 cold="exhausted"
+2026/11/17 12:53:01 vmpool: exec req=104 workspace_key="ownwalk-F10000-1795052061-1" kind=command vm=vm-p1 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:01 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-1" vm=vm-6 mode=lease
+2026/11/17 12:53:01 vmpool: exec phases acquire_us=43688 resume_us=28622 vmresume_us=1359 vsockdial_us=2582 mount_us=24679 run_us=3988 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:01 vmpool: exec req=105 workspace_key="ownwalk-F10000-1795052061-1" kind=command vm=vm-6 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:01 vmpool: lease end workspace_key="ownwalk-F10000-1795052061-1" vm=vm-6 mode=lease reason=reset age=11ms
+2026/11/17 12:53:01 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-1" vm=vm-7 mode=lease
+2026/11/17 12:53:01 vmpool: exec phases acquire_us=43935 resume_us=26369 vmresume_us=1338 vsockdial_us=2672 mount_us=22357 run_us=8083 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:01 vmpool: exec req=106 workspace_key="ownwalk-F10000-1795052061-1" kind=command vm=vm-7 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:02 vmpool: exec phases acquire_us=51000 resume_us=28000 vmresume_us=1333 vsockdial_us=2570 mount_us=23364 run_us=287000 destroy_us=1200 cold="exhausted"
+2026/11/17 12:53:02 vmpool: exec req=107 workspace_key="ownwalk-F10000-1795052061-2" kind=command vm=vm-p2 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:02 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-2" vm=vm-9 mode=lease
+2026/11/17 12:53:02 vmpool: exec phases acquire_us=48765 resume_us=27272 vmresume_us=1333 vsockdial_us=2570 mount_us=23364 run_us=3982 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:02 vmpool: exec req=108 workspace_key="ownwalk-F10000-1795052061-2" kind=command vm=vm-9 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:02 vmpool: lease end workspace_key="ownwalk-F10000-1795052061-2" vm=vm-9 mode=lease reason=reset age=11ms
+2026/11/17 12:53:02 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-2" vm=vm-10 mode=lease
+2026/11/17 12:53:02 vmpool: exec phases acquire_us=43880 resume_us=26501 vmresume_us=1435 vsockdial_us=2794 mount_us=22270 run_us=7781 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:02 vmpool: exec req=109 workspace_key="ownwalk-F10000-1795052061-2" kind=command vm=vm-10 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:03 vmpool: exec phases acquire_us=51000 resume_us=28000 vmresume_us=1351 vsockdial_us=2577 mount_us=23189 run_us=287000 destroy_us=1200 cold="exhausted"
+2026/11/17 12:53:03 vmpool: exec req=110 workspace_key="ownwalk-F10000-1795052061-3" kind=command vm=vm-p3 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:03 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-3" vm=vm-12 mode=lease
+2026/11/17 12:53:03 vmpool: exec phases acquire_us=43872 resume_us=27119 vmresume_us=1351 vsockdial_us=2577 mount_us=23189 run_us=3542 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:03 vmpool: exec req=111 workspace_key="ownwalk-F10000-1795052061-3" kind=command vm=vm-12 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:03 vmpool: lease end workspace_key="ownwalk-F10000-1795052061-3" vm=vm-12 mode=lease reason=reset age=11ms
+2026/11/17 12:53:03 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-3" vm=vm-13 mode=lease
+2026/11/17 12:53:03 vmpool: exec phases acquire_us=45926 resume_us=26276 vmresume_us=1331 vsockdial_us=2589 mount_us=22354 run_us=8010 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:03 vmpool: exec req=112 workspace_key="ownwalk-F10000-1795052061-3" kind=command vm=vm-13 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:04 vmpool: exec phases acquire_us=51000 resume_us=28000 vmresume_us=1339 vsockdial_us=2606 mount_us=23322 run_us=287000 destroy_us=1200 cold="exhausted"
+2026/11/17 12:53:04 vmpool: exec req=113 workspace_key="ownwalk-F10000-1795052061-4" kind=command vm=vm-p4 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:04 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-4" vm=vm-15 mode=lease
+2026/11/17 12:53:04 vmpool: exec phases acquire_us=44431 resume_us=27269 vmresume_us=1339 vsockdial_us=2606 mount_us=23322 run_us=4118 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:04 vmpool: exec req=114 workspace_key="ownwalk-F10000-1795052061-4" kind=command vm=vm-15 cold="exhausted" exit=0 err=<nil>
+2026/11/17 12:53:04 vmpool: lease end workspace_key="ownwalk-F10000-1795052061-4" vm=vm-15 mode=lease reason=reset age=11ms
+2026/11/17 12:53:04 vmpool: lease start workspace_key="ownwalk-F10000-1795052061-4" vm=vm-16 mode=lease
+2026/11/17 12:53:04 vmpool: exec phases acquire_us=44816 resume_us=26432 vmresume_us=1326 vsockdial_us=2850 mount_us=22251 run_us=7772 destroy_us=0 cold="exhausted"
+2026/11/17 12:53:04 vmpool: exec req=115 workspace_key="ownwalk-F10000-1795052061-4" kind=command vm=vm-16 cold="exhausted" exit=0 err=<nil>

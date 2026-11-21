@@ -220,3 +220,37 @@ def test_gated_classes_split_by_tmpfs(tmp_path):
     assert g["classes"]["py_short"]["all"]["n"] == 3  # the class median still pools both
     # no flagged session at all (E15/E16/E17a rungs): the group keeps its exact shape
     assert "by_tmpfs" not in group(L.build([by_tmpfs_rung(tmp_path, name="plain", tmpfs=False)]), "sbx")
+
+
+# ---- E17c Task 5: the warm split by the guest's page-cache drop (ruling R-g) ----
+
+def test_warm_split_by_cache_drop_beside_the_unchanged_gain(tmp_path):
+    from test_warmcold_lease import drop_rung
+    ship = drop_rung(tmp_path)  # ship-300, lease_cache_drop 30s
+    nd = drop_rung(tmp_path, drop="off", name="nd", arm="ship-300-nd")
+    sbx = sbx_rung(tmp_path)  # py_analyze all median 10 s, py_short 400 ms
+    rep = L.build([ship, nd, sbx], baseline_arm="sbx")
+    pa = group(rep, "ship-300")["classes"]["py_analyze"]
+    # criterion 2': the gain is over ALL warm calls (5, 7, 9, 15 s: median 8 s), as in E17b
+    assert pa["warm"]["n"] == 4 and pa["warm"]["median_ms"] == 8000
+    assert pa["gain"] == pytest.approx(1 - 8000 / 10000.0)
+    wc = pa["warm_by_cache"]
+    assert wc["after_drop"]["n"] == 2 and wc["after_drop"]["median_ms"] == 10000  # 5 s, 15 s
+    assert wc["kept"]["n"] == 2 and wc["kept"]["median_ms"] == 8000  # 7 s, 9 s
+    assert wc["ratio"] == pytest.approx(1.25)
+    ps = group(rep, "ship-300")["classes"]["py_short"]["warm_by_cache"]
+    assert ps["after_drop"]["n"] == 1 and ps["kept"]["n"] == 0 and ps["ratio"] is None  # an empty group: null
+    # ship-300-nd (drop off) and sbx: no split, their classes keep E17b's exact shape
+    for arm in ("ship-300-nd", "sbx"):
+        assert not any("warm_by_cache" in c for c in group(rep, arm)["classes"].values())
+    md = L.markdown(rep)
+    assert "## Warm calls by the guest's page-cache drop" in md
+    assert "| pycache | 1 | ship-300 | py_analyze | 2 | 10000 | 2 | 8000 | 1.25 |" in md
+    assert "| pycache | 1 | ship-300 | py_short | 1 | 500 | 0 | - | - |" in md
+    assert "ship-300-nd | py_analyze | 2 |" not in md
+
+
+def test_no_tagged_rung_keeps_the_markdown_unchanged(tmp_path):
+    from test_warmcold_lease import drop_rung
+    rep = L.build([drop_rung(tmp_path, drop="off", arm="ship-300-nd"), sbx_rung(tmp_path)], baseline_arm="sbx")
+    assert "page-cache drop" not in L.markdown(rep)

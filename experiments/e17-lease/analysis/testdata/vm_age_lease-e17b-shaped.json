@@ -1,0 +1,167 @@
+{
+  "arm": "ship-300",
+  "fpr": {
+    "absolute": {
+      "basis": "value_15s / guest RAM per heavy Exec with a +15 s sample and no next call within 15 s (growth and dShmem not needed)",
+      "guest_ram_bytes": 1073741824,
+      "judged_readings": 1,
+      "per_vm": [
+        {
+          "max_ceiling_ratio_15s": 0.29296875,
+          "pinned": false,
+          "readings": 1,
+          "vm": "vm-1"
+        }
+      ],
+      "pinned": 0,
+      "pinned_fraction": 0.9,
+      "pinned_share": 0.0,
+      "pinned_share_of_judged": 0.0,
+      "pinned_vm_share": 0.0,
+      "pinned_vms": 0,
+      "readings": 1
+    },
+    "definition": "freed = max(0, peak - start - dShmem); follows: value_15s <= peak - freed/2",
+    "execs": [
+      {
+        "after_15s_bytes": 314572800,
+        "call": 1,
+        "ceiling_ratio_15s": 0.29296875,
+        "class": "py_analyze",
+        "delta_shmem_bytes": 0,
+        "end_bytes": 943718400,
+        "follows": true,
+        "freed_bytes": 838860800,
+        "growth_bytes": 838860800,
+        "peak_bytes": 943718400,
+        "session": "A",
+        "start_bytes": 104857600,
+        "vm": "vm-1",
+        "why_null": null
+      },
+      {
+        "after_15s_bytes": 1048576000,
+        "call": 1,
+        "ceiling_ratio_15s": null,
+        "class": "py_test",
+        "delta_shmem_bytes": null,
+        "end_bytes": 1048576000,
+        "follows": null,
+        "freed_bytes": null,
+        "growth_bytes": 838860800,
+        "peak_bytes": 1048576000,
+        "session": "B",
+        "start_bytes": 209715200,
+        "vm": "vm-3",
+        "why_null": "the session's next call began within 15 s"
+      }
+    ],
+    "follows_false": 0,
+    "follows_null": 1,
+    "follows_true": 1,
+    "growth_min_bytes": 67108864,
+    "heavy_classes": [
+      "py_analyze",
+      "py_test"
+    ],
+    "heavy_execs": 2,
+    "judged_when": "peak - start >= growth_min_bytes (E17B-R29), with dShmem, start, +15 s samples and no next call within 15 s",
+    "not_judged_low_growth": 0,
+    "share_true": 1.0
+  },
+  "lease_vms": 3,
+  "mapping_reasons": [],
+  "mapping_valid": true,
+  "memory_vs_age": {
+    "age": "seconds since the VM's restore line, not its promotion (a lease VM promoted from a standby carries its standby time)",
+    "bin_s": 60,
+    "bins_s": [
+      0,
+      60,
+      120
+    ],
+    "median_mib": [
+      300.0,
+      300.0,
+      1000.0
+    ],
+    "p95_mib": [
+      1000.0,
+      1000.0,
+      1000.0
+    ],
+    "vms_per_bin": [
+      3,
+      3,
+      1
+    ]
+  },
+  "replacement": {
+    "leases": [
+      {
+        "first_grep_ms": 600,
+        "replacement": true,
+        "session": "A",
+        "vm": "vm-4"
+      }
+    ],
+    "median_first_py_grep_ms": 600,
+    "ratio_to_sbx": 1.5,
+    "replacement_leases": 1,
+    "replacement_unknown": 0,
+    "sbx_median_py_grep_ms": 400.0,
+    "unknown_leases": [],
+    "with_first_py_grep": 1
+  },
+  "rules": {
+    "bin_s": 60,
+    "identity": "worker.log restore/destroy phases; lease VMs (lease start line) retire their cgroup (cgroup_pool.go retire), all others recycle it LIFO",
+    "tolerance_s": 2.0
+  },
+  "rung": "RUNDIR",
+  "same_second_reorders": [],
+  "share_above": {
+    "above_50_pct": {
+      "share": 0.6666666666666666,
+      "vms": 2
+    },
+    "above_90_pct": {
+      "share": 0.3333333333333333,
+      "vms": 1
+    },
+    "basis": "peak memory.current of each lease VM",
+    "guest_ram_mib": 1024,
+    "lease_vms": 3
+  },
+  "vms": [
+    {
+      "born": 1793877000.0,
+      "cgroup": "pool-0",
+      "end": 1793877120.0,
+      "id": "vm-1",
+      "lease": true,
+      "samples": 120
+    },
+    {
+      "born": 1793877001.0,
+      "cgroup": "pool-1",
+      "end": 1793877150.0,
+      "id": "vm-3",
+      "lease": true,
+      "samples": 149
+    },
+    {
+      "born": 1793877125.0,
+      "cgroup": "pool-2",
+      "end": null,
+      "id": "vm-4",
+      "lease": true,
+      "samples": 76
+    }
+  ],
+  "warmcold": {
+    "countable": false,
+    "disagreements": 3,
+    "valid": true
+  }
+}

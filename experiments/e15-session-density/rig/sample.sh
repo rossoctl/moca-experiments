@@ -31,13 +31,22 @@
 #   vm_mem              {"<cgroup>": memory.current} for every VM cgroup in the worker slice that
 #                       holds a process (the worker's own service cgroup and idle pool cgroups are
 #                       left out, so a median over vm_mem is a median over live VMs)
+#   vm_fp               E17C=1 only (PLAN-E17C Task 3): {"<cgroup>": footprint} for the same VMs, the bytes the
+#                       moca worker charges the VM (readLeaseFootprint, moca #974): memory.current less its
+#                       reclaimable page cache, max(file - file_mapped - shmem - file_dirty - file_writeback, 0)
+#                       from the cgroup's memory.stat, clamped at 0. A VM whose memory.stat is missing or lacks
+#                       one of those five fields is left out (never written as 0)
+#   vm_dirty            E17C=1 only: {"<cgroup>": memory.stat file_dirty} (bytes) for the same VMs, left out
+#                       where memory.stat or its file_dirty is missing. With E17C unset (or anything but 1)
+#                       neither field is written and the line is as before
 #   worker              the worker's /stats JSON (SH_DIAG_STATS_ADDR), when it answers
 #
 # Environment: E15_SLICE_DIR (default /sys/fs/cgroup/e15.slice), E15_STATS_URL
 # (default http://127.0.0.1:9646/stats), E15_DISK_PATH (default /srv/e15; rung.sh passes the
 # workspaces directory on fresh-metal, the device the guests read), E15_DISK_DEV (the
 # diskstats device name; default: the device findmnt names for E15_DISK_PATH), E15_PROC (default
-# /proc; tests point it at a fixture tree).
+# /proc; tests point it at a fixture tree), E17C (1: write vm_fp and vm_dirty; rung.sh's environment,
+# inherited).
 set -uo pipefail
 
 [ $# -eq 3 ] || {
@@ -52,6 +61,8 @@ VMS_DIR=$E15_DIR/e15-vms.slice
 STATS_URL=${E15_STATS_URL:-http://127.0.0.1:9646/stats}
 DISK_PATH=${E15_DISK_PATH:-/srv/e15}
 PROC=${E15_PROC:-/proc}
+FP_ON=0
+[ "${E17C:-}" != 1 ] || FP_ON=1
 # The block device behind DISK_PATH, by name as /proc/diskstats lists it.
 DISK_DEV=${E15_DISK_DEV:-}
 if [ -z "$DISK_DEV" ] && command -v findmnt >/dev/null 2>&1; then
@@ -142,7 +153,7 @@ while [ "$stop" -eq 0 ]; do
   prev_total=$total
   prev_idle=$idle
 
-  vm_json=""
+  vm_json="" fp_json="" dirty_json=""
   if [ -d "$VMS_DIR" ]; then
     for d in "$VMS_DIR"/*/; do
       d=${d%/}
@@ -153,6 +164,20 @@ while [ "$stop" -eq 0 ]; do
       m=$(file_val "$d/memory.current")
       [ -n "$m" ] || continue
       vm_json+="${vm_json:+,}\"$name\":$m"
+      [ "$FP_ON" = 1 ] || continue
+      # E17C: one more read per VM, memory.stat, parsed in bash (no fork).
+      [ -r "$d/memory.stat" ] || continue
+      sf="" sm="" ss="" sd="" sw=""
+      while read -r k v; do
+        case "$k" in file) sf=$v ;; file_mapped) sm=$v ;; shmem) ss=$v ;; file_dirty) sd=$v ;; file_writeback) sw=$v ;; esac
+      done <"$d/memory.stat"
+      [ -n "$sd" ] && dirty_json+="${dirty_json:+,}\"$name\":$sd"
+      [ -n "$sf" ] && [ -n "$sm" ] && [ -n "$ss" ] && [ -n "$sd" ] && [ -n "$sw" ] || continue
+      rc=$((sf - sm - ss - sd - sw))
+      [ "$rc" -gt 0 ] || rc=0
+      fp=$((m - rc))
+      [ "$fp" -gt 0 ] || fp=0
+      fp_json+="${fp_json:+,}\"$name\":$fp"
     done
   fi
 
@@ -200,6 +225,7 @@ while [ "$stop" -eq 0 ]; do
   [ -n "$dread_field" ] && line+=",\"disk_read_mbs\":$dread_field"
   [ -n "$dawait_field" ] && line+=",\"disk_await_ms\":$dawait_field"
   line+=",\"procs\":$procs_n,\"vm_mem\":{$vm_json}"
+  [ "$FP_ON" = 1 ] && line+=",\"vm_fp\":{$fp_json},\"vm_dirty\":{$dirty_json}"
   [ -n "$stats" ] && line+=",\"worker\":$stats"
   line+="}"
   printf '%s\n' "$line" >>"$OUT"

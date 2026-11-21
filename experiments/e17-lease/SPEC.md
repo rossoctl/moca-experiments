@@ -1,5 +1,11 @@
 # E17 — lease mode: does a warm guest with an idle timeout pay, and does measured admission hold?
 
+Version: 0.8 (draft for review), 2026-11-20
+2026-11-20: stage **E17c** added (§13): the v0.12.0 measurements. It re-measures criterion 5's first half after moca
+#974 (F1 of the E17b report: an idle lease drops its guest page cache, and its charge leaves out the host's), checks
+that the drop does not cost criterion 2, and runs what E17b deferred: `pycache-low` (R47), the 256 MiB guest stages
+(R45), the ownership walk observed directly (F5, moca #966) and the N = 1 latency on several seeds (R52). E17b's
+sealed record is unchanged.
 Version: 0.7, 2026-11-19
 2026-11-19: E17b is run and reported (`results/E17B-REPORT.md`): criteria 1–4 pass on the shipped lease mode
 (moca `c3adf490`); criterion 5 passes its second half (replacement leases read the host page cache) and misses its
@@ -34,7 +40,7 @@ Version: 0.2 (draft for review), 2026-11-10
 answers question 2 at low duty, so E17's rig time goes to the cache-heavy points instead (§7.2, §8). The
 level-1 lease guest (moca plan 1, rossoctl/moca#706) is merged, so E17b's guest side exists.
 Status: **E17a complete (missed, §7.5). Plans 2–5 built and merged. E17b complete (2026-11-19): criteria 1–4
-pass, criterion 5 split (§7.5; `results/E17B-REPORT.md`).**
+pass, criterion 5 split (§7.5; `results/E17B-REPORT.md`). E17c (§13) drafted, not built.**
 Parents: E15 (`experiments/e15-session-density/SPEC.md`, metal procedure in its §13; results in `experiments/e15-session-density/results/metal/RESULTS-METAL.md`)
 and E16 (`experiments/e16-low-duty/SPEC.md`, results under `experiments/e16-low-duty/results/`). E17 reuses their instrument, rig scripts and
 metal host unchanged except where this document says so. "E15 §n" and "E16 §n" refer to those specs.
@@ -377,4 +383,110 @@ E15 and E16 procedures unchanged.
 | E17a misses criterion 2 (`py_import` 0.40/0.42, `py_grep` −0.02/0.01); criterion 1 holds (128 against 80) | reported | `experiments/e17-lease/results/E17A-REPORT.md`, 2026-11-12 |
 | E17b criterion 2 re-scoped: `py_short` ≥ 50%, `py_import` ≥ 30%; `py_grep` and compute reported | yes | user, 2026-11-12, after the E17a miss |
 | Build plans 2–5 with the revised design (FPR, page-cache headroom, level 1 re-scoped) | yes | user, 2026-11-12, after the E17a miss; plan 2 is rossoctl/moca#763 |
+| Stage E17c for the v0.12.0 measurements, after moca #974 (F1) | proposed | §13, 2026-11-20 |
+
+## 13. E17c — the v0.12.0 measurements (v0.8)
+
+E17c measures the moca changes E17b asked for and runs what E17b deferred. It is a stage of its own: a new
+moca pin, its own snapshots, baselines and sealed predictions (`predictions-e17c.json`). E17b's rungs are
+not reused for a verdict, because a pin change invalidates comparisons with them (`sbx` is re-run at the new pin);
+they are cited for context only.
+
+### 13.1 What changed in moca, and what E17c asks
+
+| moca | change | E17c question |
+|---|---|---|
+| #974 (F1) | The guest drops its clean page cache once a lease has been idle for `SH_LEASE_CACHE_DROP_S` (default 30 s); the lease's charge (`LeaseBytes`) is `memory.current` less the reclaimable page cache (`memory.stat` `file` − `file_mapped` − `shmem` − `file_dirty` − `file_writeback`) | **Q5.** Does a lease VM's charge now fall back to its working set (criterion 5's first half, missed in E17b)? **Q6.** What does the drop cost the warm latency criterion 2 measures? |
+| #970 (F3) | A client's abort of a command keeps the lease | Not measured: the KVM gates cover it (`TestGateLeaseAbortKeepsTheLease`) |
+| #966 (F5) | The phase line logs `normalise_us` | **Q7.** The ownership walk's time, observed rather than inferred as A − B |
+
+Plus E17b's deferrals: `pycache-low`'s latency (R47), the 256 MiB guest stages (R45), and N = 1 latency on
+several seeds (R52). The 500 000-file walk (R55) needs a snapshot whose workspace drive is larger than 2 GiB
+(moca #907's open half); it runs only if that lands before the run, and is otherwise deferred again.
+
+### 13.2 Pin, arms, points
+
+- **Pin:** `E17C_MOCA_PIN` = moca `main` with #966, #970 and #974 merged, chosen when the plan's Task 1 runs. One
+  pin for every E17c arm. Snapshots in new leaves `e17c-<pin8>-1024` and `e17c-<pin8>-256`.
+- **Arms:**
+
+| arm | sandbox | idle timeout | `SH_LEASE_CACHE_DROP_S` |
+|---|---|---|---|
+| `sbx` | per-`Exec` | — | — |
+| `ship-300` | shipped lease | 300 s | 30 (the default) |
+| `ship-300-nd` | shipped lease | 300 s | 0 (no drop) |
+
+  `ship-300-nd` separates F1's two halves: the host-cache exclusion is in both lease arms (it is how the
+  worker charges, with no switch), and the guest drop only in `ship-300`. `ship-30` and `ship-120` are not run.
+- **Points:** `pycache` (§4.2), `pycache-low`, `squeeze` (§7.3, `E17B_SQUEEZE_MEMMAX_MB` 24576 as in E17b), and at
+  256 MiB guests `pycache-d64` and `squeeze-256` with the 256-specific library (§13.5). `default` is not re-run:
+  criterion 1 held in E17b by 128 against 80, and F1 can only lower a lease's charge; an optional `default`
+  ladder pair stays available (`E17C_OPTIONAL=1`).
+- **Configuration:** §6 unchanged (E17b's admission settings), plus `SH_LEASE_CACHE_DROP_S` per arm. The sampler
+  records each VM's footprint beside its `memory.current` (`vm_fp`, the same formula as `LeaseBytes`), selected by
+  the E17c profile only.
+
+### 13.3 Readings
+
+1. **Charge after a heavy command (Q5).** For each heavy Exec (growth ≥ 64 MiB, E17B-R29), the VM's footprint
+   (`vm_fp`) at +15 s and at +(`SH_LEASE_CACHE_DROP_S` + 15) s = +45 s, against guest RAM; `memory.current` beside
+   it, for continuity with E17b. A reading at +45 s needs no next call in the session within 45 s. If calibration
+   shows fewer than 30 such readings per rung, the reading moves to each lease's **idle tail**: its footprint in
+   the last sample before the idle-timeout end, at least 45 s after its last Exec.
+2. **The drop's latency cost (Q6).** Criterion 2's gains for both lease arms against `sbx`, and for `ship-300` a
+   split of warm calls into those whose session's previous call ended more than 30 s before (the cache was
+   dropped) and the rest. The drop's cost per class is the median of the first group against the second.
+3. **Replacement reads (5b).** As E17b (`vm_age_lease --sbx`).
+4. **Squeeze.** E17b's criterion 3 readings, and the N at which reclaim becomes continuous (a reclaim every
+   minute), against E17b's N ≈ 40 at 24 576 MiB (context, different pin).
+5. **The ownership walk (Q7).** `normalise_us` per size from the phase line, beside the A − B inference, at
+   10 000 and 100 000 files (500 000 under §13.1's condition).
+
+### 13.4 E17c's pass criteria (sealed with the predictions)
+
+E17c passes if all hold:
+
+- **5a′ (Q5).** At `pycache`, `ship-300` pooled: share of judged heavy Execs whose charge follows (E17B-R29's
+  relative rule, on `vm_fp`) ≥ 0.50, and the share of +45 s (or idle-tail) footprint readings at ≥ 0.9 of guest
+  RAM ≤ 0.50. E17b's miss was 0.536 on `memory.current` at +15 s.
+- **2′ (Q6).** E17b's criterion 2 holds for `ship-300` at the new pin: median warm `py_short` ≥ 50% and `py_import`
+  ≥ 30% faster than `sbx` at `pycache`, N = 1 (≥ 4 seeds pooled, `E15_START_ZERO=1`, decided now rather than
+  after the run as R52 was) and N = 128.
+- **5b′.** Replacement-lease first `py_grep` within 1.5× of `sbx`, every `ship-*` rung at `pycache`.
+- **3′.** At `squeeze`, `ship-300`: zero memory-guard events, zero refusals while an idle lease existed, every
+  reclaim of the idle-longest lease.
+
+Reported, not gated: `ship-300-nd` on every reading (how much of 5a′ the host-cache exclusion alone gives),
+`pycache-low`, the 256 MiB stages, the walk.
+
+### 13.5 The deferred items, and what each needs first
+
+- **`pycache-low` (R47).** Its N = 1 baseline was unattainable: one low-duty session sent no call in a 900 s window
+  after a 1200 s warm-up. E17c's baseline uses `E15_START_ZERO=1` and a 1800 s window, with a calibration gate:
+  every seed has at least 3 in-window calls of the classes criterion 2 reads, or the point is cut again and
+  reported as such. The N = 128 rungs also need their class-matched baseline, checked at the same gate.
+- **256 MiB guests (R45).** `py_analyze` was OOM-killed at 256 MiB in both arms (a lease command's cap there is
+  about 166 MiB: MemTotal − max(64 MiB, MemTotal/8)). E17c uses a 256-specific library whose `py_analyze` runs at a
+  lower `ANALYZE_WORK_SCALE`, chosen by a calibration: its peak RSS ≤ 120 MiB, and zero OOM kills in 20 runs per
+  arm. Its corpus gets its own hash, and the 256 MiB rungs are compared only with each other.
+- **N = 1 rungs (R52).** At least 4 seeds per arm with `E15_START_ZERO=1`.
+- **Raw data.** Every E17c rung is published as the next `data-v*` release (`data/MANIFEST.md`) when the report
+  lands.
+
+### 13.6 Rig time
+
+| step | hours |
+|---|---|
+| Bring-up: pin, snapshots, smoke, sampler `vm_fp` check | 3 |
+| Calibration: N = 1 baselines and probes at `pycache` for `sbx`, `ship-300`, `ship-300-nd`; the `pycache-low` and 256 MiB gates | 12 |
+| **Predictions sealed (user approval)** | — |
+| `pycache` N = 1 seeds and N = 128, three arms | 6 |
+| `pycache-low` baselines and N = 128, `sbx` and `ship-300` | 9 |
+| `squeeze`: baselines and the `ship-300` climb, `sbx` at its stop N | 10 |
+| 256 MiB: `pycache-d64` N = 1 and `squeeze-256` | 10 |
+| Ownership walk, 10 000 and 100 000 files | 1 |
+| **Total** | **about 51 h** |
+
+The `squeeze` and 256 MiB steps can be cut first if rig time runs short; the criteria above do not depend on them
+except 3′, which then stays E17b's.
 
