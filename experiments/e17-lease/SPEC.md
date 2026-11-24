@@ -50,7 +50,8 @@ Version: 0.2 (draft for review), 2026-11-10
 answers question 2 at low duty, so E17's rig time goes to the cache-heavy points instead (§7.2, §8). The
 level-1 lease guest (moca plan 1, rossoctl/moca#706) is merged, so E17b's guest side exists.
 Status: **E17a complete (missed, §7.5). Plans 2–5 built and merged. E17b complete (2026-11-19): criteria 1–4
-pass, criterion 5 split (§7.5; `results/E17B-REPORT.md`). E17c (§13) complete (2026-11-23): 2′, 5b′ pass; 5a′, 3′ fail as sealed (`results/E17C-REPORT.md`).**
+pass, criterion 5 split (§7.5; `results/E17B-REPORT.md`). E17c (§13) complete (2026-11-23): 2′, 5b′ pass; 5a′, 3′ fail as sealed (`results/E17C-REPORT.md`). E17d (§14)
+drafted, not approved.**
 Parents: E15 (`experiments/e15-session-density/SPEC.md`, metal procedure in its §13; results in `experiments/e15-session-density/results/metal/RESULTS-METAL.md`)
 and E16 (`experiments/e16-low-duty/SPEC.md`, results under `experiments/e16-low-duty/results/`). E17 reuses their instrument, rig scripts and
 metal host unchanged except where this document says so. "E15 §n" and "E16 §n" refer to those specs.
@@ -520,61 +521,106 @@ policy flip is planned for moca v0.13.0 (decided 2026-11-24); level 1 ships allo
   free-page reporting nor the idle cache drop returns. How large is that charge, how often does reclaim end a lease
   whose server is running, and what does the restart after an end cost the next re-query?
 - **Q10, the level-2 ends.** Each end of a lease with a running tracked process names it in exactly one notice, and
-  syncs within its bound (spec §7: 30 s, plus up to 10 s of vsock connect). An OOM kill in the guest reads
-  `killed(9)` and the lease continues.
+  its sync finishes inside the worker's bound. An OOM kill in the guest reads `killed(9)` and the lease continues.
 
 ### 14.2 Pin, arms, points
 
 - **Pin:** `E17D_MOCA_PIN`, moca `main` with #1026 (the refusal log line, #1005) merged, so a refusal at `squeeze-l2`
   says why. One pin for every arm; snapshot leaf `e17d-<pin8>-1024`, built with `lease-processes-v1`.
+- **The level-2 files** live in the workload's `project/` (`l2common.py`, `l2srv.py`, `l2c.py`, `l2q.py`), beside
+  `src/`, and run from it with the workspace venv, as every library command does (`../venv/bin/python`) and as the
+  spike did (`results/followups/l2spike.sh:65`): `l2common.py` imports `src/pyc` and reads `config.DATA_DIR`
+  (`../data`), both relative to `project/`, and pandas and scikit-learn exist only in `/workspace/venv`. The server's
+  socket is `/workspace/.l2/l2.sock`.
 - **Arms:**
 
-| arm | sandbox mode | idle timeout | what a re-query runs |
+| arm | sandbox mode | idle timeout | what a re-query runs (cwd `/workspace/project`) |
 |---|---|---|---|
-| `sbx` | per-`Exec` | — | `python3 l2q.py <query>`: load, parse, query, exit |
+| `sbx` | per-`Exec` | — | `../venv/bin/python l2q.py <query>`: load, parse, query, exit |
 | `ship-300` | `lease` | 300 s | the same, in the warm guest |
-| `ship-300-l2` | `lease+processes` | 300 s | `python3 l2c.py <query>` over a unix socket to `l2srv.py`, a tracked process |
+| `ship-300-l2` | `lease+processes` | 300 s | `../venv/bin/python l2c.py <query>` over the socket to `l2srv.py`, a tracked process |
 
-  All three keep `SH_LEASE_CACHE_DROP_S` at the default 30 s. In `ship-300-l2`, when the client finds no server (the
-  session's first call, or the first after a lease end), the driver sends `process_start` for `l2srv.py` (name
-  `l2srv`, cwd `/workspace`), waits for its socket, and re-runs the client. That call is a **restart**: its observed
-  time includes the start, and it is reported apart from warm re-queries.
+  All three keep `SH_LEASE_CACHE_DROP_S` at the default 30 s. The mode is a per-rung value: it is the `mode` claim of
+  every Exec token the driver mints, and the relay's process-kind gate reads that claim, so the two level-1 arms keep
+  `lease` and only `ship-300-l2` mints `lease+processes`.
+- **The client's exits.** `l2c.py` first connects and sends `ping`, bounded at 2 s. That probe is the only test of
+  "is a server there". It exits 3 when the probe fails: no socket, a refused connection, a stale socket file left by a
+  dead server, or no `pong` within 2 s. The query itself then has its own bound, 120 s: the spike's `fit` takes about
+  11 s server-side. A query past that bound exits 5, and a server error exits 4. `--wait S` polls the probe (connect
+  and `ping`, never the socket file's existence) every 0.2 s for up to S seconds.
+- **The restart rule.** At `ship-300-l2` only, a call whose client exits 3 makes the driver send `process_start`
+  (`command` `../venv/bin/python l2srv.py`, `cwd` `/workspace/project`, `name` `l2srv`), then re-run the client with
+  `--wait 60`. That call is a **restart**: its observed time runs from the first send and includes the start, and it is
+  reported apart from warm re-queries. Exits 0, 4 and 5 never start a server: a slow live server is neither restarted
+  nor counted as one. A second exit 3 after the start fails the call (`cause` `l2_server_unavailable`).
 - **Point `pycache-l2`:** E17's `pycache` project and workspace (256 MiB of CSV, 6.0 M rows), with its turns rewritten
   around the loaded frame. Each turn: one `py_requery` (group means plus a one-column median, the spike's `light`
   query), then 2–5 more `py_requery` and `py_short` calls, and one `py_refit` (KMeans on the 200k sample, the spike's
-  `fit`). Think gaps are `pycache`'s draw. `py_import` and `py_grep` are dropped: E17b and E17c measured them.
+  `fit`). `py_analyze`, `py_test`, `py_import` and `py_grep` are all dropped. E17b and E17c measured the last two,
+  and the first two are compute that a loaded frame does not change. The think gaps are `pycache`'s draw as it
+  stands, not rescaled to `pycache`'s duty. Without `py_analyze`'s 15 s and `py_test`'s 60 s, the duty is lower than
+  `pycache`'s, and calibration reports it.
 - **Point `squeeze-l2`:** `pycache-l2` under E17b's squeeze (`E17B_SQUEEZE_MEMMAX_MB` 24576, budget 16 GiB), at
   `ship-300` and `ship-300-l2` only. It climbs N until refusals start.
 - **Configuration:** §6 and §13.2 unchanged, plus `SH_LEASE_MAX_PROCESSES` at the default 4 (one is used).
 
 ### 14.3 Readings
 
-1. **Latency (Q8).** Per class and arm: the median and p90 of warm `py_requery` and `py_refit`, and their gains
-   against `sbx` and `ship-300`. "Warm" means the session's lease was live at the call. At `ship-300-l2` this also
-   needs the server answering without a restart.
-2. **Restarts (Q9).** The share of `ship-300-l2` re-queries that were restarts, their median cost, and why the
-   previous lease ended (idle, reclaim, OOM).
+1. **Latency (Q8).** Per class and arm: warm and cold `{n, median, p95}` and the all-call median, as
+   `latency_report.py` computes them. "Warm" at a lease arm means the session's lease was live at the call. At
+   `ship-300-l2` it also means the server answered the probe, so no restart. `sbx` has no warm calls: every Exec gets a
+   fresh VM, so `sbx` gives only its all-call median. Two gains:
+   - **against `sbx`:** 1 − (warm median / `sbx`'s all median), the instrument's existing gain, as criterion 2;
+   - **level 2 against level 1:** 1 − (`ship-300-l2`'s warm median / `ship-300`'s warm median), same point, N and
+     class. This is warm against warm, so it compares a live server with a warm guest, not with `ship-300`'s cold
+     calls. It is a new field in `latency_report.py`.
+2. **Restarts (Q9).** Per `ship-300-l2` rung, every restart, split into two kinds:
+   - **lease-cold:** the session's lease was gone (the key's first call, or a lease end between two calls). This is
+     the set `warmcold_lease` calls cold. The rate is set by the gap draw, and is reported beside `ship-300`'s cold
+     share in the paired rung;
+   - **server-lost:** the lease was live, but the server did not answer (an OOM kill or a crash).
+
+   Also reported: the median cost of each kind, and why the previous lease ended.
 3. **The level-2 charge (Q9).** Each `ship-300-l2` lease's `vm_fp` at +45 s after its last call, against the
    `ship-300` lease of the same session in the paired rung. At `squeeze-l2`: the N where the first refusal and the
-   first reclaim of a lease with a running server happen, per arm, with #1026's `why` on each refusal.
-4. **Ends (Q10).** For each lease end with a running tracked process: its notice (exactly one, naming `l2srv`) and
-   the end's sync time from the worker's lease end line. Every OOM kill, with the process state it left.
+   first reclaim of a lease with a running server happen, per arm, with #1026's `why` on each refusal (from the
+   rung's `worker.log`).
+4. **Ends (Q10).** Each judged end is an end of a lease with a running tracked process, with two kinds excluded.
+   First, ends that skip the sync by design: `sandbox_deleted`, `teardown_failed` (moca `endLeaseLocked`, P5-R39).
+   Second, the driver's own end-of-run cut ends, which have no client left to notify (E17B-R54's exclusion). For
+   each judged end:
+   - its notices: exactly one, naming `l2srv`;
+   - whether its sync finished inside the worker's bound. At this pin the worker logs no sync duration: the
+     `lease end` line is written before the sync runs, and a successful sync logs nothing. What it does log is a
+     `vmpool: lease end sync workspace_key=…` line when the sync fails or passes `LeaseEndSyncTimeout` (30 s), so
+     "inside the bound" means no such line for that key's end. The full bound, with up to 10 s of vsock connect, is
+     about 40 s (lease spec §7).
+
+   Also reported: every OOM kill, with the process state it left.
 
 ### 14.4 E17d's pass criteria (sealed with the predictions)
 
-Drafted here; the numbers are fixed at the seal, after calibration. E17d passes if all hold:
+Drafted here. The numbers, and each minimum count, are fixed at the seal, after calibration. E17d passes if all hold:
 
-- **L2a.** At `pycache-l2`, N = 1 (at least 4 seeds pooled, `E15_START_ZERO=1`) and N = 128: the median warm
-  `py_requery` at `ship-300-l2` is at least 80% faster than at `sbx` and at least 70% faster than at `ship-300`.
-  (Spike: 96% and 95%.)
-- **L2b.** At the same rungs: the median warm `py_refit` at `ship-300-l2` is at least 20% faster than at `sbx`.
-  (Spike: 36%.)
-- **L2c.** At `pycache-l2` N = 128: no OOM kill of `l2srv` at 1024 MiB guests, and fewer than 10% of `ship-300-l2`
-  re-queries are restarts.
-- **L2d.** At every rung, every lease end with a running tracked process has exactly one notice naming it, and every
-  such end's sync finishes within 30 s.
+- **L2a.** At `pycache-l2`, N = 1 (`E15_START_ZERO=1`) and N = 128, for `py_requery`:
+  - `ship-300-l2`'s gain against `sbx` (reading 1's first gain) is at least 0.80;
+  - its gain against `ship-300`, warm against warm (the second gain), is at least 0.70.
 
-Reported, not gated: the level-2 charge, the restart cost, `squeeze-l2`'s refusal and reclaim points (level 2 is
+  (Spike: 96% and 95%.) Each warm set needs at least 20 warm calls per arm. N = 1 pools seeds, at least 4, until both
+  lease arms reach it. If calibration can't reach it with 8 seeds, L2a at N = 1 is reported, not gated, and the seal
+  says so.
+- **L2b.** At the same rungs, `py_refit`'s gain against `sbx` at `ship-300-l2` is at least 0.20 (spike: 36%), with
+  the same minimum warm count.
+- **L2c.** At `pycache-l2` N = 128:
+  - no OOM kill of `l2srv` at 1024 MiB guests;
+  - at most 1% of the re-queries that found their lease live are server-lost restarts (reading 2).
+
+  Lease-cold restarts are not gated. They follow the gap draw (E17b's sealed `ship-300` warm share at `pycache`
+  N = 128 was 0.90), and they are reported beside `ship-300`'s cold share.
+- **L2d.** At every rung, every judged end (reading 4) has exactly one notice naming `l2srv`, and no
+  `lease end sync` line.
+
+Reported, not gated: the level-2 charge, the restart costs, `squeeze-l2`'s refusal and reclaim points (level 2 is
 expected to fit fewer sessions than level 1: a server's working set is charged, not reclaimed), and `py_short` at
 `ship-300-l2` against `ship-300` (level 2's own overhead on a plain command).
 
@@ -584,21 +630,22 @@ expected to fit fewer sessions than level 1: a server's working set is charged, 
   1.25, or about 80 GiB for 128 sessions. That fits the lease arms' budget (host RAM less 8 GiB), but calibration
   checks it. If it doesn't fit, the N = 128 rung moves to the largest N that does, before the seal.
 - **The client's socket.** A tracked process runs under its own uid in group `sbx-ws`, umask `0002`, and an Exec under
-  the Exec uid in the same group (spec §3.3, §7). The socket lives in the workspace (`/workspace/.l2/l2.sock`), not
-  `/tmp`, so both reach it. The build's first rig step checks this on the snapshot.
+  the Exec uid in the same group (spec §3.3, §7). The socket lives in the workspace (`/workspace/.l2/`), not `/tmp`,
+  so both reach it. The build's first rig step checks this on the snapshot.
 - **The spike's OOM.** Its first run, with quantiles over six columns, OOM-killed the server. E17d keeps the spike's
   one-column median; calibration checks the peak RSS at 1024 MiB.
+- **N = 1's warm set is small.** E17c's 2′ at N = 1 rested on one warm `py_import` per lease arm. `py_requery` comes
+  3–6 times a turn, but a session's first call is a restart. Hence L2a's minimum count, checked at calibration.
 
 ### 14.6 Rig time
 
 | step | hours |
 |---|---|
 | Bring-up: pin, snapshot, smoke, socket check, `TestGateLease` at the pin | 4 |
-| Calibration: N = 1 probes for the three arms, the N = 128 memory check | 8 |
+| Calibration: N = 1 probes for the three arms, the warm counts, the N = 128 memory check | 8 |
 | **Predictions sealed (user approval)** | — |
 | `pycache-l2` N = 1 seeds and N = 128, three arms | 8 |
 | `squeeze-l2`: the `ship-300` and `ship-300-l2` climbs | 10 |
 | **Total** | **about 30 h** |
 
 `squeeze-l2` can be cut first; L2a–L2d do not depend on it.
-
