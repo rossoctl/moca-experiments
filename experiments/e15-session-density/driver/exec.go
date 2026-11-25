@@ -187,17 +187,14 @@ const callDeadlineSlackS = 30
 // keepStdout keeps the first stdoutMax bytes of stdout (--record-stdout); otherwise stdout is
 // drained and dropped, as it always was.
 func execOne(ctx context.Context, client pb.SandboxExecClient, sandboxID string, reqID uint64, cmd string, timeoutS uint32, key string, keepStdout bool) execResult {
-	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutS+callDeadlineSlackS)*time.Second)
+	return execReq(ctx, client, sandboxID, &pb.Exec{ReqId: reqID, Command: cmd, TimeoutS: timeoutS, WorkspaceKey: key}, keepStdout)
+}
+
+// execReq is execOne for any Exec (E17d: the process kinds, l2.go), bounded by its own timeout_s plus the slack.
+func execReq(ctx context.Context, client pb.SandboxExecClient, sandboxID string, ex *pb.Exec, keepStdout bool) execResult {
+	callCtx, cancel := context.WithTimeout(ctx, time.Duration(ex.GetTimeoutS()+callDeadlineSlackS)*time.Second)
 	defer cancel()
-	stream, err := client.Exec(callCtx, &pb.ExecRequest{
-		SandboxId: sandboxID,
-		Exec: &pb.Exec{
-			ReqId:        reqID,
-			Command:      cmd,
-			TimeoutS:     timeoutS,
-			WorkspaceKey: key,
-		},
-	})
+	stream, err := client.Exec(callCtx, &pb.ExecRequest{SandboxId: sandboxID, Exec: ex})
 	if err != nil {
 		return execResult{cause: rpcCause(err), msg: err.Error(), refused: statusRefusal(err)}
 	}

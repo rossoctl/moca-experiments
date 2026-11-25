@@ -1041,7 +1041,7 @@ check "profile: fresh-metal keeps npm/corepack/XDG caches under the root" \
   "$(E15_HOST_PROFILE=fresh-metal prof 'e15_userenv user | grep -E "^(npm_config_cache|COREPACK_HOME|XDG_CACHE_HOME)=" | grep -c "=$E15_ROOT/"')" "3"
 check "profile: fresh-metal podman uses storage under the root" \
   "$(E15_HOST_PROFILE=fresh-metal prof 'e15_podman_str; e15_podman_conf_body | grep -c "root = \"$E15_ROOT/containers/"' | tr '\n' ' ')" \
-  "sudo -n env CONTAINERS_STORAGE_CONF=$TROOT/containers/storage.conf podman 2 "
+  "sudo -n env CONTAINERS_STORAGE_CONF=$TROOT/containers/storage.conf CONTAINERS_CONF=$TROOT/containers/containers.conf podman 2 "
 check "profile: an unknown profile is refused (exit 3)" "$(E15_HOST_PROFILE=bogus prof 'echo x' >/dev/null; echo $?)" "3"
 mkdir -p "$TROOT/state" && echo fresh-metal >"$TROOT/state/host_profile"
 check "profile: the recorded profile is the default" "$(prof 'echo $E15_HOST_PROFILE')" "fresh-metal"
@@ -2059,6 +2059,8 @@ if [ -f "$SYNC17" ]; then
     "$(grep -c '^X=(--exclude results/ --exclude predictions.json --exclude predictions-metal.json --exclude __pycache__ --exclude .pytest_cache)$' "$SYNC17")/$(grep -cE 'rsync -a --delete "\$\{X\[@\]\}" -e "\$S" experiments/(e15-session-density|e16-low-duty|e17-lease)/ "\$H:/srv/e15/src/(e15|e16|e17)/"' "$SYNC17")" "1/3"
   check "e17 sync.sh: corpora to /srv/e15/corpora/<point>/, wheels to /srv/e15/wheels-pycache/ (not E15's wheels)" \
     "$(grep -c '"\$H:/srv/e15/corpora/\$p/"' "$SYNC17")/$(grep -c '"\$H:/srv/e15/wheels-pycache/"' "$SYNC17")/$(grep -c '/srv/e15/wheels/' "$SYNC17")" "1/1/0"
+  check "e17 sync.sh: E17_RIG_HOST and E17_RIG_KEY override the AWS default" \
+    "$(grep -c '^H=\${E17_RIG_HOST:-ubuntu@\${RIG_IP' "$SYNC17")/$(grep -c '^K=\${E17_RIG_KEY:-\$HOME/.ssh/id_ed25519}$' "$SYNC17")" "1/1"
   check "e17 sync.sh: defaults E17_CORPORA, E17_WHEELS" \
     "$(grep -c 'E17_CORPORA:-/tmp/kagenti/e17-corpora' "$SYNC17")/$(grep -c 'E17_WHEELS:-/tmp/kagenti/e17-wheels-probe' "$SYNC17")" "1/1"
 else
@@ -2997,6 +2999,84 @@ test_e17c_profile_on() {
 test_e17c_pin_is_a_full_sha
 test_e17c_profile_off_is_unchanged
 test_e17c_profile_on
+
+# --- E17d profile (E17D=1: E17C=1 with its own moca pin, checkout and snapshot leaf; with E17D unset nothing changes) ---
+e17d_pin_file="$RE17B/e17d-pins.sh"
+t17d() { # t17d E17D-value|unset E17C-value|unset EXPR [VAR=val ...]: evaluate EXPR after sourcing lib.sh at a scratch root
+  local dv=$1 cv=$2 expr=$3 un=(-u E17B) ea=()
+  shift 3
+  if [ "$dv" = unset ]; then un+=(-u E17D); else ea+=(E17D="$dv"); fi
+  if [ "$cv" = unset ]; then un+=(-u E17C); else ea+=(E17C="$cv"); fi
+  env "${un[@]}" ${ea[@]+"${ea[@]}"} "$@" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'source "$1"; source "$2"; source "$3"; eval "$4"' \
+    _ "$RIG/lib.sh" "$RIG/points.sh" "$GOLD/dump.sh" "$expr" 2>&1
+}
+E17D_FIXPIN=3333333333333333333333333333333333333333
+printf 'E17D_MOCA_PIN=%s\n' "$E17D_FIXPIN" >"$TMP/e17d-test-pins.sh"
+printf 'MemTotal: 400000000 kB\n' >"$TMP/e17d-meminfo"
+test_e17d_pin_is_a_full_sha() {
+  local want_pin
+  want_pin=$(grep -E '^E17D_MOCA_PIN=' "$e17d_pin_file" | cut -d= -f2)
+  check "e17d: pins file sets E17D_MOCA_PIN to 40 hex digits, not the placeholder" \
+    "$(printf '%s' "$want_pin" | grep -cE '^[0-9a-f]{40}$')/$(printf '%s' "$want_pin" | grep -c '^0*$')" "1/0"
+  check "e17d: the pin is moca main's #1026 merge (a9a11a228b6f, with #1027)" "${want_pin:0:12}" "a9a11a228b6f"
+  check "e17d: pins file is not sourced (E17D_MOCA_PIN undefined) with E17D unset, with or without E17C=1" \
+    "$(t17d unset unset 'echo "${E17D_MOCA_PIN:-none}"')/$(t17d unset 1 'echo "${E17D_MOCA_PIN:-none}"')" "none/none"
+  check "e17d: the committed pin is accepted by e17d_require_pin" "$(t17d 1 unset 'e17d_require_pin && echo ok')" "ok"
+  printf 'E17D_MOCA_PIN=0000000000000000000000000000000000000000\n' >"$TMP/e17d-placeholder.sh"
+  check "e17d: the placeholder sha is refused, naming e17d-pins.sh" \
+    "$(t17d 1 unset '(e17d_require_pin)' E15_TEST_PINS="$TMP/e17d-placeholder.sh" 2>&1 | grep -c 'E17D_MOCA_PIN.*placeholder.*e17d-pins.sh')/$(t17d 1 unset '(e17d_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17d-placeholder.sh")" "1/1"
+  printf 'E17D_MOCA_PIN=abc123\n' >"$TMP/e17d-bad1.sh"
+  printf 'E17D_MOCA_PIN=ZZZ%s\n' "${E17D_FIXPIN:3}" >"$TMP/e17d-bad2.sh"
+  check "e17d: a short or non-hex pin is refused, naming e17d-pins.sh" \
+    "$(t17d 1 unset '(e17d_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17d-bad1.sh")/$(t17d 1 unset '(e17d_require_pin) >/dev/null 2>&1; echo $?' E15_TEST_PINS="$TMP/e17d-bad2.sh")/$(t17d 1 unset '(e17d_require_pin)' E15_TEST_PINS="$TMP/e17d-bad1.sh" | grep -c 'not a full 40-hex sha (e17d-pins.sh)')" "1/1/1"
+  check "e17d: setup.sh and rung.sh call e17d_require_pin when E17D=1, before the E17c check" \
+    "$(grep -A2 '^\[ "\${E17D:-}" != 1 \] || e17d_require_pin$' "$RIG/setup.sh" | grep -c '^\[ "\${E17C:-}" != 1 \] || e17c_require_pin$')/$(grep -A2 '^\[ "\${E17D:-}" != 1 \] || e17d_require_pin$' "$RIG/rung.sh" | grep -c '^\[ "\${E17C:-}" != 1 \] || e17c_require_pin$')" "1/1"
+  check "e17d: a rung with E17D=1 and the placeholder pin refuses to start (exit 1, names the pin file)" \
+    "$(env -u E17B -u E17C E17D=1 E15_TEST_PINS="$TMP/e17d-placeholder.sh" E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash "$RIG/rung.sh" sbx 1 default >"$TMP/e17d-rung.out" 2>&1; echo $?)/$(grep -c 'E17D_MOCA_PIN.*placeholder.*e17d-pins.sh' "$TMP/e17d-rung.out")" "1/1"
+  check "e17d: the pin-file-not-found error names both candidate paths" \
+    "$(grep -c "but no e17d-pins.sh at.*e17-lease/rig/e17d-pins.sh.*e17/rig/e17d-pins.sh" "$RIG/lib.sh")" "1"
+  check "e17d: pins.sh, e17b-pins.sh and e17c-pins.sh are not touched by the profile (no E17D in them)" \
+    "$(grep -c 'E17D' "$RIG/pins.sh" "$RE17B/e17b-pins.sh" "$RE17B/e17c-pins.sh" | cut -d: -f2 | tr '\n' ' ')" "0 0 0 "
+}
+test_e17d_profile_off_is_unchanged() {
+  check "e17d off: with E17D unset no E17D variable is defined (E17C unset / E17C=1)" \
+    "$(t17d unset unset 'compgen -v E17D | wc -l | tr -d " "')/$(t17d unset 1 'compgen -v E17D | wc -l | tr -d " "')" "0/0"
+  check "e17d off: E17D=0 or empty is E17D unset" \
+    "$(t17d 0 1 'echo $E15_MOCA_PIN $E15_MOCA')/$(t17d '' 1 'echo $E15_MOCA_PIN $E15_MOCA')" "$(t17d unset 1 'echo $E15_MOCA_PIN $E15_MOCA')/$(t17d unset 1 'echo $E15_MOCA_PIN $E15_MOCA')"
+  # The goldens were written from the pre-E17d lib.sh and points.sh (tests/golden/dump.sh says how), so no git ref.
+  t17d unset 1 'e15_golden_profile' E15_HOST_PROFILE=fresh-metal >"$TMP/gold.out"
+  check "e17d off: with E17D unset and E17C=1 every E15_/E17B/E17C/E17D variable lib.sh defines equals the pre-E17d golden" \
+    "$(gsame "$GOLD/profile-e17c-on.txt")" "same"
+  rm -f "$TROOT/env"
+  t17d unset 1 'e15_golden_e17c "$E15_ROOT/env" "'"$TMP/e17d-meminfo"'"' E15_HOST_PROFILE=fresh-metal >"$TMP/gold.out"
+  check "e17d off: with E17D unset and E17C=1 every E17c point and arm (E15_P_*, point_sig, warm-up, worker, env) equals the pre-E17d golden" \
+    "$(gsame "$GOLD/e17c-on.txt")" "same"
+  check "e17d off: with E17D unset and E17C=1 sourcing lib.sh exports no new variable" \
+    "$(env -u E17D -u E17B E17C=1 E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" bash -c 'b=$(env | cut -d= -f1 | sort); source "$1"; comm -13 <(echo "$b") <(env | cut -d= -f1 | sort) | tr "\n" " "' _ "$RIG/lib.sh" 2>&1)" "E17B "
+}
+test_e17d_profile_on() {
+  local p="E15_TEST_PINS=$TMP/e17d-test-pins.sh"
+  check "e17d on: E15_MOCA_PIN follows E17D_MOCA_PIN (the committed pin, and a fixture pin)" \
+    "$(t17d 1 unset 'echo $E15_MOCA_PIN')/$(t17d 1 unset 'echo $E15_MOCA_PIN' "$p")" "$(grep -E '^E17D_MOCA_PIN=' "$e17d_pin_file" | cut -d= -f2)/$E17D_FIXPIN"
+  check "e17d on: E15_MOCA is \$E15_ROOT/moca-e17d" "$(t17d 1 unset 'echo $E15_MOCA' "$p")" "$TROOT/moca-e17d"
+  check "e17d on: E17D=1 implies E17C=1 and E17B=1, exported to child processes" \
+    "$(t17d 1 unset 'echo $E17C $E17B; bash -c "echo \$E17C \$E17B"' "$p" | tr '\n' ' ')" "1 1 1 1 "
+  check "e17d on: E17D=1 alone resolves exactly as E17D=1 E17C=1" \
+    "$([ "$(t17d 1 unset 'for v in $(compgen -v E15_; compgen -v E17B; compgen -v E17C; compgen -v E17D); do declare -p "$v"; done' "$p" | sha256sum)" = "$(t17d 1 1 'for v in $(compgen -v E15_; compgen -v E17B; compgen -v E17C; compgen -v E17D); do declare -p "$v"; done' "$p" | sha256sum)" ] && echo same || echo differ)" "same"
+  check "e17d on: the E17c semantics hold (ship-300-nd on fresh-metal, a ship arm is a lease arm, E17a arms refused)" \
+    "$(t17d 1 unset 'case " ${E15_ARMS[*]} " in *" ship-300-nd "*) echo arms ;; *) echo noarms ;; esac; e17b_lease_arm ship-300 && echo lease; e15_e17a_arm_refused lease-300 2>/dev/null && echo refused' "$p" E15_HOST_PROFILE=fresh-metal | tr '\n' ' ')" "arms lease refused "
+  check "e17d on: every pins.sh pin is unchanged" \
+    "$([ "$(t17d unset unset 'for n in "${E15_PINS[@]}"; do echo "$n=${!n}"; done' | sha256sum)" = "$(t17d 1 unset 'for n in "${E15_PINS[@]}"; do echo "$n=${!n}"; done' "$p" | sha256sum)" ] && echo same || echo differ)" "same"
+  check "e17d on: the snapshot leaf is e17d-<E17D pin8>-<ram> and the stock build stamp key carries the E17D pin" \
+    "$(t17d 1 unset 'worker_snapimg' "$p")/$(t17d 1 unset 'worker_snapimg' "$p" E17B_GUEST_RAM_MB=256)/$(t17d 1 unset 'stamp_set() { :; }; mkdir -p "$E15_STATE"; echo "$E15_MOCA_PIN" >"$E15_STATE/go-stock-e17b"; e17b_require_build && echo built' "$p")" "e17d-${E17D_FIXPIN:0:8}-1024/e17d-${E17D_FIXPIN:0:8}-256/built"
+  check "e17d on: the missing-snapshot message names the E17D=1 build" \
+    "$(t17d 1 unset '(e17b_require_snapshot)' "$p" | grep -c 'E17D=1 experiments/e17-lease/rig/snapshot-e17b.sh --ram-mb 1024 --leaf e17d-')" "1"
+  check "e17d off: E17C=1 alone keeps the e17c-<pin8>-<ram> leaf" "$(t17d unset 1 'worker_snapimg' E15_TEST_PINS="$TMP/e17c-test-pins.sh")" "e17c-${E17C_FIXPIN:0:8}-1024"
+  rm -rf "${TROOT:?}/state"
+}
+test_e17d_pin_is_a_full_sha
+test_e17d_profile_off_is_unchanged
+test_e17d_profile_on
 
 test_e17b_setup_never_deletes_the_sealed_snapshot() {
   local snip="$TMP/e17b-snapstep.sh"
@@ -4000,6 +4080,102 @@ test_e17c_256_library() {
 test_e17c_256_library
 check "ship-300-nd: record.py judges its footprint drift as the other lease arms (RESIDENT)" \
   "$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import record; print("ship-300-nd" in record.RESIDENT)' "$RIG/../analysis" 2>&1)" "True"
+
+# --- E17d Task 2 (spec §14.2): the ship-300-l2 arm, points pycache-l2 and squeeze-l2, the per-rung lease mode --------
+printf 'E17B_MOCA_PIN=%s\nE17C_MOCA_PIN=%s\nE17D_MOCA_PIN=%s\n' "$E17B_FIXPIN" "$E17C_FIXPIN" "$E17D_FIXPIN" >"$TMP/e17d-rung-pins.sh"
+t17o() { t17m "$1" 1 "$2" E17D=1 E15_TEST_PINS="$TMP/e17d-rung-pins.sh" "${@:3}"; } # PROFILE EXPR [VAR=val ...]: E17D=1
+test_l2_arm_known_under_e17d_only() {
+  local isarm='e15_is_arm ship-300-l2 && echo yes || echo no'
+  check "ship-300-l2: known on fresh-metal under E17D=1; not under E17C=1 alone, E17B=1 alone, E17B unset, or on aws-prelim" \
+    "$(t17o fresh-metal "$isarm")/$(t17n fresh-metal "$isarm")/$(t17m fresh-metal 1 "$isarm")/$(t17m fresh-metal unset "$isarm")/$(t17o aws-prelim "$isarm")" "yes/no/no/no/no"
+  check "ship-300-l2: E15_ARMS under E17D=1 appends it after E17c's arms" \
+    "$(t17o fresh-metal 'echo ${E15_ARMS[*]}')" "sbx resident-inf resident-300 control lease-30 lease-120 ship-30 ship-120 ship-300 ship-300-nd ship-300-l2"
+  check "ship-300-l2: points pycache-l2 (sbx ship-300 ship-300-l2) and squeeze-l2 (ship-300 ship-300-l2) under E17D=1" \
+    "$(t17o fresh-metal 'e15_point_arms pycache-l2')/$(t17o fresh-metal 'e15_point_arms squeeze-l2')" "sbx ship-300 ship-300-l2/ship-300 ship-300-l2"
+  check "ship-300-l2: no other point lists it under E17D=1" \
+    "$(t17o fresh-metal 'for p in default smoke pycache pycache-low pycache-d64 pycache-d768 squeeze squeeze-256 lowduty mem512; do e15_point $p; case " $E15_P_ARMS " in *" ship-300-l2 "*) printf "%s " $p ;; esac; done')" ""
+  check "pycache-l2 and squeeze-l2: unknown with E17D unset (E17C=1, E17B=1, unset) and on aws-prelim" \
+    "$(for e in t17n 't17m fresh-metal 1' 't17m fresh-metal unset'; do case $e in t17n) t17n fresh-metal 'e15_point pycache-l2 && echo y || echo n; e15_point squeeze-l2 && echo y || echo n' ;; *) $e 'e15_point pycache-l2 && echo y || echo n; e15_point squeeze-l2 && echo y || echo n' ;; esac; done | tr '\n' ' ')$(t17o aws-prelim 'e15_point pycache-l2 && echo y || echo n')" "n n n n n n n"
+  local f='e15_point P && echo "$E15_P_CORPUS|${E15_P_LIBRARY#"$E15_ROOT"/}|${E15_P_TEMPLATE#"$E15_ROOT"/}|$E15_P_IMAGE_MB|$E15_P_DATASET_MIB|$E15_P_FALLBACK|$E15_P_PROBE_CAP_MS"'
+  check "pycache-l2: corpus pycache-l2, the E17 library, pycache's D=256 template, 1536 MiB, no fallback, the 120 s probe cap" \
+    "$(t17o fresh-metal "${f/P/pycache-l2}")" "pycache-l2|src/e17/workload/library.json|template-pycache-d256/workspace.img|1536|256|0|120000"
+  check "squeeze-l2: pycache-l2's workload; a squeeze point (e15_is_squeeze)" \
+    "$(t17o fresh-metal "${f/P/squeeze-l2}")/$(t17o fresh-metal 'e15_is_squeeze squeeze-l2 && echo squeeze')" "pycache-l2|src/e17/workload/library.json|template-pycache-d256/workspace.img|1536|256|0|120000/squeeze"
+  check "pycache-l2, squeeze-l2 and pycache have three point signatures" \
+    "$(t17o fresh-metal 'for p in pycache pycache-l2 squeeze-l2; do e15_point_sig $p; done' | sort -u | wc -l | tr -d ' ')" "3"
+  check "ship-300-l2: the default warm-up is 1200 s (as ship-300)" "$(t17o fresh-metal 'e15_default_warmup ship-300-l2')" "1200"
+}
+test_l2_worker_env_and_flags() {
+  local a="$TMP/l2-wenv-300" b="$TMP/l2-wenv-l2"
+  t17o fresh-metal 'worker_env ship-300 "'"$a"'"; worker_env ship-300-l2 "'"$b"'"' >/dev/null
+  check "ship-300-l2 worker_env: exactly ship-300's (SH_LEASE_CACHE_DROP_S and SH_LEASE_MAX_PROCESSES at the defaults)" \
+    "$(diff "$a" "$b" >/dev/null && echo same)/$(grep -c '^SH_LEASE_CACHE_DROP_S\|^SH_LEASE_MAX_PROCESSES' "$b")" "same/0"
+  check "ship-300-l2 worker_env: refused with E17D unset (E17C=1)" \
+    "$(t17n fresh-metal '(worker_env ship-300-l2 "'"$b.x"'") >/dev/null 2>&1; echo $?')" "1"
+  check "ship-300-l2: a lease arm under E17D=1 only; its token idle timeout is 300 s; the stock -e17b worker" \
+    "$(t17o fresh-metal 'e17b_lease_arm ship-300-l2 && echo y || echo n')/$(t17n fresh-metal 'e17b_lease_arm ship-300-l2 && echo y || echo n')/$(t17o fresh-metal 'e17b_idle_timeout_s ship-300-l2')/$(t17o fresh-metal 'worker_bin ship-300-l2')/$(t17n fresh-metal '(worker_bin ship-300-l2) >/dev/null 2>&1; echo $?')" \
+    "y/n/300/$TROOT/bin/microvm-worker-e17b/1"
+  check "e17d driver flags: ship-300-l2 mints lease+processes with the restart rule; the level-1 arms lease; sbx none" \
+    "$(t17o fresh-metal 'for a in ship-300-l2 ship-300 ship-300-nd sbx; do printf "%s=[%s] " $a "$(e17d_lease_flags $a)"; done')" \
+    "ship-300-l2=[--lease-mode=lease+processes --l2-restart] ship-300=[--lease-mode=lease] ship-300-nd=[--lease-mode=lease] sbx=[] "
+  check "e17d library: ship-300-l2 replays library-l2.json, every other arm the point's library" \
+    "$(t17o fresh-metal 'e17d_arm_library ship-300-l2 /x/library.json; e17d_arm_library ship-300 /x/library.json; e17d_arm_library sbx /x/library.json' | sed "s#$TROOT#<ROOT>#" | tr '\n' ' ')" \
+    "<ROOT>/src/e17/workload/library-l2.json /x/library.json /x/library.json "
+  check "e17d lease mode: the mode each arm runs (params.json's lease_mode)" \
+    "$(t17o fresh-metal 'for a in ship-300-l2 ship-300 sbx; do e17d_lease_mode $a; done' | tr '\n' ' ')" "lease+processes lease per-exec "
+}
+drung() { # ARM [VAR=val ...]: srung under E17D=1 at point pycache-l2 (the E17d pin's stamp, leaf and inputs in the harness root)
+  local arm=$1 rc feats=${DRUNG_FEATS:-'"lease-v1", "balloon-fpr-v1", "lease-processes-v1"'}
+  shift
+  printf '%s\n' "$E17D_FIXPIN" >"$RS/state/go-stock-e17b"
+  mkdir -p "$RS/snapshots/e17d-${E17D_FIXPIN:0:8}-1024" "$RS/corpora/pycache-l2" "$RS/template-pycache-d256" "$RS/src/e17/workload"
+  printf '{"hash": "hd", "guest_ram_mb": 1024, "features": [%s]}\n' "$feats" >"$RS/snapshots/e17d-${E17D_FIXPIN:0:8}-1024/manifest.json"
+  printf '{"session":"s","calls":[]}\n' >"$RS/corpora/pycache-l2/corpus.jsonl"
+  printf '{"table": {"mean_span_min": 30}}\n' >"$RS/corpora/pycache-l2/corpus-report.json"
+  cp "$RIG/../../e17-lease/workload/library.json" "$RIG/../../e17-lease/workload/library-l2.json" "$RS/src/e17/workload/"
+  head -c 4096 /dev/zero >"$RS/template-pycache-d256/workspace.img"
+  SRUNG_POINT=${SRUNG_POINT:-pycache-l2} srung "$arm" E17D=1 E15_TEST_PINS="$TMP/e17d-rung-pins.sh" "$@"
+  rc=$?
+  printf '%s\n' "$E17B_FIXPIN" >"$RS/state/go-stock-e17b"
+  return $rc
+}
+l2params() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$RS/runs/pycache-l2/$1/N1/params.json" "$2" 2>&1; }
+test_l2_rung() {
+  drung ship-300-l2 STUB_BANNER=drop30
+  check "ship-300-l2 rung: runs (exit 0) with library-l2.json and --lease-mode=lease+processes ... --l2-restart" \
+    "$?/$(grep -c -- "--library $RS/src/e17/workload/library-l2.json " "$SARGS")/$(grep -c -- '--lease-mode=lease+processes --l2-restart --token-key [^ ]* --idle-timeout-s 300 ' "$SARGS")" "0/1/1"
+  check "ship-300-l2 rung: params.json records the mode, the restart rule, the idle timeout, the library, lease-processes-v1 and the leaf" \
+    "$(l2params ship-300-l2 lease_mode)/$(l2params ship-300-l2 l2_restart)/$(l2params ship-300-l2 idle_timeout_s)/$(l2params ship-300-l2 library_name)/$(l2params ship-300-l2 snapshot_lease_processes)/$(l2params ship-300-l2 snapshot_image)/$(l2params ship-300-l2 moca_commit)/$(l2params ship-300-l2 snapshot_hash)" \
+    "lease+processes/True/300/library-l2.json/True/e17d-${E17D_FIXPIN:0:8}-1024/$E17D_FIXPIN/hd"
+  drung ship-300 STUB_BANNER=drop30
+  check "ship-300 under E17D=1: library.json and --lease-mode=lease, no restart rule; params lease_mode lease" \
+    "$?/$(grep -c -- "--library $RS/src/e17/workload/library.json " "$SARGS")/$(grep -c -- '--lease-mode=lease --token-key ' "$SARGS")/$(grep -c -- '--l2-restart' "$SARGS")/$(l2params ship-300 lease_mode)/$(l2params ship-300 l2_restart)" "0/1/1/0/lease/False"
+  drung sbx STUB_BANNER=drop30
+  check "sbx under E17D=1: no lease flag; params lease_mode per-exec, the same leaf" \
+    "$?/$(grep -c -- '--lease-mode\|--l2-restart' "$SARGS")/$(l2params sbx lease_mode)/$(l2params sbx snapshot_image)" "0/0/per-exec/e17d-${E17D_FIXPIN:0:8}-1024"
+  drung ship-300-l2 STUB_BANNER=dropoff
+  check "ship-300-l2 rung: a banner with lease_cache_drop=off is refused before the driver (it needs the default 30s)" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'ship-300-l2 needs the drop on' "$TMP/ship-rung.out")" "1/0/1"
+  drung ship-300-l2 STUB_BANNER=drop45
+  check "ship-300-l2 rung: lease_cache_drop=45s is refused too (exactly 30s, as ship-300)" \
+    "$?/$(grep -c '^driver$' "$SORD")/$(grep -c 'ship-300-l2 needs exactly 30s' "$TMP/ship-rung.out")" "1/0/1"
+  local a
+  for a in ship-300-l2 sbx; do
+    DRUNG_FEATS='"lease-v1", "balloon-fpr-v1"' drung "$a" STUB_BANNER=drop30
+    check "e17d snapshot: $a on a leaf without lease-processes-v1 is refused before any worker starts, naming the feature" \
+      "$?/$(grep -c '^worker-start\|^driver$' "$SORD")/$(grep -c 'does not advertise lease-processes-v1' "$TMP/ship-rung.out")" "1/0/1"
+  done
+  SRUNG_POINT=pycache drung ship-300-l2 STUB_BANNER=drop30
+  check "ship-300-l2 at a point that does not list it (pycache) is refused (exit 2)" "$?" "2"
+  srung ship-300 STUB_BANNER=on
+  check "with E17D unset a ship-300 rung still passes the bare --lease-mode (E17b and E17c unchanged)" \
+    "$?/$(grep -c -- '--lease-mode --token-key ' "$SARGS")/$(sparams ship-300 lease_mode | grep -c KeyError)" "0/1/1"
+}
+test_l2_arm_known_under_e17d_only
+test_l2_worker_env_and_flags
+test_l2_rung
+check "ship-300-l2: record.py judges its footprint drift as the other lease arms (RESIDENT)" \
+  "$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import record; print("ship-300-l2" in record.RESIDENT)' "$RIG/../analysis" 2>&1)" "True"
 rm -rf "$RS" "$RSS"
 echo
 if [ "$fails" -eq 0 ]; then

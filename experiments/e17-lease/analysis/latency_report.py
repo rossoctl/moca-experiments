@@ -38,6 +38,15 @@ each D, e.g. the gain-against-D runs, in its own invocation).
     {n, median_ms, p95_ms}, and ratio = after_drop median / kept median (null when either group is empty).
     The gain stays over all warm calls, as in E17b. Only in a group with a tagged row (ship-300-nd, sbx and
     every E17b group keep their exact shape, latency.md included).
+  - E17d (spec §14.3 reading 1; PLAN-E17D Task 5): a call the driver recorded as a level-2 restart (calls.jsonl
+    `restart`, ship-300-l2's --l2-restart) is never warm: "warm" there means a live lease AND a server that answered
+    the probe. A server-lost restart (its lease was live) is in neither warm nor cold; a lease-cold one stays cold.
+    Per class, `restart` gives {all, lease_cold, server_lost} {n, median_ms, p95_ms} (only in a group with a
+    restart). In a report with a ship-300-l2 group, every non-baseline class carries gain_n {warm, baseline_all},
+    and ship-300-l2's classes the warm-against-warm gain against L1_ARM (ship-300) at the same point, N and class:
+    gain_vs_l1 = 1 - (warm median / ship-300's warm median), with l1_warm_median_ms and gain_vs_l1_n {warm,
+    l1_warm} (null when either side has no warm call). latency.md then adds a "Level 2 against level 1" table. A
+    report with no ship-300-l2 group keeps its exact shape.
 """
 import argparse
 import json
@@ -71,6 +80,9 @@ BY_TMPFS_CLASSES = ("py_short", "py_import")
 # Rungs of one (point, N, arm) pool only if these agree: the gain-against-D runs (SPEC §10) share a
 # point, N and arm with the default D = 256 MiB runs and differ only in the dataset size.
 MUST_MATCH = ("dataset_mib", "snapshot_guest_ram_mb")
+# E17d: the level-2 arm and the level-1 arm its warm-against-warm gain is taken against (spec §14.3).
+L2_ARM, L1_ARM = "ship-300-l2", "ship-300"
+RESTART_KINDS = ("lease_cold", "server_lost")
 
 
 def read_params(d):
@@ -119,11 +131,20 @@ def summarize(rows):
             c["unknown"] += 1
             continue
         counts["used"] += 1
-        c["warm" if r["warm"] else "cold"].append(r["observed_ms"])
+        if r.get("restart") and r["warm"] is True:
+            pass  # E17d: a server-lost restart ran in a live lease but is not warm (no server answered)
+        else:
+            c["warm" if r["warm"] else "cold"].append(r["observed_ms"])
         if r["cold_reason"] in ("idle-destroy", "idle"):
             after.append(r)
     classes = {k: {"warm": stats(v["warm"]), "cold": stats(v["cold"]), "all": stats(v["all"]),
                    "unknown": v["unknown"]} for k, v in sorted(by_class.items())}
+    if any(r.get("restart") for r in rows):  # E17d: only a group with a level-2 restart
+        for k, c in classes.items():
+            rs = [r for r in rows if r["class"] == k and r["in_window"] and r["status"] == "ok" and r.get("restart")]
+            c["restart"] = dict({"all": stats([r["observed_ms"] for r in rs])},
+                                **{kind: stats([r["observed_ms"] for r in rs if r.get("restart_kind") == kind])
+                                   for kind in RESTART_KINDS})
     if any("cache" in r for r in rows):  # E17c, ruling R-g: only a rung with the guest's drop on
         for k, c in classes.items():
             tagged = [r for r in rows if r["class"] == k and r["in_window"] and r["status"] == "ok"
@@ -183,9 +204,13 @@ def build(rung_dirs, baseline_arm="sbx", arms=None):
         rows, summary = join_rung(d, p.get("arm"))
         # E17B-R26: a row's session flag (the driver writes tmpfs on every row of a flagged session)
         flagged = {c.get("session") for c in W.read_calls(d) if c.get("tmpfs")}
+        restarts = {(c.get("session"), c.get("call")): c for c in W.read_calls(d) if c.get("restart")}
         for r in rows:
             if r["session"] in flagged:
                 r["tmpfs"] = True
+            c = restarts.get((r["session"], r["call"]))
+            if c:  # E17d: the driver's level-2 restart record
+                r["restart"], r["restart_kind"] = True, c.get("restart_kind")
         keys = ("warm", "cold", "unknown", "unknown_keys", "dropped_end_session_execs")
         if str(p.get("arm")).startswith("ship-"):
             # A ship rung the join cannot vouch for is listed, never pooled (E17B-R9).
@@ -206,6 +231,7 @@ def build(rung_dirs, baseline_arm="sbx", arms=None):
         groups.append(dict(point=point, n=n, arm=arm, rungs=g["rungs"],
                            **{f: g["params"].get(f) for f in MUST_MATCH}, **extra, **s))
     base = {(g["point"], g["n"]): g for g in groups if g["arm"] == baseline_arm}
+    has_l2 = any(g["arm"] == L2_ARM for g in groups)
     for g in groups:
         if g["arm"] == baseline_arm:
             continue
@@ -222,6 +248,19 @@ def build(rung_dirs, baseline_arm="sbx", arms=None):
             wm = c["warm"]["median_ms"]
             c["baseline_median_ms"] = bm
             c["gain"] = (1.0 - wm / float(bm)) if (bm and wm is not None) else None
+            if has_l2:  # E17d: each gain carries its n
+                c["gain_n"] = {"warm": c["warm"]["n"],
+                               "baseline_all": (b["classes"].get(cls, {}).get("all", {}).get("n") or 0) if b else 0}
+    for g in groups if has_l2 else ():
+        if g["arm"] != L2_ARM:
+            continue
+        l1 = next((h for h in groups if (h["point"], h["n"], h["arm"]) == (g["point"], g["n"], L1_ARM)), None)
+        for cls, c in g["classes"].items():
+            lw = l1["classes"].get(cls, {}).get("warm", {}) if l1 else {}
+            lm, wm = lw.get("median_ms"), c["warm"]["median_ms"]
+            c["l1_warm_median_ms"] = lm
+            c["gain_vs_l1"] = (1.0 - wm / float(lm)) if (lm and wm is not None) else None
+            c["gain_vs_l1_n"] = {"warm": c["warm"]["n"], "l1_warm": lw.get("n") or 0}
     groups.sort(key=lambda g: (str(g["point"]), g["n"] or 0, g["arm"] != baseline_arm, str(g["arm"])))
     return {"baseline_arm": baseline_arm, "groups": groups}
 
@@ -268,6 +307,18 @@ def markdown(rep):
             out.append("| %s | %s | %s | %s | %d | %s | %d | %s | %s |" % (
                 g["point"], g["n"], g["arm"], cls, a["n"], fmt(a["median_ms"]), k["n"], fmt(k["median_ms"]),
                 fmt(wc["ratio"], "%.2f")))
+    l2 = [(g, cls, c) for g in rep["groups"] if g["arm"] == L2_ARM for cls, c in g["classes"].items()]
+    if l2:  # E17d: only a report with a level-2 group
+        out += ["", "## Level 2 against level 1", "",
+                "Warm against warm: gain = 1 - (%s warm median / %s warm median), same point, N and class." % (
+                    L2_ARM, L1_ARM), "",
+                "| point | N | arm | class | warm n | warm median ms | %s warm n | %s warm median ms | gain |" % (
+                    L1_ARM, L1_ARM),
+                "|---|---|---|---|---|---|---|---|---|"]
+        for g, cls, c in l2:
+            out.append("| %s | %s | %s | %s | %d | %s | %d | %s | %s |" % (
+                g["point"], g["n"], g["arm"], cls, c["warm"]["n"], fmt(c["warm"]["median_ms"]),
+                c["gain_vs_l1_n"]["l1_warm"], fmt(c["l1_warm_median_ms"]), fmt(c["gain_vs_l1"], "%.2f")))
     return "\n".join(out) + "\n"
 
 

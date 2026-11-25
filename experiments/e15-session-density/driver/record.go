@@ -54,6 +54,17 @@ type callRecord struct {
 	// stdout_truncated when more was written.
 	Stdout          *string `json:"stdout,omitempty"`
 	StdoutTruncated bool    `json:"stdout_truncated,omitempty"`
+	// E17d (lease mode; omitted otherwise, so every earlier row is unchanged). ProcessEvents: the call's lease events
+	// that named processes, with their display strings and tracked table. Restart (--l2-restart): the call's client
+	// found no server (exit 3), so the driver started l2srv (process_start) and re-ran the client with --wait 60; its
+	// observed_ms runs from the first send and includes the start. RestartKind: lease_cold when the call's first
+	// Exec started a new lease, else server_lost. StartMs: the process_start's own time. ProcessList: a server-lost
+	// restart's process table (process_list's stdout, before the start), the evidence of an OOM kill or a crash.
+	ProcessEvents []processEvent `json:"process_events,omitempty"`
+	Restart       bool           `json:"restart,omitempty"`
+	RestartKind   string         `json:"restart_kind,omitempty"`
+	StartMs       *float64       `json:"start_ms,omitempty"`
+	ProcessList   *string        `json:"process_list,omitempty"`
 	// Tmpfs: on every row of a session the corpus flags tmpfs (E17b; omitted otherwise, so every
 	// E15/E16/E17a row is unchanged). freed_from_shmem.py judges only unflagged sessions (E17B-R23).
 	Tmpfs bool `json:"tmpfs,omitempty"`

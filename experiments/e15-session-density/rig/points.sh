@@ -61,6 +61,13 @@
 # their own corpus pycache-256 (experiments/e17-lease/rig/gen_corpora.sh --gate-256: pycache's, with that py_analyze
 # duration). Library and corpus are in the settings, so their point_sig is not E17b's and their baselines are their
 # own: the 256 MiB rungs are compared only with each other. With E17C unset both resolve exactly as before.
+#
+# pycache-l2 and squeeze-l2 (E17d: E17D=1 and fresh-metal only, else return 1; experiments/e17-lease/SPEC.md §14.2,
+# PLAN-E17D Task 2): pycache's workspace (the D=256 template, the E17 library, the 120000 ms probe cap) replaying its
+# own corpus, pycache-l2 (gen_corpora.sh under E17D=1: pycache's sessions and gaps with turns around a loaded frame).
+# pycache-l2 runs sbx, ship-300 and ship-300-l2; squeeze-l2 is pycache-l2 under E17b's squeeze (E15_SQUEEZE_MEMMAX_MB,
+# the squeeze ladder rule; e15_is_squeeze) at ship-300 and ship-300-l2 only. ship-300-l2 replays library-l2.json, not
+# the point's library (lib.sh e17d_arm_library): the point's settings, and so its point_sig, name library.json.
 
 E15_MEM512_SCAN_CLASSES=read,shell_read,search,test,interpreter,lint_check
 E15_MEM512_SCAN_CMD='cat /workspace/data.bin >/dev/null'
@@ -136,6 +143,20 @@ e15_point() {
     E15_P_FALLBACK=0
     E15_P_PROBE_CAP_MS=120000
     ;;
+  pycache-l2 | squeeze-l2)
+    [ "$E15_HOST_PROFILE" = fresh-metal ] && [ "${E17D:-}" = 1 ] || return 1
+    E15_P_ARMS="sbx ship-300"
+    [ "$1" != squeeze-l2 ] || E15_P_ARMS="ship-300"
+    E15_P_CORPUS=pycache-l2
+    E15_P_LIBRARY=$E15_ROOT/src/e17/workload/library.json
+    E15_P_DATASET_MIB=256
+    E15_P_DATASET_SEED=1
+    E15_P_TEMPLATE_STAMP=template-pycache-d$E15_P_DATASET_MIB
+    E15_P_TEMPLATE=$E15_ROOT/$E15_P_TEMPLATE_STAMP/workspace.img
+    E15_P_IMAGE_MB=1536
+    E15_P_FALLBACK=0
+    E15_P_PROBE_CAP_MS=120000
+    ;;
   *) return 1 ;;
   esac
   # E17b (E17B=1, fresh-metal): the shipped-lease arms run the points sbx runs for criteria 1 and 2 (default, smoke, pycache*).
@@ -147,6 +168,10 @@ e15_point() {
   if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ "${E17C:-}" = 1 ]; then
     case "$1" in default | smoke | pycache | pycache-low | pycache-d64 | pycache-d768) E15_P_ARMS+=" ship-300-nd" ;; esac
   fi
+  # E17d (E17D=1, fresh-metal): ship-300-l2 runs E17d's two points only (rung.sh refuses an arm its point does not list).
+  if [ "$E15_HOST_PROFILE" = fresh-metal ] && [ "${E17D:-}" = 1 ]; then
+    case "$1" in pycache-l2 | squeeze-l2) E15_P_ARMS+=" ship-300-l2" ;; esac
+  fi
   E15_P_SETTINGS="point=$1 corpus=$E15_P_CORPUS library=${E15_P_LIBRARY#"$E15_ROOT"/} template=${E15_P_TEMPLATE#"$E15_ROOT"/}"
   E15_P_SETTINGS+=" image_mb=$E15_P_IMAGE_MB dataset_mib=$E15_P_DATASET_MIB dataset_seed=$E15_P_DATASET_SEED"
   E15_P_SETTINGS+=" scan_classes=$E15_P_SCAN_CLASSES scan_cmd=$E15_P_SCAN_CMD"
@@ -155,7 +180,7 @@ e15_point() {
 
 # e15_is_squeeze POINT: one of the E17b squeeze points (their rungs take E15_SQUEEZE_MEMMAX_MB; their ladder stops
 # on the squeeze rule).
-e15_is_squeeze() { case "$1" in squeeze | squeeze-256) true ;; *) false ;; esac; }
+e15_is_squeeze() { case "$1" in squeeze | squeeze-256 | squeeze-l2) true ;; *) false ;; esac; }
 
 e15_point_sig() {
   e15_point "$1" || return 1

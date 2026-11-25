@@ -116,6 +116,26 @@
         "run_ms": null,
         "cpu_ms": null
       }
+    ],
+    "py_requery": [
+      {
+        "id": "requery_light",
+        "cmd": "cd project && ../venv/bin/python l2q.py light",
+        "exit": 0,
+        "nominal_ms": 6500,
+        "run_ms": null,
+        "cpu_ms": null
+      }
+    ],
+    "py_refit": [
+      {
+        "id": "refit_fit",
+        "cmd": "cd project && ../venv/bin/python l2q.py fit",
+        "exit": 0,
+        "nominal_ms": 17400,
+        "run_ms": null,
+        "cpu_ms": null
+      }
     ]
   },
   "standin": {

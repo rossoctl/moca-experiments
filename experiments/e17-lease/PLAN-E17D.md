@@ -10,7 +10,7 @@
 
 **Spec:** `experiments/e17-lease/SPEC.md` v0.10 §14 (and §4–§7, §13 for what it inherits). E17b and E17c's records are sealed and not edited. Design under test: moca's lease spec §7 (level 2) and §16 item 6.
 
-**Branches:** this plan on `e17d/plan`; the build on `e17d/build` (moca-experiments). Rig: the AWS m7i.metal-24xl, through `~/gh/aws-rig`. **The user decided on 2026-11-24 to stop it until this plan is approved.**
+**Branches:** this plan on `e17d/plan`; the build on `e17d/build` (moca-experiments). Rig: **the SBX0 metal host** (`ssh sbx-kvm`), not the AWS m7i.metal-24xl: the AWS rig could not start (2026-11-25), recorded as deviation E17D-D1 (SPEC §14.7). **The user decided on 2026-11-24 to stop it until this plan is approved.**
 
 ## Global Constraints
 
@@ -30,24 +30,24 @@
 
 ## File Structure
 
-| file | change |
-|---|---|
-| `experiments/e17-lease/rig/e17d-pins.sh` | new: `E17D_MOCA_PIN` |
-| `experiments/e15-session-density/rig/lib.sh` | the `E17D` profile beside `E17C`'s; `ship-300-l2` in `E15_ARMS`, `worker_env` and the lease-arm helper; the arm's driver flags (`-lease-mode lease+processes -l2-restart`) and its library file |
-| `experiments/e15-session-density/rig/points.sh` | the `pycache-l2` and `squeeze-l2` points (corpus, library, template, arms), and the `E17D` arm append beside `E17C`'s (`rung.sh:84` refuses an arm its point does not list) |
-| `experiments/e15-session-density/driver/main.go` | flags `-lease-mode` and `-l2-restart` |
-| `experiments/e15-session-density/driver/lease.go` | the `mode` claim from `-lease-mode` (today the constant `leaseModeName = "lease"`, `:32`), in the Exec tokens (`:136`) and the set-mode token (`:164`) |
-| `experiments/e15-session-density/driver/exec.go`, `replay.go` | the process kinds; the restart rule; `restart`, `restart_kind`, `start_ms` and `process_events` in `calls.jsonl` |
-| `experiments/e17-lease/workload/project/l2common.py`, `l2srv.py`, `l2c.py`, `l2q.py` | new: from `results/followups/`, run from `project/` with the venv; the socket in `/workspace/.l2/`; the client's probe, bounds and exit codes (spec §14.2) |
-| `experiments/e17-lease/workload/library.json`, `library-l2.json` (new) | classes `py_requery`, `py_refit`: `l2q.py` in `library.json`, `l2c.py` in `library-l2.json` |
-| `experiments/e17-lease/extract/pycache_corpus.py` | the `pycache-l2` turn shape beside `TURN_HEAD`/`DUR_MS`, and `--durations-from` for its classes |
-| `experiments/e17-lease/rig/gen_corpora.sh` | point `pycache-l2`, its own corpus hash |
-| `experiments/e17-lease/rig/chain-e17d.sh` | new: E17d's stages (Task 7), seal file `predictions-e17d.json` |
-| `experiments/e17-lease/analysis/latency_report.py`, `warmcold_lease.py` | the warm/restart split for `ship-300-l2`, and the warm-against-warm gain (spec §14.3 reading 1) |
-| `experiments/e17-lease/analysis/level2.py` | new: restarts by kind, the level-2 charge, judged ends, their notices and `lease end sync` lines, #1026's `why` per refusal from `worker.log` |
-| `experiments/e17-lease/analysis/verdict_e17d.py` | new: L2a–L2d and the reported readings |
-| `experiments/e17-lease/predictions-e17d.json` | new, Task 11 |
-| `experiments/e17-lease/results/E17D-REPORT.md` | new, Task 13 |
+| file                                                                                 | change                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `experiments/e17-lease/rig/e17d-pins.sh`                                             | new: `E17D_MOCA_PIN`                                                                                                                                                                            |
+| `experiments/e15-session-density/rig/lib.sh`                                         | the `E17D` profile beside `E17C`'s; `ship-300-l2` in `E15_ARMS`, `worker_env` and the lease-arm helper; the arm's driver flags (`-lease-mode lease+processes -l2-restart`) and its library file |
+| `experiments/e15-session-density/rig/points.sh`                                      | the `pycache-l2` and `squeeze-l2` points (corpus, library, template, arms), and the `E17D` arm append beside `E17C`'s (`rung.sh:84` refuses an arm its point does not list)                     |
+| `experiments/e15-session-density/driver/main.go`                                     | flags `-lease-mode` and `-l2-restart`                                                                                                                                                           |
+| `experiments/e15-session-density/driver/lease.go`                                    | the `mode` claim from `-lease-mode` (today the constant `leaseModeName = "lease"`, `:32`), in the Exec tokens (`:136`) and the set-mode token (`:164`)                                          |
+| `experiments/e15-session-density/driver/exec.go`, `replay.go`                        | the process kinds; the restart rule; `restart`, `restart_kind`, `start_ms` and `process_events` in `calls.jsonl`                                                                                |
+| `experiments/e17-lease/workload/project/l2common.py`, `l2srv.py`, `l2c.py`, `l2q.py` | new: from `results/followups/`, run from `project/` with the venv; the socket in `/workspace/.l2/`; the client's probe, bounds and exit codes (spec §14.2)                                      |
+| `experiments/e17-lease/workload/library.json`, `library-l2.json` (new)               | classes `py_requery`, `py_refit`: `l2q.py` in `library.json`, `l2c.py` in `library-l2.json`                                                                                                     |
+| `experiments/e17-lease/extract/pycache_corpus.py`                                    | the `pycache-l2` turn shape beside `TURN_HEAD`/`DUR_MS`, and `--durations-from` for its classes                                                                                                 |
+| `experiments/e17-lease/rig/gen_corpora.sh`                                           | point `pycache-l2`, its own corpus hash                                                                                                                                                         |
+| `experiments/e17-lease/rig/chain-e17d.sh`                                            | new: E17d's stages (Task 7), seal file `predictions-e17d.json`                                                                                                                                  |
+| `experiments/e17-lease/analysis/latency_report.py`, `warmcold_lease.py`              | the warm/restart split for `ship-300-l2`, and the warm-against-warm gain (spec §14.3 reading 1)                                                                                                 |
+| `experiments/e17-lease/analysis/level2.py`                                           | new: restarts by kind, the level-2 charge, judged ends, their notices and `lease end sync` lines, #1026's `why` per refusal from `worker.log`                                                   |
+| `experiments/e17-lease/analysis/verdict_e17d.py`                                     | new: L2a–L2d and the reported readings                                                                                                                                                          |
+| `experiments/e17-lease/predictions-e17d.json`                                        | new, Task 11                                                                                                                                                                                    |
+| `experiments/e17-lease/results/E17D-REPORT.md`                                       | new, Task 13                                                                                                                                                                                    |
 
 ---
 

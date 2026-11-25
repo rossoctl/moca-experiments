@@ -30,7 +30,9 @@ LOCK = HERE / "wheels.lock"
 DRIVER = ROOT / "e15-session-density" / "driver"
 WHEELS = pathlib.Path(os.environ.get("E17_WHEELS", "/tmp/kagenti/e17-wheels-probe"))
 SHARD_MIB = 32
-CLASSES = {"py_analyze", "py_test", "py_import", "py_grep", "py_short", "py_shmem"}
+CLASSES = {"py_analyze", "py_test", "py_import", "py_grep", "py_short", "py_shmem",
+           "py_requery", "py_refit"}  # E17d's level-2 classes (PLAN-E17D Task 3; test_l2.py checks their commands)
+L2_CLASSES = ("py_requery", "py_refit")
 SHMEM_CMD = "awk '/^Shmem:/{print $2}' /proc/meminfo"
 
 sys.path.insert(0, str(ROOT / "e17-lease" / "extract"))
@@ -179,7 +181,8 @@ def test_library_matches_classes():
             # py_shmem reads the guest's /proc/meminfo: it needs no project directory
             assert cls == "py_shmem" or inv["cmd"].startswith("cd project && "), inv
             assert inv["exit"] == 0, inv
-            assert inv["nominal_ms"] == dict(pycache_corpus.DUR_MS, py_shmem=pycache_corpus.SHMEM_MS)[cls], inv
+            assert inv["nominal_ms"] == dict(pycache_corpus.DUR_MS, py_shmem=pycache_corpus.SHMEM_MS,
+                                             **{c: pycache_corpus.L2_DUR_MS[c] for c in L2_CLASSES})[cls], inv
             assert inv["run_ms"] is None and inv["cpu_ms"] is None, inv
     assert [(i["id"], i["cmd"]) for i in lib["classes"]["py_shmem"]] == [("shmem", SHMEM_CMD)]
     # Sessions flagged tmpfs run these classes with PYC_CACHE_DIR=/tmp/pycache-<workspace key>.
@@ -440,6 +443,10 @@ E17B_TEMPLATE_INPUTS = {
 }
 
 
+E17D_PROJECT_FILES = ("./l2c.py", "./l2common.py", "./l2q.py", "./l2srv.py")
+E17D_TEMPLATE_PROJECT = "7ec76d858d14c151b86b432dac6dd6b875b32eeb60742f88ff03248aaf5783e7"
+
+
 def default_scale():
     cfg = (HERE / "project" / "src" / "pyc" / "config.py").read_text()
     return int(re.search(r"(?m)^ANALYZE_WORK_SCALE = (\d+)$", cfg).group(1))
@@ -452,14 +459,15 @@ def gate_candidates():
     return tuple(int(s) for s in m.group(1).split())
 
 
-def project_sha(project):
-    """bringup.sh's proj_sha: find . -type f (no __pycache__, .pytest_cache, *.pyc) | LC_ALL=C sort -z | sha256sum."""
+def project_sha(project, without=()):
+    """bringup.sh's proj_sha: find . -type f (no __pycache__, .pytest_cache, *.pyc) | LC_ALL=C sort -z | sha256sum.
+    without: top-level files left out (E17d's level-2 files, to check that the rest is E17b's project)."""
     paths = []
     for dirpath, dirnames, files in os.walk(project):
         rel = os.path.relpath(dirpath, project)
         for f in files:
             q = "./" + f if rel == "." else "./" + rel + "/" + f
-            if "/__pycache__/" in q or "/.pytest_cache/" in q or f.endswith(".pyc"):
+            if "/__pycache__/" in q or "/.pytest_cache/" in q or f.endswith(".pyc") or q in without:
                 continue
             paths.append(q)
     out = b""
@@ -477,8 +485,12 @@ def test_template_inputs_are_e17bs():
     assert "BUILDER=$WL/build_pycache_workspace.sh" in txt and "LOCK=$WL/wheels.lock" in txt
     got = {"builder": hashlib.sha256(SCRIPT.read_bytes()).hexdigest(),
            "wheels.lock": hashlib.sha256(LOCK.read_bytes()).hexdigest(),
-           "project": project_sha(HERE / "project")}
+           "project": project_sha(HERE / "project", without=E17D_PROJECT_FILES)}
     assert got == E17B_TEMPLATE_INPUTS
+    # E17d (ruling E17D-B3): the level-2 files sit in project/ (spec §14.2), so the template's project input is E17b's
+    # plus exactly these four files, and bringup.sh builds a new template for it (its inputs stamp changes)
+    assert sorted(p.name for p in (HERE / "project").glob("l2*.py")) == sorted(f[2:] for f in E17D_PROJECT_FILES)
+    assert project_sha(HERE / "project") == E17D_TEMPLATE_PROJECT
 
 
 def check_library_256(path):
@@ -489,6 +501,9 @@ def check_library_256(path):
     scale = gate256.library_scale(str(path))
     assert inv["cmd"] == gate256.analyze_cmd(scale), inv["cmd"]
     l256["classes"]["py_analyze"][0]["cmd"] = base["classes"]["py_analyze"][0]["cmd"]
+    # E17d added its level-2 classes to library.json only (ruling E17D-B4): library-256.json is E17c's, byte for byte
+    for c in L2_CLASSES:
+        base["classes"].pop(c)
     assert l256 == base
     assert scale == gate256.PLACEHOLDER or scale in gate_candidates(), scale
     return scale

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "classes": {
+    "py_requery": [
+      {
+        "id": "requery_light",
+        "cmd": "cd project && ../venv/bin/python l2c.py light",
+        "exit": 0,
+        "nominal_ms": 6500,
+        "run_ms": null,
+        "cpu_ms": null
+      }
+    ],
+    "py_refit": [
+      {
+        "id": "refit_fit",
+        "cmd": "cd project && ../venv/bin/python l2c.py fit",
+        "exit": 0,
+        "nominal_ms": 17400,
+        "run_ms": null,
+        "cpu_ms": null
+      }
+    ],
+    "py_short": [
+      {
+        "id": "grep_def",
+        "cmd": "cd project && grep -rn def src",
+        "exit": 0,
+        "nominal_ms": 300,
+        "run_ms": null,
+        "cpu_ms": null
+      },
+      {
+        "id": "grep_import",
+        "cmd": "cd project && grep -rn import src analyze.py",
+        "exit": 0,
+        "nominal_ms": 300,
+        "run_ms": null,
+        "cpu_ms": null
+      },
+      {
+        "id": "head_model",
+        "cmd": "cd project && head -n 80 src/pyc/model.py",
+        "exit": 0,
+        "nominal_ms": 300,
+        "run_ms": null,
+        "cpu_ms": null
+      },
+      {
+        "id": "sed_features",
+        "cmd": "cd project && sed -n '1,60p' src/pyc/features.py",
+        "exit": 0,
+        "nominal_ms": 300,
+        "run_ms": null,
+        "cpu_ms": null
+      },
+      {
+        "id": "sed_data",
+        "cmd": "cd project && sed -n '20,80p' src/pyc/data.py",
+        "exit": 0,
+        "nominal_ms": 300,
+        "run_ms": null,
+        "cpu_ms": null
+      },
+      {
+        "id": "sed_conftest",
+        "cmd": "cd project && sed -n '1,40p' tests/conftest.py",
+        "exit": 0,
+        "nominal_ms": 300,
+        "run_ms": null,
+        "cpu_ms": null
+      },
+      {
+        "id": "wc_sources",
+        "cmd": "cd project && wc -l analyze.py src/pyc/*.py tests/*.py",
+        "exit": 0,
+        "nominal_ms": 300,
+        "run_ms": null,
+        "cpu_ms": null
+      },
+      {
+        "id": "edit_config",
+        "cmd": "cd project && python3 -c \"import os, pathlib, re; p = pathlib.Path('src/pyc/config.py'); s = re.sub(r'(?m)^MAX_ITER = \\\\d+$', 'MAX_ITER = 300', p.read_text(), count=1); t = s.replace('MAX_ITER = 300', 'MAX_ITER = 301', 1); assert 'MAX_ITER = 300' in s and t != s, 'no MAX_ITER line'\ndef put(text): q = p.with_name('.config.py.tmp'); q.write_text(text); os.replace(q, p)\nput(t); compile(p.read_text(), str(p), 'exec'); put(s); print('edited', p)\"",
+        "exit": 0,
+        "nominal_ms": 300,
+        "run_ms": null,
+        "cpu_ms": null
+      }
+    ]
+  },
+  "standin": {
+    "interpreter_class": "py_short",
+    "infra_sleep_frac": 0.5
+  }
+}

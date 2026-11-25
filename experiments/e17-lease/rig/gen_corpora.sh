@@ -32,6 +32,13 @@
 # E17C_MOCA_PIN (rig/e17c-pins.sh) (final review M5). pycache-256's corpus-report.json records the gate under
 # "gate_256": the file's name and sha256, its chosen_scale and moca_commit. Under E17C=1 without it, no pycache-256 is
 # written, and this script says so. E17C_PINS_FILE and E17_LIBRARY_256 override the pin file and the library (tests).
+#
+# E17d (E17D=1 only; PLAN-E17D Task 3, spec §14.2): also $E17_CORPORA/pycache-l2/, point pycache-l2's corpus:
+# pycache_corpus.py --point pycache-l2 with pycache's arguments (--duty 0.095, so its sessions and gaps are pycache's;
+# --tmpfs-share 0: no level-2 class keeps a tmpfs cache) and --gap-durations-from the --durations-from CAL.json (the
+# durations pycache's own corpus is fitted with), so its gaps are exactly the pycache corpus's. Its own durations
+# (py_requery, py_refit, py_short) come from --l2-durations-from L2CAL.json, the pycache-l2 calibration's N = 1 medians
+# (else its placeholders, and this script says so). It has its own corpus hash. With E17D unset nothing changes.
 set -euo pipefail
 W="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PC=${E17_CORPORA:-/tmp/kagenti/e17-corpora}
@@ -42,6 +49,7 @@ LIB256=${E17_LIBRARY_256:-$W/experiments/e17-lease/workload/library-256.json}
 if [ "${E17B:-}" = 1 ] || [ "${E17C:-}" = 1 ]; then SHARE=${E17_TMPFS_SHARE:-0.5}; else SHARE=${E17_TMPFS_SHARE:-0}; fi
 cal=()
 gate=""
+l2cal=()
 while [ $# -gt 0 ]; do
   case "$1" in
   --durations-from)
@@ -64,8 +72,20 @@ while [ $# -gt 0 ]; do
     gate=$2
     shift 2
     ;;
+  --l2-durations-from)
+    if [ "${E17D:-}" != 1 ]; then
+      echo "gen_corpora.sh: --l2-durations-from is E17d's (E17D=1): the pycache-l2 corpus" >&2
+      exit 2
+    fi
+    if [ $# -lt 2 ] || [ ! -f "$2" ]; then
+      echo "gen_corpora.sh: --l2-durations-from needs an existing L2CAL.json" >&2
+      exit 2
+    fi
+    l2cal=(--durations-from "$2")
+    shift 2
+    ;;
   *)
-    echo "usage: gen_corpora.sh [--durations-from CAL.json] [--gate-256 GATE.json]" >&2
+    echo "usage: gen_corpora.sh [--durations-from CAL.json] [--gate-256 GATE.json] [--l2-durations-from L2CAL.json]" >&2
     exit 2
     ;;
   esac
@@ -122,15 +142,22 @@ json.dump({"file": os.path.basename(gate), "sha256": hashlib.sha256(raw).hexdige
 PY
   specs+=" pycache-256:0.095"
 fi
+# E17d (E17D=1): pycache-l2, pycache's sessions and gaps with level-2 turns
+[ "${E17D:-}" != 1 ] || specs+=" pycache-l2:0.095"
 mkdir -p "$PC"
 for spec in $specs; do
   p=${spec%%:*}
   duty=${spec#*:}
   args=(${cal[@]+"${cal[@]}"})
+  share=$SHARE
   [ "$p" != pycache-256 ] || args=(--durations-from "$d256/durations-256.json")
+  if [ "$p" = pycache-l2 ]; then
+    args=(--point pycache-l2 ${cal[1]:+--gap-durations-from "${cal[1]}"} ${l2cal[@]+"${l2cal[@]}"})
+    share=0
+  fi
   tmp=$(mktemp -d "$PC/.$p.XXXXXX")
   if ! "$PY" "$W/experiments/e17-lease/extract/pycache_corpus.py" --gaps-from "$GAPS" --duty "$duty" --sessions 400 \
-    --seed 1 --min-turns 4 ${args[@]+"${args[@]}"} --tmpfs-share "$SHARE" --out "$tmp"; then
+    --seed 1 --min-turns 4 ${args[@]+"${args[@]}"} --tmpfs-share "$share" --out "$tmp"; then
     rm -rf -- "$tmp"
     echo "gen_corpora.sh: pycache_corpus.py failed for $p" >&2
     exit 1
@@ -145,7 +172,7 @@ f = open(sys.argv[1] + ".tmp", "w"); f.write(json.dumps(r, indent=2) + "\n"); f.
       exit 1
     fi
   fi
-  # Only the corpus directory itself is replaced: $PC/pycache, $PC/pycache-low or $PC/pycache-256, nothing above.
+  # Only the corpus directory itself is replaced: $PC/pycache, $PC/pycache-low, $PC/pycache-256 or $PC/pycache-l2.
   rm -rf -- "${PC:?}/$p"
   mv "$tmp" "$PC/$p"
   "$PY" -c 'import json,sys; r=json.load(open(sys.argv[1])); print("%s: duty %.4f (target %s), %d sessions (%d tmpfs, share %s), durations_ms %s, corpus_sha256 %s" % (sys.argv[2], r["duty_achieved"]["mean"], r["duty_target"], r["sessions"], r["tmpfs_sessions"], r["tmpfs_share"], r["durations_ms"], r["corpus_sha256"]))' \
@@ -153,5 +180,8 @@ f = open(sys.argv[1] + ".tmp", "w"); f.write(json.dumps(r, indent=2) + "\n"); f.
 done
 if [ "${E17C:-}" = 1 ] && [ -z "$gate" ]; then
   echo "gen_corpora.sh: note: no pycache-256 corpus (E17c's 256 MiB points): re-run with --gate-256 GATE.json once gate-256 passed" >&2
+fi
+if [ "${E17D:-}" = 1 ] && [ ${#l2cal[@]} -eq 0 ]; then
+  echo "gen_corpora.sh: note: pycache-l2 has placeholder durations (no --l2-durations-from); re-run with its calibration's before the measured rungs" >&2
 fi
 [ ${#cal[@]} -gt 0 ] || echo "gen_corpora.sh: note: placeholder durations (no --durations-from); re-run with the calibration's before the measured rungs" >&2

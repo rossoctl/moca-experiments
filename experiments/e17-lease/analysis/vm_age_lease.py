@@ -594,28 +594,19 @@ def replacement_reading(rows, sbx_median):
             "ratio_to_sbx": (med / sbx_median) if med is not None and sbx_median else None}
 
 
-def analyse(d, sbx_median_ms=None, shmem=None, guest_ram_mib=None):
-    params = {}
-    if os.path.exists(os.path.join(d, "params.json")):
-        params = json.load(open(os.path.join(d, "params.json")))
-    arm = params.get("arm")
-    if guest_ram_mib is None:
-        guest_ram_mib = params.get("snapshot_guest_ram_mb") or 1024
-    out = {"rung": d, "arm": arm, "mapping_valid": False, "mapping_reasons": [], "vms": None,
-           "memory_vs_age": None, "share_above": None, "fpr": None, "replacement": None,
-           "rules": {"identity": "worker.log restore/destroy phases; lease VMs (lease start line) retire "
-                                 "their cgroup (cgroup_pool.go retire), all others recycle it LIFO",
-                     "tolerance_s": TOL_S, "bin_s": BIN_S}}
+def mapping(d):
+    """The VM identity replay of RUNDIR (the MAPPING VALIDITY rules above), shared by analyse and E17d's level2.py:
+    {"error": a log read error or None, "same_second_reorders", "events", "vms", "times", "obs" (vm_mem per VM),
+    "seen", "sample_ts", "samples", "wl_events", "reasons" (empty when the mapping is valid)}."""
     try:
         events, started, retired = read_log(d)
     except SystemExit as e:
-        out["mapping_reasons"].append(str(e))
-        return out
+        return {"error": str(e), "same_second_reorders": []}
     samples = list(V.read_samples(d))
     vms, problems, recycled = vm_table_lease([(k, v) for _, k, v in events], retired, started)
     times = [t for t, _, _ in events]
     obs, seen, unatt, sample_ts = attribute(d, vms, times, {v["id"] for v in vms if v["lease"]}, samples)
-    out["same_second_reorders"] = []
+    reorders = []
     if unatt and not problems:
         ev2, swaps = resolve_same_second(events, retired, started, d, samples)
         vms2, problems2, recycled2 = vm_table_lease([(k, v) for _, k, v in ev2], retired, started)
@@ -624,7 +615,7 @@ def analyse(d, sbx_median_ms=None, shmem=None, guest_ram_mib=None):
         if swaps and not unatt2 and not problems2:
             events, vms, recycled, times = ev2, vms2, recycled2, times2
             obs, seen, unatt, sample_ts = obs2, seen2, unatt2, ts2
-            out["same_second_reorders"] = [{"vms": [a, b], "at": t} for a, b, t in swaps]
+            reorders = [{"vms": [a, b], "at": t} for a, b, t in swaps]
     reasons = list(problems)
     known = {v["id"] for v in vms}
     wl_events = WL.read_events(d)
@@ -648,7 +639,31 @@ def analyse(d, sbx_median_ms=None, shmem=None, guest_ram_mib=None):
         if inside >= 3 and not seen[v["id"]]:
             reasons.append("%s (%s) lived %.0f s with %d samples and never shows in them"
                            % (v["id"], v["name"], end - born, inside))
-    reasons = sorted(set(reasons))
+    return {"error": None, "same_second_reorders": reorders, "events": events, "vms": vms, "times": times, "obs": obs,
+            "seen": seen, "sample_ts": sample_ts, "samples": samples, "wl_events": wl_events,
+            "reasons": sorted(set(reasons))}
+
+
+def analyse(d, sbx_median_ms=None, shmem=None, guest_ram_mib=None):
+    params = {}
+    if os.path.exists(os.path.join(d, "params.json")):
+        params = json.load(open(os.path.join(d, "params.json")))
+    arm = params.get("arm")
+    if guest_ram_mib is None:
+        guest_ram_mib = params.get("snapshot_guest_ram_mb") or 1024
+    out = {"rung": d, "arm": arm, "mapping_valid": False, "mapping_reasons": [], "vms": None,
+           "memory_vs_age": None, "share_above": None, "fpr": None, "replacement": None,
+           "rules": {"identity": "worker.log restore/destroy phases; lease VMs (lease start line) retire "
+                                 "their cgroup (cgroup_pool.go retire), all others recycle it LIFO",
+                     "tolerance_s": TOL_S, "bin_s": BIN_S}}
+    m = mapping(d)
+    if m["error"] is not None:
+        out["mapping_reasons"].append(m["error"])
+        return out
+    out["same_second_reorders"] = m["same_second_reorders"]
+    events, vms, times, obs, seen, sample_ts, samples, wl_events, reasons = (
+        m["events"], m["vms"], m["times"], m["obs"], m["seen"], m["sample_ts"], m["samples"], m["wl_events"],
+        m["reasons"])
     out["mapping_reasons"] = reasons
     out["mapping_valid"] = not reasons
     out["lease_vms"] = len([v for v in vms if v["lease"]])

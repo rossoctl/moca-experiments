@@ -228,6 +228,10 @@ if [ "$(cat "$E15_PODMAN_CONF" 2>/dev/null || true)" != "$(e15_podman_conf_body)
   e15_podman_conf_body >"$E15_PODMAN_CONF"
   b_note "podman storage for E15 under $E15_ROOT/containers ($E15_PODMAN_CONF; nothing in /var/lib/containers)"
 fi
+if [ "$(cat "$(dirname "$E15_PODMAN_CONF")/containers.conf" 2>/dev/null || true)" != "$(e15_podman_run_conf_body)" ]; then
+  e15_podman_run_conf_body >"$(dirname "$E15_PODMAN_CONF")/containers.conf"
+  b_note "podman runtime settings for E15 ($(dirname "$E15_PODMAN_CONF")/containers.conf: /usr/bin/crun, /usr/bin/conmon, k8s-file logs)"
+fi
 # Replayed (in reverse) before the PURGE of /srv/e15: no overlay mount is left under it.
 m_has "PURGE: $(e15_podman_str) system reset -f" ||
   b_purge "E15's podman storage" "$(e15_podman_str) system reset -f >/dev/null 2>&1 || true"

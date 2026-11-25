@@ -50,9 +50,25 @@ py_analyze before it) gives the --tmpfs-share 0 corpus. Its duty is re-measured 
 busy time in it; the gap fit does not see them (SHMEM_MS per turn, about 0.1% of the busy time).
 --tmpfs-share 0 writes the E17a corpus byte for byte: no tmpfs field, no py_shmem call.
 
+E17d (PLAN-E17D Task 3, spec §14.2): --point pycache-l2 writes pycache's sessions with their turns rewritten around a
+loaded frame. Each turn is one py_requery (the level-2 re-query: group means and one column's median), then 2-5 calls
+each py_requery or py_short (drawn 50/50, per call), then one py_refit (the recompute: the KMeans fit); no py_analyze,
+py_test, py_import, py_grep or py_shmem. The think gaps are pycache's draw as it stands: session n is pycache's session
+n of the same arguments (same seed, duty, gap source, min turns; drawn with the same generator, so the same sessions),
+with as many turns, and its gaps are that session's fitted gaps in order (an l2 turn has 4-7 calls, a pycache turn
+7-10, so a prefix always covers them). Nothing is re-fitted to a duty: without py_analyze's and py_test's time the duty
+is lower than pycache's, and the report gives what it achieved (duty_achieved; duty_target stays pycache's, with
+gaps_from_point "pycache"). The turn shapes come from their own generator ("pycache-l2:<seed>"), so pycache's draws
+do not move. dur_ms = work_ms = L2_DUR_MS (placeholders until calibration: py_requery the spike's per-Exec light
+query, 6.5 s; py_refit its fit, 17.4 s; py_short pycache's 300 ms); --durations-from then takes exactly these three
+classes. --gap-durations-from CAL.json gives pycache's duty fit the durations the pycache corpus was built with (its
+five classes; default pycache's placeholders), so the gaps are exactly that corpus's. --tmpfs-share is refused above 0
+(no level-2 class keeps a cache in tmpfs). Session ids are "pycache-l2:<seed>:<n>", users as pycache's.
+
 Usage: python3 pycache_corpus.py --gaps-from CORPUS.jsonl --duty 0.095 --sessions 400 --seed 1
                                  --out DIR [--min-turns 4] [--durations-from CAL.json]
                                  [--tmpfs-share 0.5]   (E17b; the default 0 is E17a's corpus)
+                                 [--point pycache-l2 [--gap-durations-from CAL.json]]   (E17d)
 """
 
 import argparse
@@ -91,6 +107,13 @@ SHORT_SKELETONS = ("grep", "read", "edit")
 TMPFS_SHARE = 0.0  # E17a's: the E17b corpora are written with 0.5 by gen_corpora.sh under E17B=1 (PR #34 nit)
 SHMEM_MS = 100          # py_shmem's planned duration: the library's nominal_ms, one invocation
 SHMEM_SKELETON = "awk Shmem /proc/meminfo"
+# E17d's point pycache-l2 (spec §14.2): a turn is L2_TURN_HEAD, 2-5 of L2_TURN_MIDDLE, then L2_TURN_TAIL.
+L2_DUR_MS = {"py_requery": 6_500, "py_refit": 17_400, "py_short": 300}
+L2_SKELETON = {"py_requery": "python l2c.py light", "py_refit": "python l2c.py fit"}
+L2_TURN_HEAD = ("py_requery",)
+L2_TURN_MIDDLE = ("py_requery", "py_short")
+L2_TURN_TAIL = "py_refit"
+POINTS = ("pycache", "pycache-l2")
 
 
 def load_gaps(path):
@@ -110,6 +133,26 @@ def turn(rng):
     return ([(cls, SKELETON[cls]) for cls in TURN_HEAD]
             + [("py_short", rng.choice(SHORT_SKELETONS)) for _ in range(k)]
             + [("py_analyze", SKELETON["py_analyze"])])
+
+
+def l2_turn(rng):
+    """One pycache-l2 turn's (class, skeleton) pairs."""
+    out = [(cls, L2_SKELETON[cls]) for cls in L2_TURN_HEAD]
+    for _ in range(rng.randint(2, 5)):
+        cls = rng.choice(L2_TURN_MIDDLE)
+        out.append((cls, L2_SKELETON[cls]) if cls != "py_short" else (cls, rng.choice(SHORT_SKELETONS)))
+    return out + [(L2_TURN_TAIL, L2_SKELETON[L2_TURN_TAIL])]
+
+
+def l2_session(rng, pycache_calls, dur):
+    """pycache-l2's session for pycache's session pycache_calls: as many turns (one per py_test), its gaps in order."""
+    steps = []
+    for _ in range(sum(c["class"] == "py_test" for c in pycache_calls)):
+        steps += l2_turn(rng)
+    gaps = [c["gap_ms"] for c in pycache_calls]
+    if len(steps) > len(gaps):  # an l2 turn is never longer than a pycache turn: cannot happen
+        raise AssertionError("pycache-l2 session longer than its pycache session")
+    return build_calls(steps, gaps[:len(steps) - 1], dur)
 
 
 def fit(draws, target_ms):
@@ -133,11 +176,12 @@ def fit(draws, target_ms):
     return [min(H_MS, int(round(g))) for g in gaps]
 
 
-def load_durations(path):
-    """--durations-from: {class: measured N = 1 median run_ms} for exactly DUR_MS's classes, each a
-    positive number, rounded to whole ms. Returns (durations, file sha256); exits 1 on a bad file."""
+def load_durations(path, classes=DUR_MS, flag="--durations-from"):
+    """--durations-from: {class: measured N = 1 median run_ms} for exactly the classes given (DUR_MS's; pycache-l2:
+    L2_DUR_MS's), each a positive number, rounded to whole ms. Returns (durations, file sha256); exits 1 on a bad
+    file."""
     def bad(why):
-        sys.stderr.write("pycache_corpus.py: --durations-from %s: %s\n" % (path, why))
+        sys.stderr.write("pycache_corpus.py: %s %s: %s\n" % (flag, path, why))
         sys.exit(1)
     try:
         with open(path, "rb") as f:
@@ -147,10 +191,10 @@ def load_durations(path):
         bad("cannot read it as JSON (%s)" % e)
     if not isinstance(cal, dict):
         bad("not a JSON object of class -> run_ms")
-    if set(cal) != set(DUR_MS):
-        bad("its classes %s are not exactly %s" % (sorted(cal), sorted(DUR_MS)))
+    if set(cal) != set(classes):
+        bad("its classes %s are not exactly %s" % (sorted(cal), sorted(classes)))
     out = {}
-    for cls in DUR_MS:
+    for cls in classes:
         v = cal[cls]
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
             bad("%s is %r, not a positive number of ms" % (cls, v))
@@ -219,9 +263,18 @@ def main(argv=None):
     p.add_argument("--tmpfs-share", type=float, default=TMPFS_SHARE,
                    help="fraction of sessions flagged tmpfs, in [0, 1] (default %g); above 0 every "
                         "turn also ends with a py_shmem reading; 0 writes the E17a corpus" % TMPFS_SHARE)
+    p.add_argument("--point", choices=POINTS, default="pycache",
+                   help="pycache (default) or pycache-l2 (E17d: pycache's sessions and gaps, level-2 turns)")
+    p.add_argument("--gap-durations-from", metavar="CAL.json",
+                   help="pycache-l2 only: the pycache durations its gap fit uses (pycache's five classes)")
     args = p.parse_args(argv)
     if not 0 <= args.tmpfs_share <= 1:  # also refuses nan
         p.error("--tmpfs-share must be in [0, 1]")
+    l2 = args.point == "pycache-l2"
+    if l2 and args.tmpfs_share > 0:
+        p.error("--point pycache-l2 has no tmpfs classes: --tmpfs-share must be 0")
+    if args.gap_durations_from and not l2:
+        p.error("--gap-durations-from is for --point pycache-l2 only")
     if not 0 < args.duty < 1:
         p.error("--duty must be in (0, 1)")
     if args.sessions < 1:
@@ -229,8 +282,14 @@ def main(argv=None):
     if args.min_turns < 1:
         p.error("--min-turns must be at least 1")
     dur, dur_src = dict(DUR_MS), None
+    gap_dur, gap_dur_src = None, None
+    if l2:
+        dur, gap_dur = dict(L2_DUR_MS), dict(DUR_MS)
+        if args.gap_durations_from:
+            gap_dur, gsha = load_durations(args.gap_durations_from, DUR_MS, "--gap-durations-from")
+            gap_dur_src = dict(file=os.path.basename(args.gap_durations_from), sha256=gsha)
     if args.durations_from:
-        dur, dur_sha = load_durations(args.durations_from)
+        dur, dur_sha = load_durations(args.durations_from, L2_DUR_MS if l2 else DUR_MS)
         dur_src = dict(file=os.path.basename(args.durations_from), sha256=dur_sha)
     pool, gap_sha = load_gaps(args.gaps_from)
     if not any(pool):
@@ -238,13 +297,14 @@ def main(argv=None):
         sys.exit(1)
 
     rng = random.Random(args.seed)
+    l2_rng = random.Random("pycache-l2:%d" % args.seed)  # E17d's turn shapes: pycache's draws do not move
     # The tmpfs draw has its own generator, so the sessions are the same at every share.
     n_tmpfs = int(math.floor(args.tmpfs_share * args.sessions + 0.5))
     tmpfs = set(random.Random("tmpfs-share:%d" % args.seed).sample(range(args.sessions), n_tmpfs))
     lines, duties, per_class = [], [], collections.Counter()
     extended, turns, spans, busy = 0, [], [], 0
     for n in range(args.sessions):
-        got = session(rng, pool, args.duty, args.min_turns, dur)
+        got = session(rng, pool, args.duty, args.min_turns, gap_dur if l2 else dur)
         if got is None:
             sys.stderr.write(
                 "pycache_corpus.py: session %d cannot meet duty %g (within %d%% above) even with %d "
@@ -252,8 +312,11 @@ def main(argv=None):
                 % (n, args.duty, DUTY_TOL * 100, MAX_EXTRA_TURNS, args.min_turns, H_MS // 1000))
             sys.exit(1)
         calls, d, extra = got
-        s = dict(session="pycache:%d:%04d" % (args.seed, n), user="pyc-u%02d" % (n % USERS),
+        s = dict(session="%s:%d:%04d" % (args.point, args.seed, n), user="pyc-u%02d" % (n % USERS),
                  provider=PROVIDER)
+        if l2:
+            calls = l2_session(l2_rng, calls, dur)
+            d = duty_of(calls)
         if args.tmpfs_share > 0:
             calls = with_shmem(calls, dur)
             d = duty_of(calls)
@@ -263,7 +326,7 @@ def main(argv=None):
         duties.append(d)
         per_class.update(c["class"] for c in calls)
         extended += extra > 0
-        turns.append(sum(c["class"] == "py_test" for c in calls))
+        turns.append(sum(c["class"] == (L2_TURN_TAIL if l2 else "py_test") for c in calls))
         span, b, _, _ = timeline(calls)
         spans.append(span)
         busy += b
@@ -287,6 +350,9 @@ def main(argv=None):
         # The fields the E15 rig reads from a point's corpus-report.json (rung.sh: K from
         # table.mean_span_min, H_s and exclude into params.json; setup.sh: corpus_sha256).
         H_s=H_MS // 1000, exclude=None, corpus_sha256=hashlib.sha256(data).hexdigest(),
+        # E17d: which point; pycache-l2 also names where its gaps come from and the durations their fit used
+        **(dict(point=args.point, gaps_from_point="pycache", gap_durations_ms=gap_dur, gap_durations_from=gap_dur_src)
+           if l2 else {}),
         # occupied_pct is E15's table figure: all sessions' occupied time over all their span.
         table=dict(occupied_pct=100 * busy / sum(spans),
                    mean_span_min=sum(spans) / 60_000 / len(spans)))

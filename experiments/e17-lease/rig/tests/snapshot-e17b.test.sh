@@ -219,6 +219,37 @@ check "E17C=1: the placeholder E17C pin is refused (e17c_require_pin)" \
 rm -rf "${SNAP:?}/$LC"
 check "after the E17c cases e15 is untouched and no other leaf exists" "$(snapls)/$(cat "$SNAP/e15/manifest.json")" "e15/keep"
 
+# --- 6. the E17d profile (PLAN-E17D Task 2): E17D=1 implies E17C=1; leaves e17d-<E17D pin8>-*, lease-processes-v1 --
+cp -R "$MOCA" "$TROOT/moca-e17d"
+printf 'E17B_MOCA_PIN=%s\nE17C_MOCA_PIN=%s\nE17D_MOCA_PIN=%s\n' 1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 "$PIN" >"$TMP/pins-d.sh"
+run_d() {
+  local body=$1
+  shift
+  env -u E17B -u E17C E15_ROOT="$TROOT" E15_TEST_ROOT="$TROOT" E15_TEST_PINS="${PINS_FILE:-$TMP/pins-d.sh}" E15_HOST_PROFILE=fresh-metal E17D=1 \
+    E15_MANIFEST="$TMP/m.md" PATH="$STUB:$PATH" "$@" bash -c 'source "$1"; '"$body" _ "$SCRIPT"
+}
+gate_d() { run_d 'leaf_new_ok "$T_LEAF" "$T_RAM"' T_LEAF="$1" T_RAM="$2" >"$TMP/g.out" 2>&1 && echo accepted || echo refused; }
+check "E17D=1 alone (E17B, E17C unset) is not refused as 'E17B=1 is required'; it implies both" \
+  "$(run_d 'echo sourced' 2>&1 | grep -c 'is required')/$(run_d 'echo "$E17B$E17C"' 2>/dev/null)" "0/11"
+check "E17D=1: the guard accepts e17d-<E17D pin8>-1024 and -256" "$(gate_d "e17d-$P8-1024" 1024)/$(gate_d "e17d-$P8-256" 256)" "accepted/accepted"
+check "E17D=1: the guard refuses e17c-* and e17b-* leaves, naming the e17d grammar" \
+  "$(gate_d "e17c-$P8-1024" 1024)/$(grep -c 'is not e17d-<8 hex>-{1024|256}' "$TMP/g.out")/$(gate_d "e17b-$P8-1024" 1024)" "refused/1/refused"
+check "E17C=1 alone: the guard refuses e17d-* leaves (E17d's)" "$(gate_c "e17d-$P8-1024" 1024)/$(grep -c 'is not e17c-<8 hex>-{1024|256}' "$TMP/g.out")" "refused/1"
+flow_d() { run_d "$FLOW main --ram-mb $1 --leaf $2" FEATS="$3" >"$TMP/flow.out" 2>&1 && echo 0 || echo $?; }
+LD=e17d-$P8-1024
+check "E17D=1: a build publishes e17d-<E17D pin8>-1024 from the moca-e17d checkout when the manifest lists lease-processes-v1" \
+  "$(flow_d 1024 "$LD" '"lease-v1", "balloon-fpr-v1", "lease-processes-v1"')/$([ -f "$SNAP/$LD/manifest.json" ] && echo published)" "0/published"
+rm -rf "${SNAP:?}/$LD"
+check "E17D=1: a manifest without lease-processes-v1 fails and the leaf is removed, naming the feature" \
+  "$(flow_d 1024 "$LD" '"lease-v1", "balloon-fpr-v1"')/$([ -e "$SNAP/$LD" ] && echo left || echo removed)/$(grep -c 'manifest lacks: lease-processes-v1' "$TMP/flow.out")" "1/removed/1"
+check "E17C=1: lease-processes-v1 is not required (E17c's leaves are unchanged)" \
+  "$(flow_c 1024 "e17c-$P8-1024" '"lease-v1", "balloon-fpr-v1"')" "0"
+rm -rf "${SNAP:?}/e17c-$P8-1024"
+printf 'E17B_MOCA_PIN=%s\nE17C_MOCA_PIN=%s\nE17D_MOCA_PIN=%s\n' "$PIN" "$PIN" 0000000000000000000000000000000000000000 >"$TMP/pins-d-zero.sh"
+check "E17D=1: the placeholder E17D pin is refused (e17d_require_pin)" \
+  "$(PINS_FILE=$TMP/pins-d-zero.sh run_d "$FLOW main --ram-mb 1024 --leaf e17d-00000000-1024" FEATS='"lease-v1", "balloon-fpr-v1", "lease-processes-v1"' >"$TMP/flow.out" 2>&1 && echo 0 || echo 1)/$(grep -c 'E17D_MOCA_PIN is still the placeholder' "$TMP/flow.out")" "1/1"
+check "after the E17d cases e15 is untouched and no other leaf exists" "$(snapls)/$(cat "$SNAP/e15/manifest.json")" "e15/keep"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "snapshot-e17b.test.sh: all checks passed"; else echo "snapshot-e17b.test.sh: $fails FAILED"; fi
 exit "$([ "$fails" -eq 0 ] && echo 0 || echo 1)"

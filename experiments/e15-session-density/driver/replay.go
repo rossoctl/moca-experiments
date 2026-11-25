@@ -542,6 +542,20 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 	res := execOne(execCtx, r.client, r.cfg.SandboxID, r.reqID.Add(1), script, timeoutS, key, keep)
 	last := time.Now()
 	rec.Execs = 1
+	// E17d (--l2-restart): the level-2 client found no server (exit 3); start it and re-run (l2.go).
+	var l2 *l2Outcome
+	if ls != nil && r.cfg.Lease.L2Restart && l2Restart(plan, res) {
+		o := r.l2RestartCall(ctx, ls, key, c.Class, plan, res, timeoutS, keep)
+		l2 = &o
+		last = time.Now()
+		rec.Execs += o.execs
+		rec.Restart, rec.RestartKind, rec.StartMs, rec.ProcessList = true, o.kind, &o.startMs, o.list
+		refused := res.refused
+		if o.finalRan {
+			res, plan = o.final, o.plan
+		}
+		res.events, res.refused = o.events, refused
+	}
 	if keep {
 		out := string(res.stdout)
 		if res.stdoutCut {
@@ -553,6 +567,7 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 		// Whatever the call's outcome: a notice acknowledged on the stream is consumed even if the
 		// call then failed.
 		rec.LeaseEvents = ls.fresh(res.events)
+		rec.ProcessEvents = processEventsOf(rec.LeaseEvents)
 		rec.Refused = res.refused
 		if configRefusal(res.refused) && ls.configRefused == "" {
 			ls.configRefused = res.refused
@@ -605,6 +620,9 @@ func (r *Replayer) runCallIn(ctx context.Context, key string, s Session, c Call,
 		// run's end cut it, the backend did not fail it.
 		res.cause = causeCutAtEnd
 		res.msg = "cut at the end-of-run grace deadline before its planned completion"
+	}
+	if l2 != nil && l2.failMsg != "" {
+		res.cause, res.msg = causeL2Unavailable, l2.failMsg
 	}
 	if res.cause != "" {
 		rec.Status, rec.Cause, rec.Msg = "err", res.cause, res.msg

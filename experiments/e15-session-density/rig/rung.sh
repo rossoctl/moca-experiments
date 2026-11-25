@@ -5,11 +5,13 @@
 #   ARM    sbx | resident-inf | resident-300 | control | lease-30 | lease-120   (lease-*: E17, fresh-metal)
 #          | ship-30 | ship-120 | ship-300   (E17b: E17B=1, fresh-metal; the shipped lease at that idle timeout)
 #          | ship-300-nd   (E17c: E17C=1, fresh-metal; ship-300 with the idle page-cache drop off)
+#          | ship-300-l2   (E17d: E17D=1, fresh-metal; ship-300 at lease+processes, the level-2 restart rule, library-l2.json)
 #   N      session population (>= 1)
 #   POINT  default | short | long | no-infra | no-chains | smoke | mem512 | lowduty   (points.sh: corpus
 #          /srv/e15/corpora/<its corpus>, library, workspace template, image size)
 #          | pycache | pycache-low | pycache-d64 | pycache-d768   (E17, fresh-metal)
 #          | squeeze | squeeze-256   (E17b: E17B=1, fresh-metal; arms ship-300 and sbx; 1024 and 256 MiB guests)
+#          | pycache-l2 | squeeze-l2   (E17d: E17D=1, fresh-metal; sbx ship-300 ship-300-l2, and ship-300 ship-300-l2)
 #
 # Environment (defaults are SPEC §10.2's):
 #   E15_WARMUP_S 600 (fresh-metal resident arms 1200; lib.sh e15_default_warmup)   E15_WINDOW_S 900   E15_SPREAD_S 60   E15_GRACE_S 300   E15_SEED 1
@@ -56,7 +58,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
 # shellcheck source=points.sh
 . "$HERE/points.sh"
-# E17c profile (E17C=1, which implies E17B=1): the same for E17C_MOCA_PIN, first.
+# E17d profile (E17D=1, which implies E17C=1 and E17B=1): the same for E17D_MOCA_PIN, first.
+[ "${E17D:-}" != 1 ] || e17d_require_pin
+# E17c profile (E17C=1, which implies E17B=1): the same for E17C_MOCA_PIN, before the E17b checks.
 [ "${E17C:-}" != 1 ] || e17c_require_pin
 # E17b profile: refuse the placeholder or a malformed E17B_MOCA_PIN before any host change.
 [ "${E17B:-}" != 1 ] || { e17b_require_pin && e17b_require_build; }
@@ -149,6 +153,8 @@ scan_flag=()
 [ -n "${E15_MAX_SESSIONS:-}" ] && start_flag+=(--max-sessions "$E15_MAX_SESSIONS")
 LIBRARY=$E15_P_LIBRARY
 [ -z "${E17C_GATE_LIBRARY:-}" ] || LIBRARY=$E17C_GATE_LIBRARY # checked above: gate-256's rungs only
+# E17d (E17D=1): ship-300-l2 replays library-l2.json (the level-2 client), every other arm the point's library.
+[ "${E17D:-}" != 1 ] || LIBRARY=$(e17d_arm_library "$ARM" "$LIBRARY")
 TEMPLATE=$E15_P_TEMPLATE
 DRIVER=$E15_BIN/e15-driver
 # E16 supplementary: E15_END_SESSION_DEFER=1 runs e15-driver-defer (the same source plus the opt-in
@@ -427,7 +433,8 @@ else
       else
         [ "$lease_cache_drop" != off ] ||
           die "the worker's banner says lease_cache_drop=off but $ARM needs the drop on (SH_LEASE_CACHE_DROP_S unset: the worker's default). The driver was not started. Banner: $banner"
-        [ "$ARM" != ship-300 ] || [ "$lease_cache_drop" = 30s ] ||
+        # E17d's ship-300-l2 keeps the default too (spec §14.2: every arm keeps SH_LEASE_CACHE_DROP_S at 30 s)
+        case "$ARM" in ship-300 | ship-300-l2) [ "$lease_cache_drop" = 30s ] ;; *) true ;; esac ||
           die "the worker's banner says lease_cache_drop=$lease_cache_drop but $ARM needs exactly 30s (the default 5a's +45 s reading assumes; SH_LEASE_CACHE_DROP_S unset). The driver was not started. Banner: $banner"
       fi
       lease_cache_drop_rec=1
@@ -464,6 +471,12 @@ lease_flag=()
 if e17b_lease_arm "$ARM"; then
   IDLE_S=$(e17b_idle_timeout_s "$ARM")
   lease_flag=(--lease-mode --token-key "$TOKEN_DIR/token.key" --idle-timeout-s "$IDLE_S" --token-wrk e15 --token-iss "$(e17b_token_iss)")
+  # E17d (E17D=1; ruling E17D-B1): the mode is named, the arm's (--lease-mode=lease, or lease+processes and the level-2
+  # restart rule at ship-300-l2); with E17D unset the bare --lease-mode above (lease) is unchanged.
+  if [ "${E17D:-}" = 1 ]; then
+    read -r -a mode_flags <<<"$(e17d_lease_flags "$ARM")"
+    lease_flag=("${mode_flags[@]}" "${lease_flag[@]:1}")
+  fi
 fi
 # E17b (E17B-R22): every E17b rung (ship-* and sbx) records py_shmem's stdout, the guest's Shmem in kB, for
 # freed_from_shmem.py; a point whose library has no py_shmem simply records nothing. The sealed driver never gets it.
@@ -601,6 +614,15 @@ ship_wbin=""
 [ "${E17B:-}" != 1 ] || ship_wbin="\"ship-30\": \"$(worker_bin ship-30)\", \"ship-120\": \"$(worker_bin ship-120)\", \"ship-300\": \"$(worker_bin ship-300)\","
 # E17c: ship-300-nd's entry, resolved only under E17C=1 (an E17b rung's params.json is unchanged).
 [ "${E17C:-}" != 1 ] || ship_wbin+=" \"ship-300-nd\": \"$(worker_bin ship-300-nd)\","
+# E17d: ship-300-l2's entry, resolved only under E17D=1.
+[ "${E17D:-}" != 1 ] || ship_wbin+=" \"ship-300-l2\": \"$(worker_bin ship-300-l2)\","
+# E17d (E17D=1): the rung's lease mode and restart rule, and whether its snapshot advertises lease-processes-v1.
+e17d_rec=0 e17d_mode="" e17d_lp=0
+if [ "${E17D:-}" = 1 ]; then
+  e17d_rec=1
+  e17d_mode=$(e17d_lease_mode "$ARM")
+  ! e17d_snapshot_lease_processes "$E15_SNAPDIR/$(worker_snapimg)/manifest.json" || e17d_lp=1
+fi
 E15_LEASE_BANNER=$(grep -m1 'microvm-worker: relay=' "$DIR/worker.log" 2>/dev/null || true) E15_LEASE_CACHE_DROP=$lease_cache_drop \
   python3 - "$DIR" <<PY
 import hashlib, json, os, sys
@@ -699,6 +721,11 @@ p = {
     # E17c (E17C=1, ship-* arms; ruling R-a): the banner's lease_cache_drop= value as printed (the rung checked it).
     **({"lease_cache_drop": os.environ.get("E15_LEASE_CACHE_DROP")} if "$lease_cache_drop_rec" == "1" else {}),
     **({"snapshot_image": "$(worker_snapimg)", "guest_ram_mb": int("$(worker_guest_ram_mb)")} if "${E17B:-}" == "1" else {}),
+    # E17d (E17D=1; PLAN-E17D global constraints): the arm's mode (the tokens' claim), the level-2 restart rule, and
+    # whether the snapshot advertises lease-processes-v1 (the moca commit, the snapshot hash and the idle timeout are
+    # recorded above)
+    **({"lease_mode": "$e17d_mode", "l2_restart": "$e17d_mode" == "lease+processes",
+        "snapshot_lease_processes": "$e17d_lp" == "1"} if "$e17d_rec" == "1" else {}),
     **({"squeeze_memmax_mb": int("$SQUEEZE_MB"), "committed_mb": int(env.get("SH_MAX_COMMITTED_MB", "0")),
         "squeeze_slice": {"MemoryMax": int("${E15_SQUEEZE_MAX:-0}"), "MemoryHigh": int("${E15_SQUEEZE_HIGH:-0}"),
                           "original_MemoryMax": "${E15_SQUEEZE_ORIG_MAX:-}", "original_MemoryHigh": "${E15_SQUEEZE_ORIG_HIGH:-}",

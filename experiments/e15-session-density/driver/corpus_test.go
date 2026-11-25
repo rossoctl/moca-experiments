@@ -866,3 +866,45 @@ func TestLoadLibraryChecksTmpfs(t *testing.T) {
 		}
 	}
 }
+
+// E17d (PLAN-E17D Task 3): the pycache-l2 fixture is pycache_corpus.py --point pycache-l2 at the committed gaps-20
+// (sessions 3, seed 1; extract/test_pycache_corpus.py checks the bytes). Both libraries plan each level-2 call as its
+// one invocation (l2q.py in library.json, l2c.py in library-l2.json), and py_short from the same invocations.
+const (
+	pycacheL2Fixture = "testdata/pycache-l2-corpus.jsonl"
+	pycacheL2Library = "../../e17-lease/workload/library-l2.json"
+)
+
+func TestPlanPycacheL2OneInvocationPerCall(t *testing.T) {
+	ss := loadPycache(t, pycacheL2Fixture)
+	want := map[string]map[string]string{
+		pycacheLibrary:   {"py_requery": "cd project && ../venv/bin/python l2q.py light", "py_refit": "cd project && ../venv/bin/python l2q.py fit"},
+		pycacheL2Library: {"py_requery": "cd project && ../venv/bin/python l2c.py light", "py_refit": "cd project && ../venv/bin/python l2c.py fit"},
+	}
+	for path, cmds := range want {
+		l, err := LoadLibrary(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]int{}
+		for _, s := range ss {
+			for _, c := range s.Calls {
+				seen[c.Class]++
+				p := plan(t, l, c, 1, s.ID)
+				if w, ok := cmds[c.Class]; ok {
+					if len(p) != 1 || p[0].Cmd != w || p[0].Exit != 0 || p[0].SleepAfterMs != 0 {
+						t.Fatalf("%s: %s call %d (%s): plan %+v, want the one invocation %q", path, s.ID, c.I, c.Class, p, w)
+					}
+				} else if c.Class != "py_short" {
+					t.Fatalf("%s: class %s is not a pycache-l2 class", path, c.Class)
+				}
+			}
+		}
+		if seen["py_requery"] == 0 || seen["py_refit"] == 0 || seen["py_short"] == 0 {
+			t.Fatalf("the fixture lacks a class: %v", seen)
+		}
+		if err := validatePlans(ss, l, 1, Scan{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

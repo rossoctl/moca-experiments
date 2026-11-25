@@ -4,6 +4,11 @@
 #
 #   E17B=1 snapshot-e17b.sh --ram-mb {1024|256} --leaf e17b-<sha8>-<ram>
 #   E17C=1 snapshot-e17b.sh --ram-mb {1024|256} --leaf e17c-<sha8>-<ram>    (E17c, PLAN-E17C Task 4)
+#   E17D=1 snapshot-e17b.sh --ram-mb {1024|256} --leaf e17d-<sha8>-<ram>    (E17d, PLAN-E17D Task 9)
+#
+# E17D=1 is the E17d profile (lib.sh: it implies E17C=1 and E17B=1, with E17D_MOCA_PIN and the moca-e17d checkout): the
+# leaf is e17d-<first 8 hex of E17D_MOCA_PIN>-<ram>, every other prefix is refused, and the manifest must also list
+# lease-processes-v1 (E17d's level-2 arm needs the process kinds; spec §14.2).
 #
 # E17C=1 is the E17c profile (lib.sh: it implies E17B=1, with E17C_MOCA_PIN and the moca-e17c checkout): the leaf is
 # then e17c-<first 8 hex of E17C_MOCA_PIN>-<ram>, and an e17b-* name is refused (with E17B=1 alone, e17c-* is).
@@ -33,8 +38,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The profile is the whole point: with E17B unset lib.sh would resolve the sealed E15 pin and checkout. E17C=1
 # implies E17B=1 (lib.sh exports it).
-if [ "${E17B:-}" != 1 ] && [ "${E17C:-}" != 1 ]; then
-  printf '%s: E17B=1 is required, or E17C=1 (E17b snapshots are built at E17B_MOCA_PIN only, E17c ones at E17C_MOCA_PIN)\n' "$E15_PROG" >&2
+if [ "${E17B:-}" != 1 ] && [ "${E17C:-}" != 1 ] && [ "${E17D:-}" != 1 ]; then
+  printf '%s: E17B=1 is required, or E17C=1 or E17D=1 (E17b snapshots are built at E17B_MOCA_PIN only, E17c ones at E17C_MOCA_PIN, E17d ones at E17D_MOCA_PIN)\n' "$E15_PROG" >&2
   exit 1
 fi
 # The repo layout and the rig's staged one (sync.sh puts e15-session-density at src/e15 and e17-lease at src/e17).
@@ -49,7 +54,12 @@ done
 . "$_lib"
 
 # The leaf prefix follows the profile: e17c under E17C=1 (its pin is E15_MOCA_PIN there), e17b otherwise.
-if [ "${E17C:-}" = 1 ]; then LEAF_PFX=e17c PIN_VAR=E17C_MOCA_PIN; else LEAF_PFX=e17b PIN_VAR=E17B_MOCA_PIN; fi
+if [ "${E17D:-}" = 1 ]; then
+  LEAF_PFX=e17d PIN_VAR=E17D_MOCA_PIN
+elif [ "${E17C:-}" = 1 ]; then LEAF_PFX=e17c PIN_VAR=E17C_MOCA_PIN; else LEAF_PFX=e17b PIN_VAR=E17B_MOCA_PIN; fi
+# The features the built manifest must list (E17d also needs the level-2 process kinds).
+FEATURES=(lease-v1 balloon-fpr-v1)
+[ "${E17D:-}" != 1 ] || FEATURES+=(lease-processes-v1)
 LEAF_RE="^$LEAF_PFX-[0-9a-f]{8}-(1024|256)\$"
 LEAF=""
 RAM=""
@@ -181,11 +191,11 @@ manifest_features() {
   sudo -n python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1])).get("features", [])))' "$1"
 }
 
-# assert_features MANIFEST: lease-v1 and balloon-fpr-v1 must both be listed.
+# assert_features MANIFEST: lease-v1 and balloon-fpr-v1 must both be listed (E17D=1: and lease-processes-v1).
 assert_features() {
   local feats f missing=()
   feats=$(manifest_features "$1") || return 1
-  for f in lease-v1 balloon-fpr-v1; do
+  for f in "${FEATURES[@]}"; do
     printf '%s\n' "$feats" | grep -qx "$f" || missing+=("$f")
   done
   [ ${#missing[@]} -eq 0 ] || { echo "manifest lacks: ${missing[*]}" >&2; return 1; }
@@ -219,6 +229,7 @@ main() {
     esac
   done
   [ "$E15_HOST_PROFILE" = fresh-metal ] || die "E17b snapshots are built on the fresh-metal rig only"
+  [ "${E17D:-}" != 1 ] || e17d_require_pin
   [ "${E17C:-}" != 1 ] || e17c_require_pin
   e17b_require_pin
   leaf_name_ok "$LEAF" "$RAM" || die "bad --leaf/--ram-mb"

@@ -387,3 +387,169 @@ def test_default_tmpfs_share_is_e17a(tmp_path):
     assert isinstance(report["tmpfs_share"], float)
     assert json.loads((e17a / "corpus-report.json").read_text())["tmpfs_share"] == report["tmpfs_share"]
     assert '"tmpfs_share": 0.0' in (out / "corpus-report.json").read_text()
+
+
+# --- E17d (PLAN-E17D Task 3, spec §14.2): point pycache-l2, pycache's sessions with turns around the loaded frame ---
+L2_CLASSES = {"py_requery", "py_refit", "py_short"}
+
+
+def gen_l2(tmp_path, name="l2", sessions=40, seed=1, extra=()):
+    out = tmp_path / name
+    pycache_corpus.main(["--point", "pycache-l2", "--gaps-from", GAPS, "--duty", "0.095", "--sessions", str(sessions),
+                         "--seed", str(seed), "--out", str(out), *extra])
+    corpus = [json.loads(l) for l in (out / "corpus.jsonl").read_text().splitlines()]
+    return out, corpus, json.loads((out / "corpus-report.json").read_text())
+
+
+def l2_turns(classes):
+    """A pycache-l2 session's turns as lists of classes, or None when they do not follow the shape: one py_requery,
+    then 2-5 py_requery or py_short, then one py_refit."""
+    out, k = [], 0
+    while k < len(classes):
+        try:
+            j = classes.index("py_refit", k)
+        except ValueError:
+            return None
+        t = classes[k:j + 1]
+        if t[0] != "py_requery" or not 2 <= len(t) - 2 <= 5 or any(c not in ("py_requery", "py_short") for c in t[1:-1]):
+            return None
+        out.append(t)
+        k = j + 1
+    return out
+
+
+def test_l2_turn_shape(tmp_path):
+    _, corpus, report = gen_l2(tmp_path)
+    mids = set()
+    for s in corpus:
+        ts = l2_turns([c["class"] for c in s["calls"]])
+        assert ts, s["session"]
+        mids.update(c for t in ts for c in t[1:-1])
+        assert "tmpfs" not in s
+    assert mids == {"py_requery", "py_short"}  # both drawn in the middle of a turn
+    assert set(report["calls_per_class"]) == L2_CLASSES  # no py_analyze, py_test, py_import, py_grep (nor py_shmem)
+    assert report["point"] == "pycache-l2"
+    assert (report["tmpfs_share"], report["tmpfs_sessions"], report["py_shmem_ms"]) == (0.0, 0, None)
+
+
+def test_l2_keeps_pycache_s_gap_draw_unscaled(tmp_path):
+    # Each pycache-l2 session is pycache's session of the same seed and index with its turns rewritten: as many turns,
+    # and its gaps are pycache's gaps in order (fewer calls take a prefix), not re-fitted to any duty. So the duty is
+    # lower than pycache's, and the report says what it achieved.
+    _, pc, prep = share0(tmp_path, duty=0.095)
+    _, l2, lrep = gen_l2(tmp_path)
+    assert len(pc) == len(l2) == 40
+    for a, b in zip(pc, l2):
+        assert b["session"] == a["session"].replace("pycache:", "pycache-l2:") and b["user"] == a["user"]
+        assert len(l2_turns([c["class"] for c in b["calls"]])) == sum(c["class"] == "py_test" for c in a["calls"])
+        ga, gb = [c["gap_ms"] for c in a["calls"]], [c["gap_ms"] for c in b["calls"]]
+        assert gb[:-1] == ga[:len(gb) - 1] and gb[-1] == 0
+    assert lrep["duty_achieved"]["mean"] < prep["duty_achieved"]["mean"]
+    assert lrep["gaps_from_point"] == "pycache" and lrep["duty_target"] == 0.095
+
+
+def test_l2_durations_and_offsets(tmp_path):
+    _, corpus, report = gen_l2(tmp_path)
+    assert report["durations_ms"] == pycache_corpus.L2_DUR_MS
+    for s in corpus:
+        prev = None
+        for c in s["calls"]:
+            assert c["dur_ms"] == c["work_ms"] == pycache_corpus.L2_DUR_MS[c["class"]]
+            assert c["offset_ms"] == (0 if prev is None else prev["dur_ms"] + prev["gap_ms"])
+            prev = c
+
+
+def test_l2_has_its_own_hash(tmp_path):
+    a, _, ra = gen_l2(tmp_path, name="a")
+    b, _, rb = gen_l2(tmp_path, name="b")
+    _, _, rp = share0(tmp_path, duty=0.095)
+    assert (a / "corpus.jsonl").read_bytes() == (b / "corpus.jsonl").read_bytes()
+    assert ra["corpus_sha256"] == sha256_of(a / "corpus.jsonl") != rp["corpus_sha256"]
+
+
+def test_l2_durations_from_accepts_exactly_its_classes(tmp_path, capsys):
+    good = tmp_path / "l2cal.json"
+    good.write_text(json.dumps({"py_requery": 6400.4, "py_refit": 17100, "py_short": 410}))
+    _, corpus, report = gen_l2(tmp_path, extra=("--durations-from", str(good)))
+    assert report["durations_ms"] == {"py_requery": 6400, "py_refit": 17100, "py_short": 410}
+    assert {c["dur_ms"] for s in corpus for c in s["calls"] if c["class"] == "py_refit"} == {17100}
+    pc = tmp_path / "pccal.json"
+    pc.write_text(json.dumps({"py_analyze": 1, "py_test": 1, "py_import": 1, "py_grep": 1, "py_short": 1}))
+    for bad in (pc, tmp_path / "partial.json"):
+        if bad.name == "partial.json":
+            bad.write_text(json.dumps({"py_requery": 1, "py_refit": 1}))
+        with pytest.raises(SystemExit) as e:
+            gen_l2(tmp_path, name="bad", extra=("--durations-from", str(bad)))
+        assert e.value.code == 1
+        assert "are not exactly" in capsys.readouterr().err
+    # and pycache's own --durations-from still refuses the level-2 classes
+    with pytest.raises(SystemExit):
+        share0(tmp_path, name="pcbad", extra=("--durations-from", str(good)))
+
+
+def test_l2_gap_durations_from_follows_pycache_s(tmp_path):
+    # pycache's gaps depend on the durations its duty fit used; --gap-durations-from gives the fit pycache's own
+    # calibrated ones (results/calibration), so the gaps are those of the pycache corpus built with them.
+    _, pc, _ = share0(tmp_path, duty=0.095, extra=("--durations-from", CALIBRATION))
+    _, l2, _ = gen_l2(tmp_path, extra=("--gap-durations-from", CALIBRATION))
+    for a, b in zip(pc, l2):
+        gb = [c["gap_ms"] for c in b["calls"]]
+        assert gb[:-1] == [c["gap_ms"] for c in a["calls"]][:len(gb) - 1]
+
+
+def test_l2_refuses_a_tmpfs_share(tmp_path, capsys):
+    with pytest.raises(SystemExit) as e:
+        gen_l2(tmp_path, extra=("--tmpfs-share", "0.5"))
+    assert e.value.code == 2 and "pycache-l2" in capsys.readouterr().err
+
+
+def test_pycache_point_is_the_default_and_unchanged(tmp_path):
+    a, _, _ = share0(tmp_path, name="dflt", duty=0.095)
+    b, _, _ = share0(tmp_path, name="named", duty=0.095, extra=("--point", "pycache"))
+    assert (a / "corpus.jsonl").read_bytes() == (b / "corpus.jsonl").read_bytes()
+
+
+GEN = os.path.join(HERE, "..", "rig", "gen_corpora.sh")
+
+
+def run_gen(tmp_path, env_extra, *args):
+    env = {k: v for k, v in os.environ.items() if k not in ("E17B", "E17C", "E17D")}
+    env.update(E17_GAPS=GAPS, E17_CORPORA=str(tmp_path / "corpora"), E17_PYTHON=sys.executable, **env_extra)
+    return subprocess.run(["bash", GEN, *args], env=env, capture_output=True, text=True)
+
+
+def test_gen_corpora_writes_pycache_l2_under_e17d_only(tmp_path):
+    l2cal = tmp_path / "l2cal.json"
+    l2cal.write_text(json.dumps({"py_requery": 6000, "py_refit": 17000, "py_short": 400}))
+    r = run_gen(tmp_path, {"E17C": "1"})
+    assert r.returncode == 0, r.stderr
+    assert not (tmp_path / "corpora" / "pycache-l2").exists()  # E17D unset: E17c's corpora only
+    r = run_gen(tmp_path, {"E17C": "1"}, "--l2-durations-from", str(l2cal))
+    assert r.returncode == 2 and "E17D=1" in r.stderr
+    r = run_gen(tmp_path, {"E17D": "1"}, "--durations-from", CALIBRATION, "--l2-durations-from", str(l2cal))
+    assert r.returncode == 0, r.stderr
+    rep = json.loads((tmp_path / "corpora" / "pycache-l2" / "corpus-report.json").read_text())
+    pc = [json.loads(l) for l in (tmp_path / "corpora" / "pycache" / "corpus.jsonl").read_text().splitlines()]
+    l2 = [json.loads(l) for l in (tmp_path / "corpora" / "pycache-l2" / "corpus.jsonl").read_text().splitlines()]
+    assert (rep["point"], rep["sessions"], rep["durations_ms"], rep["tmpfs_share"]) == (
+        "pycache-l2", 400, {"py_requery": 6000, "py_refit": 17000, "py_short": 400}, 0.0)
+    assert rep["gap_durations_from"]["file"] == os.path.basename(CALIBRATION)
+    # its gaps are the staged pycache corpus's (that one has py_shmem readings, which take over a py_analyze's gap:
+    # compare against pycache's own fit, the corpus without them)
+    for a, b in zip(pc, l2):
+        ga = []
+        for c in a["calls"]:
+            if c["class"] == "py_shmem":
+                ga[-1] = c["gap_ms"]
+            else:
+                ga.append(c["gap_ms"])
+        gb = [c["gap_ms"] for c in b["calls"]]
+        assert gb[:-1] == ga[:len(gb) - 1]
+    r = run_gen(tmp_path, {"E17D": "1"})
+    assert r.returncode == 0 and "pycache-l2 has placeholder durations" in r.stderr, r.stderr
+
+
+def test_l2_driver_fixture_is_the_generator_s(tmp_path):
+    out, _, _ = gen_l2(tmp_path, name="fix", sessions=3)
+    with open(os.path.join(DRIVER, "testdata", "pycache-l2-corpus.jsonl"), "rb") as f:
+        assert f.read() == (out / "corpus.jsonl").read_bytes()

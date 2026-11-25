@@ -112,6 +112,9 @@ type leaseRelay struct {
 	execError func(key string, n int) string
 	// statusFor is the answer to a status call; an error fails the call.
 	statusFor func(key string) (*pb.LeaseStatus, error)
+	// execEnd (E17d), when set, is the n-th Exec's end: its exit code and the stdout and stderr sent before it
+	// (default: exit 0, no output).
+	execEnd func(key string, n int, e *pb.Exec) (exit int32, stdout, stderr string)
 }
 
 type leaseSeen struct {
@@ -121,6 +124,8 @@ type leaseSeen struct {
 	setMode    map[string]any // the set-mode token's claims, for a set_mode
 	cmd        string
 	timeoutS   uint32 // the Exec's timeout_s
+	kind       pb.ExecKind
+	process    *pb.ProcessArgs
 }
 
 func newLeaseRelay(t *testing.T) (pb.SandboxExecClient, *leaseRelay) {
@@ -199,7 +204,7 @@ func (lr *leaseRelay) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServe
 			n++
 		}
 	}
-	lr.execs = append(lr.execs, leaseSeen{key: key, recv: recv, bearer: c, cmd: e.GetCommand(), timeoutS: e.GetTimeoutS()})
+	lr.execs = append(lr.execs, leaseSeen{key: key, recv: recv, bearer: c, cmd: e.GetCommand(), timeoutS: e.GetTimeoutS(), kind: e.GetKind(), process: e.GetProcess()})
 	idx := len(lr.execs) - 1
 	lr.mu.Unlock()
 	defer func() {
@@ -224,7 +229,19 @@ func (lr *leaseRelay) Exec(req *pb.ExecRequest, stream grpc.ServerStreamingServe
 			return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_Error{Error: &pb.ExecError{ReqId: e.GetReqId(), Message: msg}}})
 		}
 	}
-	return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_End{End: &pb.End{ReqId: e.GetReqId(), ExitCode: 0}}})
+	var exit int32
+	if lr.execEnd != nil {
+		var out, errOut string
+		exit, out, errOut = lr.execEnd(key, n, e)
+		for st, d := range map[pb.Stream]string{pb.Stream_STREAM_STDOUT: out, pb.Stream_STREAM_STDERR: errOut} {
+			if d != "" {
+				if err := stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_Chunk{Chunk: &pb.Chunk{Stream: st, Data: []byte(d)}}}); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return stream.Send(&pb.ExecEvent{Event: &pb.ExecEvent_End{End: &pb.End{ReqId: e.GetReqId(), ExitCode: exit}}})
 }
 
 func (lr *leaseRelay) LeaseControl(ctx context.Context, req *pb.LeaseControlRequest) (*pb.LeaseControlResponse, error) {

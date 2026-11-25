@@ -22,6 +22,12 @@
 #   env -u E17B -u E17C E15_ROOT=$R E15_TEST_ROOT=$R bash -c '. experiments/e15-session-density/rig/lib.sh;
 #     . experiments/e15-session-density/rig/tests/golden/dump.sh; e15_golden_profile' >.../golden/profile-e17b-off.txt
 #   (the same with E17B=1 for profile-e17b-on.txt)
+# profile-e17c-on.txt (E17C=1, E17D unset; fresh-metal) and e17c-on.txt (e15_golden_e17c: E17c's points and arms under
+# E17C=1 on fresh-metal) were written from the tree BEFORE E17d touched lib.sh and points.sh (e17d/build at 4d0d2e0),
+# so the E17d profile is pinned off the same way:
+#   env -u E17B -u E17D E17C=1 E15_HOST_PROFILE=fresh-metal E15_ROOT=$R E15_TEST_ROOT=$R bash -c
+#     '. .../lib.sh; . .../points.sh; . .../golden/dump.sh; e15_golden_profile' >.../golden/profile-e17c-on.txt
+#   (the same with e15_golden_e17c "$R/env" "$R/meminfo" for e17c-on.txt; $R/meminfo says MemTotal: 400000000 kB)
 
 E15_GOLDEN_ARMS="sbx resident-inf resident-300 control"
 
@@ -47,7 +53,7 @@ e15_golden_arms() {
 
 e15_golden_profile() {
   local v flags x vals
-  for v in $( (compgen -v E15_; compgen -v E17B; compgen -v E17C) | LC_ALL=C sort -u); do
+  for v in $( (compgen -v E15_; compgen -v E17B; compgen -v E17C; compgen -v E17D) | LC_ALL=C sort -u); do
     flags=$(declare -p "$v" | cut -d' ' -f2)
     case "$flags" in
     *a*)
@@ -58,4 +64,21 @@ e15_golden_profile() {
     *) printf '%s %s=%s\n' "$flags" "$v" "${!v}" ;;
     esac
   done | sed -e "s#$E15_ROOT#<ROOT>#g" -e "s#$HOME#<HOME>#g"
+}
+
+# e15_golden_e17c ENVFILE MEMINFO: under E17C=1, every E17c point's E15_P_* and signature, then each E17c arm's default
+# warm-up, worker binary and worker env (the lease arms' admission budget from MEMINFO's MemTotal).
+GOLDEN_E17C_POINTS="default smoke pycache pycache-low pycache-d64 pycache-d768 squeeze squeeze-256"
+GOLDEN_E17C_ARMS="sbx ship-30 ship-120 ship-300 ship-300-nd"
+e15_golden_e17c() {
+  local p a
+  for p in $GOLDEN_E17C_POINTS; do
+    echo "== point $p"
+    e15_golden_point "$p"
+  done
+  for a in $GOLDEN_E17C_ARMS; do
+    echo "== $a warmup=$(e15_default_warmup "$a") bin=$( (worker_bin "$a" 2>/dev/null || true) | sed "s#^$E15_ROOT#<ROOT>#") lease=$(e17b_lease_arm "$a" && echo yes || echo no)"
+    (E15_MEMINFO=$2 worker_env "$a" "$1")
+    sed "s#$E15_ROOT#<ROOT>#g" "$1"
+  done
 }

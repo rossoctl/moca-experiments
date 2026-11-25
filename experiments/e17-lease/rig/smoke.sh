@@ -11,9 +11,11 @@
 #        E15_WARMUP_S=60 E15_WINDOW_S=120 E15_TAG=smoke E15_START_ZERO=1 bash experiments/e15-session-density/rig/rung.sh ARM 1 pycache
 #      for ARM in sbx resident-300 lease-30 lease-120 -> /srv/e15/runs/pycache/ARM/N1-smoke/
 #      (E17B=1: sbx and the shipped-lease arms instead; the resident and E17a lease arms need the resident
-#      build, which the E17b profile skips; E17C=1: sbx ship-300 ship-300-nd, E17c's arms)
+#      build, which the E17b profile skips; E17C=1: sbx ship-300 ship-300-nd, E17c's arms; E17D=1: sbx ship-300
+#      ship-300-l2 at point pycache-l2, E17d's arms and point, PLAN-E17D Task 9)
 #      (other E15_* environment passes through to rung.sh; E15_RUNG overrides the rung command)
-#   2. the sbx rung: every py_analyze call in calls.jsonl has status ok and exit 0, except a call
+#   2. the sbx rung: every py_analyze call (E17D=1: py_requery, pycache-l2 has no py_analyze) in calls.jsonl has status
+#      ok and exit 0, except a call
 #      the run's end cut (cause cut_at_end: not a failure, experiments/e15-session-density/driver/exec.go), and at least one
 #      completed (not cut) py_analyze call exists.
 #   3. analyze's stdout: the driver keeps only an Exec's stderr tail (experiments/e15-session-density/driver/exec.go), so the
@@ -52,6 +54,14 @@ ARMS=(sbx resident-300 lease-30 lease-120)
 [ "${E17B:-}" != 1 ] || ARMS=(sbx ship-30 ship-120 ship-300)
 # E17c (E17C=1, which implies E17B=1 in lib.sh; PLAN-E17C Task 4): E17c's arms, sbx ship-300 ship-300-nd.
 [ "${E17C:-}" != 1 ] || ARMS=(sbx ship-300 ship-300-nd)
+# E17d (E17D=1, which implies E17C=1): E17d's arms at its point. Step 3's py_analyze check still runs: pycache-l2 is
+# on pycache's D=256 template, and library.json keeps py_analyze.
+CHECK_CLASS=py_analyze
+if [ "${E17D:-}" = 1 ]; then
+  POINT=pycache-l2
+  ARMS=(sbx ship-300 ship-300-l2)
+  CHECK_CLASS=py_requery
+fi
 RUNG=${E15_RUNG:-$E15_SRC/rig/rung.sh}
 START_ZERO=${E15_START_ZERO:-1}
 # Never preempt a rung someone else started (each rung.sh and the analyze check below stop E15's
@@ -83,10 +93,11 @@ done
 # --- 2. the sbx rung's py_analyze calls ----------------------------------------------------------
 SBX=$E15_RUNS/$POINT/sbx/N1-smoke
 if [ -f "$SBX/calls.jsonl" ]; then
-  if out=$(python3 - "$SBX/calls.jsonl" "$START_ZERO" <<'PY'
+  if out=$(python3 - "$SBX/calls.jsonl" "$START_ZERO" "$CHECK_CLASS" <<'PY'
 import json, sys
 calls = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
-an = [c for c in calls if c.get("class") == "py_analyze"]
+cls = sys.argv[3]
+an = [c for c in calls if c.get("class") == cls]
 # cut_at_end: cancelled at the grace deadline within its planned lifetime; the driver marks its
 # status err, but it is not a failure (experiments/e15-session-density/driver/exec.go causeCutAtEnd).
 cut = [c for c in an if c.get("cause") == "cut_at_end"]
@@ -96,16 +107,16 @@ for c in bad:
     print("call %s: status %s cause %s exit %s %s" % (c.get("call"), c.get("status"), c.get("cause"),
                                                        c.get("exit"), c.get("msg", "")))
 if not done:
-    print("no completed py_analyze call among the rung's %d calls (%d cut at the end; "
-          "E15_START_ZERO=%s)" % (len(calls), len(cut), sys.argv[2]))
+    print("no completed %s call among the rung's %d calls (%d cut at the end; "
+          "E15_START_ZERO=%s)" % (cls, len(calls), len(cut), sys.argv[2]))
     sys.exit(1)
-print("%d py_analyze call(s), %d not ok/exit 0, %d cut at the end (not failures)" % (len(an), len(bad), len(cut)))
+print("%d %s call(s), %d not ok/exit 0, %d cut at the end (not failures)" % (len(an), cls, len(bad), len(cut)))
 sys.exit(1 if bad else 0)
 PY
   ); then
-    log "sbx py_analyze: $out"
+    log "sbx $CHECK_CLASS: $out"
   else
-    fails+=("sbx py_analyze: $out")
+    fails+=("sbx $CHECK_CLASS: $out")
   fi
 else
   fails+=("sbx: no $SBX/calls.jsonl")

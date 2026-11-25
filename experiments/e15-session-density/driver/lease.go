@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	leaseModeEpoch    = 1       // the epoch of the set_mode every session sends, and of its Exec tokens
-	leaseModeName     = "lease" // the JWT mode claim
+	leaseModeEpoch    = 1                 // the epoch of the set_mode every session sends, and of its Exec tokens
+	leaseModeName     = "lease"           // the JWT mode claim's default (E17b, E17c: level 1)
+	leaseModeL2       = "lease+processes" // E17d's level-2 arm (--lease-mode=lease+processes)
 	leaseSub          = "e15-driver"
 	leaseTenant       = "e15"
 	leaseDefaultTTL   = 300 * time.Second // base Exec token TTL, refreshed before it runs out; a longer call gets a longer one (E17B-R34)
@@ -48,6 +49,18 @@ type LeaseConfig struct {
 	Wrk          string // the worker's SANDBOX_ID; equals every ExecRequest.sandbox_id
 	IdleTimeoutS int
 	TokenTTL     time.Duration // Exec token TTL; 0 = 300 s
+	// Mode is the JWT mode claim of every Exec token and of the set-mode token (E17d, --lease-mode=MODE): "lease"
+	// (level 1) or "lease+processes" (level 2). "" is "lease", so E17b and E17c's rungs are unchanged.
+	Mode string
+	// L2Restart (E17d, --l2-restart; Mode lease+processes only): the level-2 restart rule (l2.go).
+	L2Restart bool
+}
+
+func (c *LeaseConfig) mode() string {
+	if c.Mode == "" {
+		return leaseModeName
+	}
+	return c.Mode
 }
 
 func (c *LeaseConfig) ttl() time.Duration {
@@ -55,6 +68,25 @@ func (c *LeaseConfig) ttl() time.Duration {
 		return c.TokenTTL
 	}
 	return leaseDefaultTTL
+}
+
+// leaseModeFlag is --lease-mode: a boolean switch as E17b and E17c's rung.sh passes it (bare --lease-mode is "lease"),
+// that also takes the mode claim as --lease-mode=MODE (E17d: "lease" or "lease+processes"). The value must be joined
+// with "=": "--lease-mode lease+processes" would leave the mode as a positional argument, which realMain refuses.
+type leaseModeFlag struct{ mode string }
+
+func (f *leaseModeFlag) IsBoolFlag() bool { return true }
+func (f *leaseModeFlag) String() string   { return f.mode }
+func (f *leaseModeFlag) Set(v string) error {
+	switch v {
+	case "true", leaseModeName:
+		f.mode = leaseModeName
+	case leaseModeL2:
+		f.mode = leaseModeL2
+	default:
+		return fmt.Errorf("want bare --lease-mode (lease), --lease-mode=lease or --lease-mode=lease+processes, got %q", v)
+	}
+	return nil
 }
 
 // LoadTokenKey reads an Ed25519 private key from a PKCS#8 PEM file (openssl genpkey -algorithm ed25519).
@@ -85,6 +117,49 @@ type leaseEvent struct {
 	AtUnixMs int64  `json:"at_unix_ms"`
 	AgeMs    uint64 `json:"age_ms"`
 	Mode     string `json:"mode"`
+	// E17d: the processes the event names (moca's display strings and the structured form), nil when it names none.
+	// Unexported (and a pointer, so the struct stays comparable), so lease_events keeps its E17b shape; the call's
+	// process_events carries them (processEventsOf).
+	procs *processEvent
+}
+
+// trackedProc is one moca TrackedProcess as calls.jsonl and lease-tail.jsonl record it (E17d).
+type trackedProc struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Pid         uint32 `json:"pid"`
+	State       string `json:"state"`
+	Code        int32  `json:"code"`
+	AgeMs       uint64 `json:"age_ms"`
+	MemoryBytes uint64 `json:"memory_bytes"`
+}
+
+func trackedOf(ps []*pb.TrackedProcess) []trackedProc {
+	var out []trackedProc
+	for _, p := range ps {
+		out = append(out, trackedProc{ID: p.GetId(), Name: p.GetName(), Pid: p.GetPid(), State: p.GetState(), Code: p.GetCode(), AgeMs: p.GetAgeMs(), MemoryBytes: p.GetMemoryBytes()})
+	}
+	return out
+}
+
+// processEvent is one process_events entry (E17d): a lease event that named processes, with what it named.
+type processEvent struct {
+	State     string        `json:"state"`
+	Reason    string        `json:"reason"`
+	AtUnixMs  int64         `json:"at_unix_ms"`
+	Processes []string      `json:"processes"`
+	Tracked   []trackedProc `json:"tracked"`
+}
+
+// processEventsOf is every event of evs that named a process (processes or tracked), nil when none.
+func processEventsOf(evs []leaseEvent) []processEvent {
+	var out []processEvent
+	for _, e := range evs {
+		if e.procs != nil {
+			out = append(out, *e.procs)
+		}
+	}
+	return out
 }
 
 func modeName(m pb.SandboxMode) string {
@@ -99,7 +174,11 @@ func modeName(m pb.SandboxMode) string {
 }
 
 func eventOf(e *pb.LeaseEvent) leaseEvent {
-	return leaseEvent{State: e.GetState(), Reason: e.GetReason(), AtUnixMs: e.GetAtUnixMs(), AgeMs: e.GetAgeMs(), Mode: modeName(e.GetMode())}
+	ev := leaseEvent{State: e.GetState(), Reason: e.GetReason(), AtUnixMs: e.GetAtUnixMs(), AgeMs: e.GetAgeMs(), Mode: modeName(e.GetMode())}
+	if len(e.GetProcesses()) > 0 || len(e.GetTracked()) > 0 {
+		ev.procs = &processEvent{State: ev.State, Reason: ev.Reason, AtUnixMs: ev.AtUnixMs, Processes: e.GetProcesses(), Tracked: trackedOf(e.GetTracked())}
+	}
+	return ev
 }
 
 // leaseTailRow is one lease-tail.jsonl line: the end-of-run status of one session's workspace.
@@ -113,6 +192,11 @@ type leaseTailRow struct {
 	Pending       *leaseEvent `json:"pending,omitempty"`
 	Error         string      `json:"error,omitempty"`
 	SweptAtUnixMs int64       `json:"swept_at_unix_ms"`
+	// E17d (omitted when empty, so E17b and E17c rows are unchanged): the status's tracked-process table (a live
+	// lease's, exited entries included), and the processes the pending event names.
+	Processes        []trackedProc `json:"processes,omitempty"`
+	PendingProcesses []string      `json:"pending_processes,omitempty"`
+	PendingTracked   []trackedProc `json:"pending_tracked,omitempty"`
 }
 
 // leaseSession is one session's lease state. Its methods are called from the session's own
@@ -133,7 +217,7 @@ func newLeaseSession(cfg *LeaseConfig, key string) *leaseSession {
 	// session sends and the worker acknowledges.
 	ref := NewRefresher(cfg.Key, SandboxClaims{
 		Iss: cfg.Iss, Sub: leaseSub, Tenant: leaseTenant, Sbx: key, Wrk: cfg.Wrk,
-		Mode: leaseModeName, ModeEpoch: leaseModeEpoch, IdleTimeoutS: cfg.IdleTimeoutS, TTL: cfg.ttl(),
+		Mode: cfg.mode(), ModeEpoch: leaseModeEpoch, IdleTimeoutS: cfg.IdleTimeoutS, TTL: cfg.ttl(),
 	}, nil)
 	return &leaseSession{key: key, cfg: cfg, ref: ref, seen: map[[2]any]bool{}}
 }
@@ -161,7 +245,7 @@ func (l *leaseSession) setMode(ctx context.Context, client pb.SandboxExecClient)
 	ttl := min(l.cfg.ttl(), setModeTokenMaxTTL)
 	smTok, err := l.cfg.Key.MintSetMode(SetModeClaims{
 		Iss: l.cfg.Iss, Sub: leaseSub, Sbx: l.key, Wrk: l.cfg.Wrk,
-		Mode: leaseModeName, ModeEpoch: leaseModeEpoch, IdleTimeoutS: l.cfg.IdleTimeoutS, TTL: ttl,
+		Mode: l.cfg.mode(), ModeEpoch: leaseModeEpoch, IdleTimeoutS: l.cfg.IdleTimeoutS, TTL: ttl,
 	})
 	if err != nil {
 		return err
@@ -355,9 +439,13 @@ func (r *Replayer) sweepLeases(ctx context.Context) {
 				row.Error = errors.New("empty status").Error()
 			default:
 				row.State = st.GetState()
+				row.Processes = trackedOf(st.GetProcesses())
 				if p := st.GetPending(); p != nil {
 					e := eventOf(p)
 					row.Pending = &e
+					if e.procs != nil {
+						row.PendingProcesses, row.PendingTracked = e.procs.Processes, e.procs.Tracked
+					}
 				}
 			}
 			rows[i] = row
